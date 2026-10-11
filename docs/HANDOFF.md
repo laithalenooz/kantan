@@ -712,6 +712,26 @@ the asset routes have to sit **inside** `ROUTES`, not in `Bun.serve({routes})`:
 the module header explains that a route registered there is matched before the
 guard chain runs and would never meet it.
 
+### What a `done` run leaves behind: nothing in the working tree
+
+Confirmed by the first live run (2026-10-11, `claude 2.1.296`), which failed a
+test that asserted the obvious thing.
+
+After a run finishes, `tickCheckbox` ticks the task and commits it **on
+`orch/<slug>`**, and `goHome` then returns the checkout to the base branch the
+run started from, because design §3.6 makes merging the human's decision. So:
+
+- the working tree is on **base**, and shows the task still `- [ ]`
+- the tick, and everything the agent wrote, is on the **task branch**
+- `RunState` is `{kind:"done", merged:false}`, and `merged` stays false until
+  `isMergedIntoBase` says otherwise - a done-but-unmerged task refuses a second
+  run visibly rather than starting against unintegrated work
+
+A test or a UI that reads the working tree to find out whether a task was done
+will read "not done" for every successful run. Read the branch
+(`git show <branch>:<path>`), or the run log. `taskBranchName` in `src/git.ts`
+derives the name from the feature path and the ref.
+
 ## Settled: decisions with non-obvious reasons
 
 | Decision | Why it is not the obvious thing |

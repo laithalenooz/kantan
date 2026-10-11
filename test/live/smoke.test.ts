@@ -22,6 +22,7 @@ import { createRunner } from "../../src/run.ts"
 import { foldRunLog } from "../../src/runindex.ts"
 import { runLogPath } from "../../src/runlog.ts"
 import { defaults } from "../../src/projects.ts"
+import { taskBranchName } from "../../src/git.ts"
 import { claudeVersion } from "../../src/version.ts"
 
 const LIVE = process.env.ORCH_LIVE === "1"
@@ -108,6 +109,12 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (!LIVE) return
+  if (process.env.ORCH_KEEP === "1") {
+    // A failed live run is expensive to reproduce, and the evidence is on disk
+    // in a branch nobody can inspect once this has run.
+    console.log(`kept ${repo} and ${home}`)
+    return
+  }
   for (const dir of [repo, home]) if (dir !== "") await rm(dir, { recursive: true, force: true })
 })
 
@@ -150,24 +157,45 @@ describe.skipIf(!LIVE)("live smoke", () => {
       expect(ended).toBe("done")
 
       const { run } = await foldRunLog(runLogPath(runId, runsDir))
-
-      // The checkbox, ticked only after the test command exited 0.
-      const feature = await readFile(join(repo, "docs", "features", "smoke.md"), "utf8")
-      expect(feature).toContain("- [x] T1")
-
-      // The branch, which the run owns and `branchFor` named.
-      expect(run?.state).toEqual({ kind: "done", merged: expect.any(Boolean) })
       expect(run?.header.taskRef).toBe("T1")
-      const branches = await new Response(Bun.spawn(["git", "branch", "--list"], { cwd: repo, stdout: "pipe" }).stdout).text()
-      expect(branches).toContain("orch/")
+
+      /*
+       * **The work is on the task branch, and the checkout is back on base.**
+       *
+       * The first version of this test read the working tree and failed, which
+       * is the test being wrong rather than the code: `tickCheckbox` commits
+       * the tick on `orch/<slug>` and `goHome` then returns the checkout to the
+       * branch the run started from, because design §3.6 makes merging the
+       * human's decision. So after a successful run the working tree correctly
+       * shows the task *unticked* - the tick is waiting on the branch - and a
+       * test that asserted otherwise was encoding a wrong mental model of what
+       * "done" leaves behind.
+       */
+      const branch = taskBranchName({ feature: "docs/features/smoke.md", ref: "T1" })
+      const show = async (path: string): Promise<string> =>
+        await new Response(Bun.spawn(["git", "show", `${branch}:${path}`], { cwd: repo, stdout: "pipe", stderr: "ignore" }).stdout).text()
+
+      // The checkbox, ticked only after the test command exited 0 - on the branch.
+      expect(await show("docs/features/smoke.md")).toContain("- [x] T1")
+
+      // The agent's own file, which is the only proof the work really happened
+      // rather than being described.
+      expect((await show("hello.txt")).trim()).toBe("hello")
+
+      // And the checkout came home, leaving base untouched.
+      const head = await new Response(Bun.spawn(["git", "rev-parse", "--abbrev-ref", "HEAD"], { cwd: repo, stdout: "pipe" }).stdout).text()
+      expect(head.trim()).toBe("main")
+      expect(await readFile(join(repo, "docs", "features", "smoke.md"), "utf8")).toContain("- [ ] T1")
+
+      // `merged` is false until the predicate says otherwise, so a done-but-
+      // unmerged task refuses a second run visibly instead of starting against
+      // work that is not integrated.
+      expect(run?.state).toEqual({ kind: "done", merged: false })
 
       // The cost: really spent, and inside the ceiling it was given.
       expect(run?.costUsd).toBeGreaterThan(0)
       expect(run?.costUsd).toBeLessThan(CEILING_USD)
       console.log(`run ${runId} cost $${run?.costUsd.toFixed(4)} of its $${CEILING_USD} ceiling`)
-
-      // The agent's own file, which is the only proof the work really happened.
-      expect((await readFile(join(repo, "hello.txt"), "utf8")).trim()).toBe("hello")
     },
     DEADLINE_MS + 60_000,
   )
