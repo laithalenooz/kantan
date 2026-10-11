@@ -191,6 +191,13 @@ export function taskStateOf(task: TreeTask): TaskState {
  * offered puts a second run against work that is written and not integrated,
  * where a start withheld costs one explicit `git branch -D` the refusal
  * message already names.
+ *
+ * This mirrors `startRun`, which refuses `branch-exists` when
+ * `createTaskBranch` finds the task's branch, rather than replacing it. The
+ * server stays the authority: whether a branch still exists is not in
+ * `TaskStatus`, so a task whose branch a human has since deleted reads as
+ * `failed` here and would in fact start. A caller wanting to offer that retry
+ * has to ask git, not this function.
  */
 export function canStart(task: TreeTask): boolean {
   return taskStateOf(task) === "open" && task.ref !== null
