@@ -1,0 +1,25 @@
+kantan-fixture v1 exit=1
+--8<-- stdout --8<--
+
+   FAIL  Tests\SlowTest
+  ⨯ it settles before asserting                                          0.20s  
+  ────────────────────────────────────────────────────────────────────────────  
+   FAILED  Tests\SlowTest > it settles before asserting                         
+  Failed asserting that 2 is identical to 3.
+
+  at tests/SlowTest.php:5
+      1▕ <?php
+      2▕ 
+      3▕ it('settles before asserting', function () {
+      4▕     usleep(random_int(40000, 400000));
+  ➜   5▕     expect(1 + 1)->toBe(3);
+      6▕ });
+      7▕
+
+  1   tests/SlowTest.php:5
+
+
+  Tests:    1 failed (1 assertions)
+  Duration: 0.28s
+
+--8<-- stderr --8<--

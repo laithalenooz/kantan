@@ -34,8 +34,13 @@ async function capture(name: string): Promise<TestOutcome> {
   }
 }
 
-/** The five runners captured in `test/fixtures/output/`, by fixture prefix. */
-const RUNNERS = ["bun", "pytest", "go", "cargo", "phpunit"] as const
+/**
+ * The runners captured in `test/fixtures/output/`, by fixture prefix. Each one
+ * is put through the same five tests below, which is the point: a normalizer
+ * tuned to one runner is not a normalizer, and Pest, Jest and `dart test` each
+ * broke a rule that the first five had agreed on.
+ */
+const RUNNERS = ["bun", "pytest", "go", "cargo", "phpunit", "pest", "jest", "dart"] as const
 
 // ---------------------------------------------------------------------------
 // Shape and determinism
@@ -113,6 +118,15 @@ test("a passing run still produces a signature, distinct from the failing one", 
   const pass = await failureSignature(await capture("bun-pass"))
   expect(pass).toMatch(/^[0-9a-f]{64}$/)
   expect(pass).not.toBe(await failureSignature(await capture("bun-base-run1")))
+})
+
+test("pest: a bare right-aligned per-test duration does not reach the signature", async () => {
+  // The other fixtures run in hundredths of a second, so their durations happen
+  // to match and cannot prove this. These two are a real pair from a test that
+  // sleeps a random 40-400ms, and they differ in nothing else.
+  const a = await failureSignature(await capture("pest-slow-run1"))
+  const b = await failureSignature(await capture("pest-slow-run2"))
+  expect(b).toBe(a)
 })
 
 test("go: a cached rerun hashes equal to the uncached one", async () => {
@@ -410,6 +424,37 @@ test("a seed, a worker id and a thread id do not survive", async () => {
   await same("Random Seed:   1760184308\n", "Random Seed:   1760199999\n")
   await same("[gw2] PASSED tests/test_a.py\n", "[gw7] PASSED tests/test_a.py\n")
   await same("thread 'tests::adds' (738104) panicked at src/lib.rs:26:9:\n", "thread 'tests::adds' (999999) panicked at src/lib.rs:26:9:\n")
+})
+
+test("the word seed and the words after an at survive, because those rules took a value", async () => {
+  // `seed\s*\w+` read "Failed to seed users table" as a seed, and the timestamp
+  // keyword rule's `\S+` swallowed whatever word came after "start at".
+  await differ("Failed to seed users table\n", "Failed to seed posts table\n")
+  await differ("expected range to start at 1\n", "expected range to start at 2\n")
+  await differ("generated at 2026-01-01 users\n", "generated at 2026-01-01 posts\n")
+})
+
+test("a temp suffix containing an underscore is still recognized as volatile", async () => {
+  // Both names came out of a real `tempfile.mkdtemp(prefix="kantan-")`, chosen
+  // because splitting them on `_` leaves no part that passes the length gate:
+  // nothing propagated into pytest's abbreviated repr, and two runs of one
+  // failure hashed differently about one time in twelve.
+  await same(
+    "E  AssertionError: assert '[kantan] rea...ntan-29_m_6av' == '[kantan] rea...ol=/srv/spool'\n" +
+      "E  + [kantan] ready spool=/tmp/tmp.6W9HkBCyZG/kantan-29_m_6av\n",
+    "E  AssertionError: assert '[kantan] rea...ntan-c0_2s4vy' == '[kantan] rea...ol=/srv/spool'\n" +
+      "E  + [kantan] ready spool=/tmp/tmp.HB2VdL2Ddq/kantan-c0_2s4vy\n",
+  )
+})
+
+test("a temp directory named after a test does not erase the test's name", async () => {
+  // pytest's tmp_path fixture creates `.../pytest-12/test_add0`, which the
+  // underscore change makes eligible for propagation. It is the test's name
+  // plus a counter, so the name itself is never the token.
+  await differ(
+    "FAILED test_calc.py::test_add - assert 4 == 5\nspool = /tmp/pytest-of-dev/pytest-12/test_add0\n",
+    "FAILED test_calc.py::test_sub - assert 4 == 5\nspool = /tmp/pytest-of-dev/pytest-12/test_sub0\n",
+  )
 })
 
 test("a log timestamp at the start of a line does not survive; a formatted date mid-line does", async () => {

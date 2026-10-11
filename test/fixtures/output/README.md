@@ -18,6 +18,18 @@ guessed rather than captured turned out to be wrong at least once:
   a temp directory into a place no path rule can see it.
 - Forcing colour on pytest also changes how far it truncates the short-summary line, so colour is
   not a pure overlay there either. `pytest-colour.txt` is the evidence.
+- Pest draws its code frames with `▕` and marks the failing line `➜  12▕`, fails with `⨯`, rules
+  its sections with box drawing, and **right-aligns a bare per-test duration** against the far
+  margin. Jest marks its failing frame line `    > 15 |`. `dart test` writes stack frames as
+  `test/calc_test.dart 15:5`, with a space where every other runner puts a colon, and prefixes
+  every line with an elapsed clock and counters: `00:00 +0 -1:`.
+- Those three were added after the first five, and each one broke a rule the first five had
+  agreed on. Run against the five-runner implementation, Pest, Jest and `dart test` **all three**
+  failed the line-shift test: their frames were not recognized, so every line number reached the
+  signature and no real loop could ever have been detected in a project using them. Two of the
+  three are named in the design as repos this tool is for.
+- Jest and `bun test` write their failures to stderr; pytest, go, cargo, PHPUnit, Pest and
+  `dart test` write to stdout. Both streams are hashed.
 
 ## File format
 
@@ -49,6 +61,11 @@ temp directory, so one failure carries plain numbers and the other carries volat
 | `bun-pass` | All tests pass, exit 0. |
 | `go-pass-run1`, `go-pass-run2` | A passing run, then the same run served from the test cache. Must hash **equal**. |
 | `pytest-colour` | `PY_COLORS=1`. Documented to hash differently from `pytest-base-run1`. |
+| `pest-slow-run1`, `pest-slow-run2` | A different, one-test suite that sleeps a random 40-400ms, so its right-aligned duration genuinely differs between the two. Nothing else does. Must hash **equal**. |
+
+The six-case suites all finish in hundredths of a second, so most of their durations happen to
+match and cannot prove a duration rule by themselves. `pest-slow-*` exists for that, and Jest's
+`Time:` line varies on its own.
 
 ## Runners and versions
 
@@ -59,8 +76,12 @@ temp directory, so one failure carries plain numbers and the other carries volat
 | `go-` | `go test ./...` | go1.25.5 linux/amd64 |
 | `cargo-` | `cargo test --offline -q` | cargo 1.92.0 (344c4567c 2025-10-21) |
 | `phpunit-` | `vendor/bin/phpunit` | PHPUnit 12.5.38, PHP 8.4.25 |
+| `pest-` | `vendor/bin/pest` | Pest 4.7.8, Collision 8.9.5, PHPUnit 12.5.33, PHP 8.4.25 |
+| `jest-` | `npx jest` | Jest 30.5.2, Node 24.11.1 |
+| `dart-` | `dart test` | `package:test` 1.33.0, Dart SDK 3.13.4 |
 
-All captured on linux x86_64.
+All captured on linux x86_64. `flutter test` is **not** captured; it shares `package:test` and so
+the `dart-` reporter format, but that is an inference, not a capture.
 
 ## Recapturing
 

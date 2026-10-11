@@ -1,0 +1,49 @@
+kantan-fixture v1 exit=1
+--8<-- stdout --8<--
+
+   FAIL  Tests\CalcTest
+  ⨯ it adds two numbers                                                  0.01s  
+  ⨯ it logs the line the supervisor greps for
+  ✓ it subtracts two numbers
+  ────────────────────────────────────────────────────────────────────────────  
+   FAILED  Tests\CalcTest > it adds two numbers                                 
+  Failed asserting that 4 is identical to 5.
+
+  at tests/CalcTest.php:14
+     10▕     if (in_array($case, ['other', 'one', 'pass'], true)) {
+     11▕         expect(Calc::add(2, 2))->toBe(4);
+     12▕         return;
+     13▕     }
+  ➜  14▕     expect(Calc::add(2, 2))->toBe($case === 'msg' ? 7 : 5);
+     15▕ });
+     16▕ 
+     17▕ it('logs the line the supervisor greps for', function () use ($case) {
+     18▕     if ($case === 'pass') {
+
+  1   tests/CalcTest.php:14
+
+  ────────────────────────────────────────────────────────────────────────────  
+   FAILED  Tests\CalcTest > it logs the line the supervisor greps for           
+  Failed asserting that two strings are identical.
+  -'[kantan] ready pid=1 url=http://127.0.0.1:8080 spool=/srv/spool'
+  +'[kantan] ready pid=1110080 url=http://127.0.0.1:30080 spool=/tmp/tmp.CK05Gpg30W/kantan-1110080'
+  
+
+  at tests/CalcTest.php:25
+     21▕     }
+     22▕     $spool = sys_get_temp_dir() . '/kantan-' . getmypid();
+     23▕     $port = 30000 + (getmypid() % 2000);
+     24▕     expect(Calc::readyLine($spool, getmypid(), $port))
+  ➜  25▕         ->toBe('[kantan] ready pid=1 url=http://127.0.0.1:8080 spool=/srv/spool');
+     26▕ });
+     27▕ 
+     28▕ it('subtracts two numbers', function () use ($case) {
+     29▕     if ($case !== 'other') {
+
+  1   tests/CalcTest.php:25
+
+
+  Tests:    2 failed, 1 passed (3 assertions)
+  Duration: 0.04s
+
+--8<-- stderr --8<--

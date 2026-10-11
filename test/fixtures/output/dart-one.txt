@@ -1,0 +1,26 @@
+kantan-fixture v1 exit=1
+--8<-- stdout --8<--
+00:00 +0: loading test/calc_test.dart
+00:00 +0: test/calc_test.dart: adds two numbers
+00:00 +1: test/calc_test.dart: logs the line the supervisor greps for
+00:00 +1 -1: test/calc_test.dart: logs the line the supervisor greps for [E]
+  Expected: '[kantan] ready pid=1 url=http://127.0.0.1:8080 spool=/srv/spool'
+    Actual: '[kantan] ready pid=1160959 url=http://127.0.0.1:30959 spool=/tmp/tmp.hn4HkkqO25/kantan-AMLVWD'
+     Which: is different.
+            Expected: ... eady pid=1 url=http: ...
+              Actual: ... eady pid=1160959 url ...
+                                    ^
+             Differ at offset 20
+  
+  package:matcher           expect
+  test/calc_test.dart 20:5  main.<fn>
+  
+00:00 +1 -1: test/calc_test.dart: subtracts two numbers
+00:00 +2 -1: Some tests failed.
+
+Failing tests:
+  test/calc_test.dart: logs the line the supervisor greps for
+
+Consider enabling the flag chain-stack-traces to receive more detailed exceptions.
+For example, 'dart test --chain-stack-traces'.
+--8<-- stderr --8<--

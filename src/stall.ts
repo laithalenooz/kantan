@@ -277,7 +277,12 @@ function identity(attrs: Record<string, string>): string {
  * That module hands over the *tail* of each stream, so a window of the same
  * size would reach bytes that a chatty run had already dropped and a quiet one
  * still had, and one failure would hash two ways depending on how much the
- * suite printed. A quarter of the cap leaves room for the cap to shrink.
+ * suite printed.
+ *
+ * The name is a half-truth worth stating: this counts UTF-16 code units, not
+ * bytes, because that is what `String.length` is. ASCII output, which is nearly
+ * all of it, makes them the same; output that is entirely outside the BMP would
+ * be about 768 KB of UTF-8. Still under the cap, but not the quarter it looks.
  */
 const TAIL_BYTES = 256 * 1024
 const TAIL_LINES = 400
@@ -294,11 +299,18 @@ const ANSI_RE =
  * because every line number moves, and that is the direction that burns money:
  * the loop kantan is looking for always has an edit between its two runs. The
  * cost is that two failures differing only in the echoed source read alike;
- * the test name and the error text are kept, and they are what differ. */
-const CODE_FRAME_RE = /^\s*\d+\s*(?:\||│)/
+ * the test name and the error text are kept, and they are what differ.
+ *
+ * Three gutter characters and a marker, because three runners disagree: bun
+ * writes ` 13 | `, Jest marks the failing line `    > 15 | `, and Pest draws
+ * `      8▕ ` with `  ➜  12▕ ` for the failure. A regex built against any one
+ * of them silently keeps the other two, and with them every line number. */
+const CODE_FRAME_RE = /^\s*(?:[>➜]\s*)?\d+\s*(?:\||│|▕)/
 
-/** The caret under the failing expression. Its column moves with the line. */
-const CARET_RE = /^[\s^~]*[\^~][\s^~]*$/
+/** The caret under the failing expression. Its column moves with the line, and
+ * the line it points at has already been dropped. Jest puts it behind a gutter
+ * (`         |            ^`), so the gutter characters are allowed here. */
+const CARET_RE = /^[\s|│▕]*[\^~][\s^~|│▕]*$/
 
 /** A line of progress glyphs and nothing else: cargo's `. 1/3`, a row of dots,
  * `FF.`. The same information is in the failure blocks below it. */
@@ -308,12 +320,13 @@ const PROGRESS_RE = /^[\s.FEsxX!*✓✔✗✘×✕·]*(?:\d+\s*\/\s*\d+)?[\s.]*(
  * `(fail)` with colour off and `✗` with it on, so the glyph is not a colour
  * overlay; vitest and jest use `×` and `✕`. Anchored, so a glyph inside a test
  * name survives. */
-const FAIL_GLYPH_RE = /^(\s*)[✗✘×✕](\s)/
+const FAIL_GLYPH_RE = /^(\s*)[✗✘×✕⨯](\s)/
 const PASS_GLYPH_RE = /^(\s*)[✓✔√](\s)/
 
 /** Three or more of one rule character. pytest pads its banners to the terminal
- * width, so the count changes when a path or duration beside it gains a digit. */
-const RULE_RUN_RE = /([=\-_])\1{2,}/g
+ * width, so the count changes when a path or duration beside it gains a digit.
+ * Pest rules its sections with box drawing instead. */
+const RULE_RUN_RE = /([=\-_─━═])\1{2,}/g
 
 /** A duration is only a duration in a position the runner controls. Every form
  * here is anchored to the end of its line (`[0.26ms]`, `(0.00s)`, `in 0.03s`),
@@ -346,6 +359,12 @@ const DURATION_RULES: [RegExp, string][] = [
   // `s` to the unit and `3 steps` and `4 steps` normalize alike.
   [new RegExp(`(^\\s*)(Time|Duration|Elapsed|Runtime)\\s*:\\s*(?:${CLOCK}|${NUM}(?:\\s*${UNIT}\\b)?)`, "gi"), "$1$2: <time>"],
   [new RegExp(`([,;]\\s*)(Time|Duration|Elapsed|Runtime)\\s*:\\s*${NUM}\\s*${UNIT}\\b`, "gi"), "$1$2: <time>"],
+  // Pest right-aligns a bare per-test duration: `⨯ it adds two numbers` then
+  // padding then `0.01s`. Two spaces or more is the anchor, which is what keeps
+  // it off `Received: 1000ms`, where one space follows the colon. The padding is
+  // replaced rather than kept, because Pest aligns to a fixed column and the
+  // padding therefore shrinks by one as the duration gains a digit.
+  [new RegExp(`\\s{2,}${NUM}\\s*${UNIT}\\b\\s*$`, "i"), " <time>"],
   // A memory figure always carries its unit, so one rule covers both positions.
   [new RegExp(`(^\\s*|[,;]\\s*)(Memory|Peak memory|RSS|Heap)\\s*:\\s*${NUM}\\s*(?:[KMGT]i?B|bytes?)`, "gi"), "$1$2: <mem>"],
 ]
@@ -354,27 +373,37 @@ const DURATION_RULES: [RegExp, string][] = [
  * position-anchored for the same reason the durations are. */
 const VOLATILE_RULES: [RegExp, string][] = [
   // `src/testrun.ts` prepends this when it caps a stream, and the byte counts
-  // in it change from run to run. Reading the tail puts it outside the window
-  // already, since the cap is four times this window; normalizing it too keeps
-  // the guarantee local rather than resting on another module's constant. The
-  // fact of truncation is kept, because a run that suddenly printed a megabyte
-  // more than the last one did change.
+  // in it change from run to run. Reading the tail is the real defence: the
+  // marker sits at the head of a stream that is by definition larger than this
+  // window, so it is never in it. This rule is the backup, so the guarantee
+  // does not rest on another module's constant, and it is what the test
+  // exercises. It keeps the fact of truncation and drops the counts.
   [/^\[kantan: (\w+) truncated - dropped the first \d+ bytes, kept the last \d+\]$/, "[kantan: $1 truncated]"],
   // A log timestamp sits at the start of its line. A formatted date inside an
   // assertion message does not, and it survives: it is often the thing asserted.
   [/^(\s*[[(]?)\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?/, "$1<ts>"],
   [/^(\s*[[(]?)\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?=\s)/, "$1<ts>"],
-  [/\b(timestamp|started at|start at|generated at)\s*[:=]?\s*\S+/gi, "$1 <ts>"],
+  // The value has to look like a timestamp. `\S+` swallowed the next word, so
+  // "expected range to start at 1" and "...at 2" read alike.
+  [/\b(timestamp|started at|start at|generated at)\s*[:=]?\s*(?:\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)?|\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?|\d{10,})/gi, "$1 <ts>"],
   // file.ext:line:col. The extension must start with a letter, so 127.0.0.1:8080
   // is left to the port rule below. Runs before the temp-path rule, or a line
   // number would survive its path being collapsed.
   [/([\w./\\+-]*\.[A-Za-z][A-Za-z0-9]{0,8}):\d+(?::\d+)?/g, "$1"],
+  // `dart test` and `flutter test` separate the file from the position with a
+  // space instead: `  test/calc_test.dart 15:5  main.<fn>`. Both the line and
+  // the column are required here, so an ordinary sentence like "expected
+  // calc.ts 3 times" keeps its number.
+  [/([\w./\\+-]*\.[A-Za-z][A-Za-z0-9]{0,8})\s+\d+:\d+\b/g, "$1"],
   [/\bpid\s*[:=#]?\s*\d+/gi, "pid=<pid>"],
   // cargo: `thread 'tests::adds' (738104) panicked at src/lib.rs:26:9`.
   [/(thread\s+'[^']*'\s*)\(\d+\)/g, "$1(<tid>)"],
   [/\b((?:\d{1,3}\.){3}\d{1,3}|localhost|\[::1\]):\d{1,5}\b/g, "$1:<port>"],
   [/\bport\s*[:=]?\s*\d{1,5}\b/gi, "port=<port>"],
-  [/\bseed\s*[:=]?\s*\w+/gi, "seed=<seed>"],
+  // A numeric value, not `\w+`: PHPUnit, pytest-randomly and jest all print a
+  // number, and `\w+` turned "Failed to seed users table" and "...posts table"
+  // into one line.
+  [/\bseed\b\s*[:=]?\s*\d+/gi, "seed=<seed>"],
   [/\[gw\d+\]/g, "[gw<worker>]"],
   [/\b(worker|shard)\s*[-:=#]?\s*\d+(?:\s*\/\s*\d+)?/gi, "$1=<worker>"],
   // An address is printed after `at`, `@` or `address`. A bare 0xdeadbeef is
@@ -393,8 +422,24 @@ const TEMP_PATH_RE =
 
 /** A path segment random enough to have been generated: at least six characters
  * with both a letter and a digit. Pure numbers are excluded on purpose, so a
- * pid that happens to equal an asserted value is not propagated. */
-const RANDOM_PART_RE = /^(?=[^\d]*\d)(?=[^A-Za-z]*[A-Za-z])[A-Za-z0-9]{6,}$/
+ * pid that happens to equal an asserted value is not propagated.
+ *
+ * `_` counts as part of the token, and `PART_SEPARATOR_RE` does not split on
+ * it, because Python's `mkdtemp` alphabet includes it. Measured over 1000 real
+ * `mkdtemp` names: splitting on `_` propagated 822, keeping it propagates 906.
+ * The remaining 94 are the names whose random suffix happens to contain no
+ * digit at all, which is the documented degradation below.
+ *
+ * The cost of keeping `_` is that a directory named after a test, which is what
+ * pytest's `tmp_path` fixture creates (`.../pytest-12/test_add0`), now
+ * qualifies and is substituted wherever else it appears. It is a counter
+ * appended to the test's name, so it is a strict superstring of that name and
+ * the name itself survives; the test "a temp directory named after a test does
+ * not erase the test's name" pins that. */
+const RANDOM_PART_RE = /^(?=[^\d]*\d)(?=[^A-Za-z]*[A-Za-z])[A-Za-z0-9_]{6,}$/
+
+/** Where one path segment's parts end. Deliberately **not** `_`; see above. */
+const PART_SEPARATOR_RE = /[/\\.-]/
 
 /**
  * One stream, normalized and bounded, as a sorted list of lines.
@@ -442,7 +487,7 @@ function normalizeLine(line: string, volatiles: Set<string>): string {
   for (const [re, to] of DURATION_RULES) out = out.replace(re, to)
   for (const [re, to] of VOLATILE_RULES) out = out.replace(re, to)
   out = out.replace(TEMP_PATH_RE, (path) => {
-    for (const part of path.split(/[/\\._-]/)) {
+    for (const part of path.split(PART_SEPARATOR_RE)) {
       if (RANDOM_PART_RE.test(part)) volatiles.add(part)
     }
     return "<tmp>"

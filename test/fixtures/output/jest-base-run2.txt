@@ -1,0 +1,43 @@
+kantan-fixture v1 exit=1
+--8<-- stdout --8<--
+--8<-- stderr --8<--
+FAIL __tests__/calc.test.js
+  ● adds two numbers
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 5
+    Received: 4
+
+      13 |     return
+      14 |   }
+    > 15 |   expect(add(2, 2)).toBe(CASE === "msg" ? 7 : 5)
+         |                     ^
+      16 | })
+      17 |
+      18 | test("logs the line the supervisor greps for", () => {
+
+      at Object.toBe (__tests__/calc.test.js:15:21)
+
+  ● logs the line the supervisor greps for
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: "[kantan] ready pid=1 url=http://127.0.0.1:8080 spool=/srv/spool"
+    Received: "[kantan] ready pid=1147363 url=http://127.0.0.1:31363 spool=/tmp/tmp.nb4RYNHQkb/kantan-XmyZab"
+
+      21 |     return
+      22 |   }
+    > 23 |   expect(readyLine(spool, process.pid, port)).toBe("[kantan] ready pid=1 url=http://127.0.0.1:8080 spool=/srv/spool")
+         |                                               ^
+      24 | })
+      25 |
+      26 | test("subtracts two numbers", () => {
+
+      at Object.toBe (__tests__/calc.test.js:23:47)
+
+Test Suites: 1 failed, 1 total
+Tests:       2 failed, 1 passed, 3 total
+Snapshots:   0 total
+Time:        0.245 s
+Ran all test suites.
