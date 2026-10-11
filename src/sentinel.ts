@@ -46,9 +46,11 @@ const BLOCKED_RE = /^ORCH: blocked(?:[ \t]+(.*))?$/s
  * The last line of `text` that holds something, with trailing whitespace gone.
  *
  * Trailing blank lines and a `\r` from CRLF are both routine in real output, so
- * neither may hide the sentinel. Leading whitespace is **kept**: an indented
- * line is markdown for a code block, meaning the sentinel is being quoted
- * rather than emitted.
+ * neither may hide the sentinel. Leading whitespace is **kept**, so an indented
+ * line never matches. The prompt dictates the sentinel at column zero; four
+ * spaces or a tab additionally make it a quoted code block, while one to three
+ * spaces are merely unexplained. Rejecting all of it stops and asks, which is
+ * the cheap direction.
  */
 function finalLine(text: string): string {
   const lines = text.split("\n")
