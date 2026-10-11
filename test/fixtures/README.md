@@ -1,7 +1,9 @@
 # stream-json fixtures
 
 Real `claude -p --output-format stream-json` output, captured against **Claude Code 2.1.296**,
-2026-10-11. Redacted (see below) but otherwise byte-for-byte what the CLI emitted.
+2026-10-11. Redacted (see below), which also re-serialised every line: these files carry
+`"key": "value"` spacing and are pure ASCII with `\uXXXX` escapes, where the CLI itself emits
+compact JSON with raw UTF-8. Every **value** is the capture's, but the bytes are not.
 
 These exist so the phase machine, gate, resume logic, stall detector and budget arithmetic can be
 tested at **zero API cost**. Task 5 builds a fake `claude` binary that replays them.

@@ -12,15 +12,11 @@ Stable project-wide rules live in `CLAUDE.md`, not here. This file is only the m
 
 ## Open: things later tasks must handle
 
-### `CLAUDE_BIN` binds at module load — Task 5 (fake binary), anything spawning
+### `CLAUDE_BIN` binds at module load — anything spawning
 `src/version.ts` resolves `process.env.ORCH_CLAUDE_BIN` **once, when the module is imported**.
 Setting `process.env` inside a test body is a no-op. Any test that substitutes the binary must set
-it in the environment of a **fresh process**. `test/version.test.ts` does this and the pattern is
-worth copying.
-
-Also: `test/version.test.ts`'s first test calls the real binary and asserts an `X.Y.Z` version. If
-a later task installs the fake CLI suite-wide (preload, `bunfig`, env), **the fake must answer
-`--version` with a version string** or that test breaks for a confusing reason.
+it in the environment of a **fresh process**. `test/version.test.ts` and
+`test/fake-claude.test.ts`'s `claudeVersion()` test both do this; the pattern is worth copying.
 
 ### Adding a field to `Project` is a three-file change — every later task
 `src/projects.ts` **rejects unknown fields**, on load and in `defaults()`. Any task adding a field
@@ -49,13 +45,45 @@ this a usable git repo" question, and should expect to be handed a path that is 
 `reportPath` may contain `..`; refusing it would mean guessing at monorepo layouts, so the code
 that joins it owns that check.
 
-### The fake binary must answer `--version` — Task 5
-`test/version.test.ts`'s first test calls the real binary and asserts an `X.Y.Z` string. If Task 5
-installs the fake CLI suite-wide (preload, `bunfig`, env), **the fake must print a version** or
-that test fails for a confusing reason. `claudeVersion()` now reports exit code and stderr, so a
-fake that exits non-zero will at least say so.
+### Driving the fake binary — Tasks 8 through 14
+`test/fake-claude.ts` is executable with a `bun` shebang, so `ORCH_CLAUDE_BIN=<abs>/test/fake-claude.ts`
+is all a spawner needs. It answers `--version` with `2.1.296 (Claude Code)` before validating
+anything else, so installing it suite-wide leaves `test/version.test.ts` passing.
 
-### Fixtures are redacted, and the redaction is not optional — Task 5 and anyone recapturing
+- **`ORCH_FAKE_SCRIPT`** names a `{"turns":[{"fixture":"...","cost":0.01}]}` file. The turn list is
+  consumed **across processes** through `<script>.cursor`, because a run spawns the binary once per
+  phase plus once per escalation and they all inherit one environment. **Give every test its own
+  script path**, or it inherits the previous test's cursor.
+- **`ORCH_FAKE_ARGV_LOG`** appends a `kind:"spawn"` record per invocation (`argv`, `cwd`, `pid`,
+  `env`, `envKeys`) and a `kind:"turn"` record per turn (`index`, `fixture`, `session`, raw
+  `stdin`). Env **values** are recorded only for `CLAUDE_*`/`ORCH_*` names that do not look like
+  credentials; every name appears in `envKeys`, so an absence assertion is still meaningful.
+- **`CLAUDE_CONFIG_DIR` leaks in from the developer's own shell** through `{...process.env}`. A test
+  asserting it is unset must delete it explicitly, or it passes for the wrong reason on one machine
+  and fails on another.
+- **Exit 1 is the CLI's, exit 2 is the double's.** 1 means a refusal the real CLI also makes
+  (probed: unknown flag, missing `--verbose`, non-UUID session id, `--max-budget-usd` ≤ 0,
+  unknown `--resume` id) or a replayed error result. 2 means the harness is wrong (bad script,
+  missing fixture, more stdin turns than scripted, a non-`user` stdin message).
+- **Unknown flags are refused.** A task that adds a flag must add it to the enumeration in
+  `test/fake-claude.ts` in the same change; the refusal lists what the double knows.
+- **`result_index` and every `uuid` replay as captured.** Two turns in one process both report
+  `result_index: 0` and repeat the capture's event uuids. Do not key dedup on them.
+- A `cost` override rewrites `total_cost_usd` only. The per-model `modelUsage[*].costUSD` figures
+  stay as captured, so cost arithmetic must not read those.
+- Replaying a full fixture on turn 2 re-emits the `SessionStart` hook prefix, which the real CLI
+  emits once per process. Harmless for a parser, confusing in a transcript.
+
+### Fixtures are not byte-for-byte the CLI's output — Tasks 6 and 7
+Task 4's redaction pass re-serialised every line through Python, so the committed fixtures carry
+`"key": "value"` spacing and are **pure ASCII** with `\uXXXX` escapes, where the real CLI emits
+compact JSON with raw UTF-8. Two consequences: no chunk boundary inside a fixture can ever split a
+multi-byte character, so a parser that decoded each read independently would pass against them and
+corrupt real output — use `ORCH_FAKE_CHUNK` against a UTF-8 fixture of your own, as
+`test/fake-claude.test.ts` does; and never assert that re-serialising a parsed event reproduces the
+fixture's bytes.
+
+### Fixtures are redacted, and the redaction is not optional — anyone recapturing
 `test/fixtures/` holds real captures with synthetic `rate_limit_info`. A recapture **must** rerun
 both redaction passes; the telemetry pass is the one no grep will remind you about. See
 `test/fixtures/README.md`.
