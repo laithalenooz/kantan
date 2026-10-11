@@ -11,7 +11,7 @@
  * ```tsx
  * <Sidebar
  *   phases={[{ phase: "plan", state: "done", elapsedMs: 8_000 }, …]}
- *   events={parsedStreamEvents}        // the run's `cli` events, in stream order
+ *   processes={costWindows}            // one entry per spawned process; see CostProcess
  *   ceilingUsd={project.budgetUsd}
  *   windows={[{ profile: null, label: "personal", status: "allowed",
  *               utilization: 0.41, resetsAtSec: 1800000000, current: true }, …]}
@@ -39,9 +39,11 @@
  *
  * **3. Cost resets per process.** Within one `claude -p` process the
  * `total_cost_usd` figure is cumulative, so summing every `result` event
- * double-counts. `splitProcesses` + `sumProcessCost` sum the **last** result of
- * each process, which is the same rule `src/run.ts` applies when it resumes a
- * run ("a spawn closes the previous process's window").
+ * double-counts. `sumProcessCost` takes the **last** result of each process,
+ * which is the rule `src/run.ts` applies when it resumes a run ("a spawn closes
+ * the previous process's window"). The rail is handed the windows rather than
+ * inferring them from the stream, because the stream does not carry the
+ * boundary — see `CostProcess`, which is where that is written down.
  *
  * **4. The grinding notice never blocks.** It is a `role="status"` region that
  * slides in beside the run, never a dialog, never `role="alert"`, never the
@@ -157,10 +159,11 @@ export interface SidebarProps {
    */
   phases: readonly PhaseStep[]
   /**
-   * The run's parsed stream, in order. The rail reads only `init` and `result`
-   * from it; everything else is ignored, so the whole stream can be passed.
+   * One entry per spawned `claude -p` process, each holding that process's
+   * `result` events in stream order. Read `CostProcess` before building this:
+   * the grouping is the part that decides whether the figure is right.
    */
-  events: readonly Event[]
+  processes: readonly CostProcess[]
   /** `project.budgetUsd`: the ceiling this run was given. */
   ceilingUsd: number
   /** One entry per account. Two accounts, two rings. */
@@ -175,51 +178,37 @@ export interface SidebarProps {
 // Cost: the last result of each process
 // ---------------------------------------------------------------------------
 
-/** One spawned `claude -p` process and the `result` events it emitted. */
+/**
+ * One spawned `claude -p` process and the `result` events it emitted, in stream
+ * order.
+ *
+ * **Grouped by the caller, and that is the whole point.** Within a process the
+ * `total_cost_usd` figure is cumulative, so where one process ends and the next
+ * begins decides the total — and the event stream does not carry that boundary.
+ * The orchestrator records it instead: a `phase` record "carries a `sessionId`
+ * exactly when this record spawned a process, which is what lets a resumed run
+ * split the log into per-process cost windows" (`src/run.ts`), and
+ * `foldForResume` is the fold that reads it. So the rail is handed windows and
+ * never infers them.
+ *
+ * Three rules that look like they would work from the stream alone, and do not:
+ *
+ * - **The session id.** `--resume` spawns a second process on the *same*
+ *   session, so grouping by it merges two windows and under-counts.
+ * - **The `system/init` event.** Tempting, since every invocation opens with
+ *   one. But a phase sends several turns down one live process's stdin
+ *   (`PhaseSession.turn`), and `test/fake-claude.ts` — this project's
+ *   faithfulness reference for CLI behaviour, and what Tasks 8 to 14 are tested
+ *   against — replays a whole fixture, init line included, for **every** turn,
+ *   rewriting the figure to the running total as it goes. A turn can therefore
+ *   open an `init` that is not a new process, and summing those windows inflates
+ *   the bill. Over-counting is the one direction a cost panel must never fail
+ *   in, and the real CLI's behaviour here was never probed.
+ * - **One result per process.** `result_index` and `queued_turn_count` say a
+ *   process can emit several, which is why this is a list and not a figure.
+ */
 export interface CostProcess {
   results: readonly ResultEvent[]
-}
-
-/**
- * Splits a stream into per-process cost windows, on `init`.
- *
- * `src/run.ts` puts it plainly: "a spawn closes the previous process's window.
- * Summing every result instead would double-count: within one process the
- * figure is cumulative, so each turn's total includes the ones before it."
- * In a log that rule reads the `sessionId` on a `phase` record; in a stream the
- * same boundary is the `system/init` line every invocation opens with.
- *
- * **Never the session id.** A `--resume` spawns a second process on the *same*
- * session, so grouping by session id would merge two windows and under-count.
- *
- * The dimension this reads is "how many `init` events the stream holds before
- * the first result":
- *
- * - *None* (a trimmed log, a replay that starts mid-process): the leading
- *   results form one implicit window, so the run reports the last figure rather
- *   than nothing. Under-counts if those results really came from two processes,
- *   and under-reporting is the direction a budget ceiling survives.
- * - *One*: the ordinary case.
- * - *Several in a row*: the empty windows between them contribute nothing.
- */
-export function splitProcesses(events: readonly Event[]): CostProcess[] {
-  const processes: { results: ResultEvent[] }[] = []
-  let open: { results: ResultEvent[] } | undefined
-
-  for (const event of events) {
-    if (event.kind === "init") {
-      open = { results: [] }
-      processes.push(open)
-      continue
-    }
-    if (event.kind !== "result") continue
-    if (open === undefined) {
-      open = { results: [] }
-      processes.push(open)
-    }
-    open.results.push(event)
-  }
-  return processes
 }
 
 /**
@@ -541,7 +530,7 @@ const MONO = "font-mono tabular-nums"
 
 export function Sidebar({
   phases,
-  events,
+  processes,
   ceilingUsd,
   windows,
   grinding = null,
@@ -551,7 +540,7 @@ export function Sidebar({
   const reduce = usePrefersReducedMotion()
 
   const ladder = useMemo(() => phaseLadder(phases), [phases])
-  const spent = useMemo(() => sumProcessCost(splitProcesses(events)), [events])
+  const spent = useMemo(() => sumProcessCost(processes), [processes])
   const accounts = useMemo(() => dedupeWindows(windows), [windows])
   const notice = useMemo(() => limitNotice(accounts), [accounts])
   const { show: showGrinding, dismiss } = useGrindingNotice(grinding)

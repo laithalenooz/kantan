@@ -50,12 +50,12 @@ const {
   percentLabel,
   phaseLadder,
   ringOffset,
-  splitProcesses,
   sumProcessCost,
   NEAR_LIMIT,
   RING_CIRCUMFERENCE,
 } = await import("../../src/ui/Sidebar.tsx")
 type AccountWindow = import("../../src/ui/Sidebar.tsx").AccountWindow
+type CostProcess = import("../../src/ui/Sidebar.tsx").CostProcess
 type PhaseStep = import("../../src/ui/Sidebar.tsx").PhaseStep
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -198,15 +198,37 @@ const TWO_PROCESS_LINES = [
   resultLine(2.76, 3),
 ]
 
-const TWO_PROCESS = parse(TWO_PROCESS_LINES)
+/** The `result` events in a stream, in order, with nothing else. */
+function resultsOf(events: readonly Event[]) {
+  return events.flatMap((event) => (event.kind === "result" ? [event] : []))
+}
+
+/**
+ * One cost window, built from real stream-json lines through the real parser.
+ *
+ * The windowing is the caller's, which is the contract: the boundary lives on
+ * the log's `phase` records, not in the stream. See `CostProcess`.
+ */
+function processFrom(lines: readonly string[]): CostProcess {
+  return { results: resultsOf(parse(lines)) }
+}
+
+const PLAN_PROCESS = processFrom(TWO_PROCESS_LINES.slice(0, 4))
+const IMPLEMENT_PROCESS = processFrom(TWO_PROCESS_LINES.slice(4))
+
+const TWO_PROCESSES: CostProcess[] = [PLAN_PROCESS, IMPLEMENT_PROCESS]
 /** Just the first process, for a before-and-after on the ticker. */
-const ONE_PROCESS = parse(TWO_PROCESS_LINES.slice(0, 4))
+const ONE_PROCESS: CostProcess[] = [PLAN_PROCESS]
 
 const CORRECT_TOTAL = 3.18
 const NAIVE_TOTAL = 5.56
 
-function naiveSum(events: readonly Event[]): number {
-  return events.reduce((total, event) => (event.kind === "result" ? total + event.costUsd : total), 0)
+/** Every result of every process added up: the double-counted figure. */
+function naiveSum(processes: readonly CostProcess[]): number {
+  return processes.reduce(
+    (total, process) => process.results.reduce((sum, result) => sum + result.costUsd, total),
+    0,
+  )
 }
 
 /** A real `rate_limit_event`, shaped like the captured fixtures. */
@@ -292,7 +314,7 @@ function rail(overrides: Partial<Parameters<typeof Sidebar>[0]> = {}) {
   return (
     <Sidebar
       phases={runningPhases()}
-      events={TWO_PROCESS}
+      processes={TWO_PROCESSES}
       ceilingUsd={50}
       windows={TWO_ACCOUNTS}
       {...overrides}
@@ -540,19 +562,24 @@ describe("the limit notice", () => {
 // ---------------------------------------------------------------------------
 
 describe("cost", () => {
-  test("the fixture really is two processes on one session id", () => {
-    const inits = TWO_PROCESS.filter((event) => event.kind === "init")
+  test("the fixture is two processes sharing one session id", () => {
+    /* A plan phase and the re-plan gate feedback resumes are one conversation
+     * and two processes, so the session id cannot be the boundary. Both
+     * processes here carry the same one. */
+    const inits = parse(TWO_PROCESS_LINES).flatMap((event) => (event.kind === "init" ? [event] : []))
     expect(inits).toHaveLength(2)
-    expect(inits.map((event) => (event.kind === "init" ? event.sessionId : ""))).toEqual([SESSION, SESSION])
-    expect(splitProcesses(TWO_PROCESS)).toHaveLength(2)
+    expect(inits.map((event) => event.sessionId)).toEqual([SESSION, SESSION])
+    /* And the rail cannot group by it even if it wanted to: a window carries
+     * results and nothing else. */
+    expect(Object.keys(PLAN_PROCESS)).toEqual(["results"])
   })
 
   test("it sums the last result of each process, and naive summation differs", () => {
-    const processes = splitProcesses(TWO_PROCESS)
+    const processes = TWO_PROCESSES
     expect(processes.map((process) => process.results.at(-1)?.costUsd)).toEqual([0.42, 2.76])
 
     const correct = sumProcessCost(processes)
-    const naive = naiveSum(TWO_PROCESS)
+    const naive = naiveSum(TWO_PROCESSES)
 
     expect(correct).toBeCloseTo(CORRECT_TOTAL, 10)
     expect(naive).toBeCloseTo(NAIVE_TOTAL, 10)
@@ -571,22 +598,31 @@ describe("cost", () => {
     expect(textOf('[data-testid="cost-figure"]')).not.toBe("$5.56")
   })
 
-  test("results before any init form one window rather than vanishing", () => {
-    const orphans = parse([resultLine(0.2, 1), resultLine(0.5, 2)])
-    expect(splitProcesses(orphans)).toHaveLength(1)
-    expect(sumProcessCost(splitProcesses(orphans))).toBeCloseTo(0.5, 10)
+  test("one process that served several turns is one window, however many inits it emitted", () => {
+    /* Why the rail is handed its windows instead of splitting the stream on
+     * `init`: a phase sends several turns down one live process's stdin, and
+     * `test/fake-claude.ts` replays a whole fixture — init line included — for
+     * every one of them, rewriting the figure to the running total. So this
+     * stream holds two inits and two cumulative results for ONE process. */
+    const liveProcess = processFrom([initLine(), resultLine(0.1, 1), initLine(), resultLine(0.25, 2)])
+    expect(liveProcess.results).toHaveLength(2)
+    expect(sumProcessCost([liveProcess])).toBeCloseTo(0.25, 10)
+
+    /* Split on `init`, that same process would have billed 0.35 — and
+     * over-counting is the one direction a cost panel must never fail in. */
+    const splitOnInit = 0.1 + 0.25
+    expect(splitOnInit).not.toBeCloseTo(0.25, 2)
+    expect(splitOnInit).toBeGreaterThan(0.25)
   })
 
   test("a process that reported nothing contributes nothing", () => {
-    const empty = parse([initLine(), initLine(), resultLine(0.7, 1)])
-    expect(splitProcesses(empty)).toHaveLength(2)
-    expect(sumProcessCost(splitProcesses(empty))).toBeCloseTo(0.7, 10)
+    expect(sumProcessCost([{ results: [] }, PLAN_PROCESS])).toBeCloseTo(0.42, 10)
     expect(sumProcessCost([])).toBe(0)
   })
 
   test("the ceiling and the bar read the spend against the budget", async () => {
     setReducedMotion(true)
-    await render(rail({ events: ONE_PROCESS }))
+    await render(rail({ processes: ONE_PROCESS }))
 
     expect(textOf('[data-testid="cost-figure"]')).toBe("$0.42")
     expect(host.textContent).toContain("of $50.00 ceiling for this run")
@@ -596,10 +632,10 @@ describe("cost", () => {
 
   test("the bar never overflows its track", async () => {
     setReducedMotion(true)
-    await render(rail({ events: TWO_PROCESS, ceilingUsd: 1 }))
+    await render(rail({ processes: TWO_PROCESSES, ceilingUsd: 1 }))
     expect(one('[data-testid="cost-bar"]').style.width).toBe("100.00%")
 
-    await render(rail({ events: TWO_PROCESS, ceilingUsd: 0 }))
+    await render(rail({ processes: TWO_PROCESSES, ceilingUsd: 0 }))
     expect(one('[data-testid="cost-bar"]').style.width).toBe("0.00%")
   })
 
@@ -621,11 +657,11 @@ describe("cost", () => {
 describe("reduced motion", () => {
   test("stops the ticker: the figure is assigned, not counted", async () => {
     setReducedMotion(true)
-    await render(rail({ events: ONE_PROCESS }))
+    await render(rail({ processes: ONE_PROCESS }))
     expect(textOf('[data-testid="cost-figure"]')).toBe("$0.42")
     expect(one('[data-testid="cost-figure"]').dataset["ticker"]).toBe("static")
 
-    await render(rail({ events: TWO_PROCESS }))
+    await render(rail({ processes: TWO_PROCESSES }))
     /* Immediately, with no frames run at all. */
     expect(textOf('[data-testid="cost-figure"]')).toBe("$3.18")
     await settle(200)
@@ -634,11 +670,11 @@ describe("reduced motion", () => {
 
   test("and without it the ticker really does count", async () => {
     setReducedMotion(false)
-    await render(rail({ events: ONE_PROCESS }))
+    await render(rail({ processes: ONE_PROCESS }))
     expect(textOf('[data-testid="cost-figure"]')).toBe("$0.42")
     expect(one('[data-testid="cost-figure"]').dataset["ticker"]).toBe("animated")
 
-    await render(rail({ events: TWO_PROCESS }))
+    await render(rail({ processes: TWO_PROCESSES }))
     /* Mid-flight: somewhere between the two figures, not at the target. */
     const midFlight = textOf('[data-testid="cost-figure"]')
     expect(midFlight).not.toBe("$3.18")
