@@ -1118,9 +1118,9 @@ bun add motion
 bun add @tanstack/react-virtual
 ```
 
-Fonts: JetBrains Mono and IBM Plex Sans, self-hosted with `@font-face` and `font-display: swap`. Never a Google Fonts `<link>` in production.
+Fonts: **Public Sans and Commit Mono** (both SIL OFL 1.1), self-hosted. The earlier JetBrains Mono / IBM Plex pairing is superseded by the direction contract, and IBM Plex is on the banned-defaults list.
 
-Tokens from `DESIGN.md`, as CSS variables, with the shape lock (6px panels, 4px chips, no pills) expressed as variables so it cannot drift.
+**No radius scale exists, and its absence is the constraint** — the earlier 6px/4px shape lock is superseded. A standards document has rules and reversed plates, not cards. `rounded-*`, `shadow-*` and the stock type and colour scales emit no CSS at all; `--*: initial` wipes Tailwind's theme so `tokens.css` is the whole vocabulary.
 
 ```bash
 git add -A && git commit -m "feat: vite scaffold with design tokens and self-hosted fonts"
@@ -1134,7 +1134,9 @@ git add -A && git commit -m "feat: vite scaffold with design tokens and self-hos
 
 Project, then feature, then task, from the parsed markdown. The account label sits on every project row: design §5 lists a wrong account as a defect, because mis-billing a client because the UI stayed quiet is a real outcome.
 
-Status color is semantic. The dots carry real state, which is the documented exception to the no-decorative-dots rule.
+**There are no status dots, and no theme colours to build one from.** `src/ui/tokens.css` exposes the four pigments *only* as `plate-*` utilities carrying background, reversal, tinted muted text and ring together, so colour can commit at region scale and nowhere else. There is no `text-danger`. A coloured dot is accent-scale and would need an arbitrary value, which breaks the encoding.
+
+Carry state in the row itself: weight, case, a reversed cell, or a rule. Reach for a plate only where a whole region is the state — which on the tree means the row for a run that needs the human, not a bullet beside it.
 
 The empty state carries weight, since zero registered projects is the first screen anyone sees. One clear action: point at a repo.
 
@@ -1174,7 +1176,9 @@ Renders the plan markdown from the path the server dictated, plus a collapsed li
 
 A `waiting(question)` run renders the agent's question text with the same reply box, since design §3.2 routes an unanswered question to exactly this surface.
 
-Border Beam marks the active run panel while it is live and **stops at the gate**: the motion means "this is running", so leaving it on while waiting would lie.
+**Border Beam is removed** (design §4.2): running has no colour, and nothing is softened. Liveness is carried by the record visibly growing, which is what an appended document does.
+
+The gate's own signature move is the **full-bleed reversed plate**, and it arrives as a hard cut or a single fast wipe — a standards document does not fade its normative callouts in. `--wipe-duration` is the token; it is zeroed under `prefers-reduced-motion`.
 
 ```bash
 git add -A && git commit -m "feat: gate panel rendering the plan with approve and feedback"
@@ -1186,7 +1190,9 @@ git add -A && git commit -m "feat: gate panel rendering the plan with approve an
 
 **Files:** `src/ui/Sidebar.tsx`
 
-Per-phase durations. Cost as a Number Ticker against the ceiling. The 5h window as an Animated Circular Progress fed by `rate_limit_event`.
+Per-phase durations. Cost as a Number Ticker against the ceiling, in mono numerals.
+
+The 5h window is a **segmented ruled bar**, not a ring: design §4.2 specifies it and the craft floor bans progress rings outright. Fed by `rate_limit_event`.
 
 **Key the rate-limit meter by account, never globally** (design §2.1): limits are per account, and a single global meter would read the wrong window for half the projects.
 
