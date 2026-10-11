@@ -1192,7 +1192,7 @@ git add -A && git commit -m "feat: gate panel rendering the plan with approve an
 
 Per-phase durations. Cost as a Number Ticker against the ceiling, in mono numerals.
 
-The 5h window is a **segmented ruled bar**, not a ring: design §4.2 specifies it and the craft floor bans progress rings outright. Fed by `rate_limit_event`.
+**Superseded by the adopted design** (`DESIGN.md`, `docs/design/Main.dc.html`): the windows are two `Animated Circular Progress Bar` rings, one per account. The segmented-bar instruction and the `plate-*` utilities this section referenced belonged to the printed-document direction and are gone. Read the artboard.
 
 **Key the rate-limit meter by account, never globally** (design §2.1): limits are per account, and a single global meter would read the wrong window for half the projects.
 

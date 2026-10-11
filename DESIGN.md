@@ -40,10 +40,16 @@ Semantic, each with a tint and a readable text shade:
 | running / primary | `#5B5BD6` `#4B4BC8` `#3A3AA8` | `#DCDCF6` | |
 | passed | `#0F8A5F` `#0F7A54` | | |
 | failed | `#D92D3A` | | |
-| stalled / grinding | amber | | |
+| **stalled** | `#A23B87` `#93307A` plum | | |
+| grinding | amber (the notice only, not a state glyph) | | |
 | account chip | | `#E0F2FE` | `#075985` |
 
 **Orange is the one that pulls the eye, and only for "needs you".**
+
+`stalled` and `grinding` are **not the same colour and not the same kind of thing.** The `stalled`
+*state* is plum, drawn in `States.dc.html`. The `grinding` *notice* is an amber `Alert` in the
+right rail, which rides on a run that is still `running`. An earlier version of this file said
+"stalled / amber" and conflated them; the artboards are authoritative.
 
 ## Shape and depth
 
