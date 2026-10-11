@@ -146,9 +146,17 @@ interface Ws {
 
 type Turn = { fixture: string; cost?: number }
 
-/** A scratch directory per test, so no script, cursor or argv log is shared. */
+/**
+ * A scratch directory per test, so no script, cursor or argv log is shared.
+ *
+ * Keyed on the pid, not on the case name alone. This repo is developed with
+ * several agents running `bun run check` at once, and the `rm -rf` below would
+ * otherwise delete another process's workspace mid-test. Task 13 reproduced
+ * exactly that against its own suite: ten failures in one run, one in the next,
+ * with nothing wrong in either copy of the code.
+ */
 async function workspace(name: string, turns: Turn[] = [{ fixture: PLAN }]): Promise<Ws> {
-  const dir = join(repoRoot, ".orch-test", "spawn", name)
+  const dir = join(repoRoot, ".orch-test", "spawn", `${name}-${process.pid}`)
   await rm(dir, { recursive: true, force: true })
   await mkdir(dir, { recursive: true })
   const script = join(dir, "script.json")

@@ -78,6 +78,10 @@ the same discriminator.
 
 This repo is developed with background agents, and they edit files in the same working tree.
 
+**Do not `git add` until you are ready to commit.** The index is shared, so a file staged
+"just to count something" rides into whatever another agent commits next. That has now happened
+three times here, most recently to a test file whose author had staged it mid-run and kept working.
+
 **Never `git add -A`, and never a bare `git commit`, while one is running.** Both sweep in
 whatever else sits in the shared index. Twice during development a docs-only commit captured
 another agent's half-written test file: harmless content, but the message then describes something
@@ -96,6 +100,21 @@ nothing is cross-contaminated. A bare commit with both staged takes both.
 
 This is what makes work on disjoint files parallelisable without a worktree per agent, which
 matters because kantan's own design rejects worktree proliferation in favour of serialising runs.
+
+## Scratch directories must be keyed on the pid
+
+Several agents run `bun run check` at once, so a test helper that does
+`rm -rf <fixed path>` will delete another process's workspace mid-test. The failures look like
+real bugs and move between runs — ten in one, one in the next, with nothing wrong in either copy
+of the code.
+
+Key every scratch path on `process.pid`:
+
+```ts
+const dir = join(repoRoot, ".orch-test", "<suite>", `${name}-${process.pid}`)
+```
+
+`test/run.test.ts` and `test/spawn.test.ts` both do this. Any new suite that writes to disk must.
 
 ## Commits
 
