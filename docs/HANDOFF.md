@@ -80,12 +80,38 @@ anything else, so installing it suite-wide leaves `test/version.test.ts` passing
   missing fixture, more stdin turns than scripted, a non-`user` stdin message).
 - **Unknown flags are refused.** A task that adds a flag must add it to the enumeration in
   `test/fake-claude.ts` in the same change; the refusal lists what the double knows.
-- **`result_index` and every `uuid` replay as captured.** Two turns in one process both report
-  `result_index: 0` and repeat the capture's event uuids. Do not key dedup on them.
+- **`result_index`, every `uuid`, and every `system/init` field replay as captured.** Only
+  `session_id` and `total_cost_usd` are rewritten. So `init` reports the capture's `model`, `cwd`,
+  `permissionMode` and `claude_code_version` — `plan-success.jsonl` says sonnet even when the
+  spawn passed `--model claude-opus-5-5`. **Assert on the argv log, never on `init`'s fields.**
+  Rewriting them was rejected because matching the CLI's alias resolution would be a guess.
+  Likewise two turns in one process both report `result_index: 0` and repeat the capture's event
+  uuids, so nothing may key dedup on them.
 - A `cost` override rewrites `total_cost_usd` only. The per-model `modelUsage[*].costUSD` figures
-  stay as captured, so cost arithmetic must not read those.
+  stay as captured, so cost arithmetic must not read those. A fixture holding **two** result
+  events is refused outright, because within a process those figures are cumulative and the
+  double's model is one turn, one result.
+- **A hand-written fixture needs a `session_id`, `is_error` and `total_cost_usd` on its result
+  line**, and exactly one result event. The permissions task's planned `permission_denials`
+  fixture is the first case; `test/fake-claude.test.ts` has several minimal examples to copy.
+- **`--allowedTools` takes one value here**, though the real CLI also accepts it variadically. Pass
+  the list as a single comma or space separated token; a second bare token stops at the positional
+  guard rather than being dropped from the allowlist.
+- **A session becomes resumable only once a turn's replay finishes.** A SIGTERM mid-turn leaves the
+  turn unspent and the session unresumable, so Task 13's "killed mid-implement is resumable" test
+  must kill **between** turns or it meets `No conversation found`. What the real CLI does when
+  killed mid-turn is unprobed: probing it costs an API call.
+- **The shebang needs `bun` on the child's PATH.** A spawner that passes a curated env without
+  `PATH` gets exit 127 from `env`, which looks like neither a CLI error nor a refusal by the double.
 - Replaying a full fixture on turn 2 re-emits the `SessionStart` hook prefix, which the real CLI
   emits once per process. Harmless for a parser, confusing in a transcript.
+
+### The double does not emulate the Haiku calls — Task 26b
+`draftFeature` and `summarizeStall` are single-turn `claude -p` calls (design §3.5.1), which means
+a **positional prompt** and a text or JSON output format. `test/fake-claude.ts` refuses both: it
+replays `-p --input-format stream-json --output-format stream-json` only, and exits 2 naming the
+positional. Use the real CLI (Haiku is cheap and both jobs are off the critical path) or give those
+two functions their own stub. Do not widen the double to cover a second invocation shape.
 
 ### Fixtures are not byte-for-byte the CLI's output — Tasks 6 and 7
 Task 4's redaction pass re-serialised every line through Python, so the committed fixtures carry

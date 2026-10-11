@@ -101,6 +101,14 @@ const VALUE_FLAGS = new Set([
   "--max-budget-usd",
   "--session-id",
   "--resume",
+  // The permissions task in the implementation plan passes this "when the mode
+  // is acceptEdits". The real CLI offers both spellings and declares the value
+  // variadic (`<tools...>`) as well as comma or space separated; the double
+  // takes **one** value, so the variadic form stops at the positional guard
+  // with the stray token named. Dropping it silently would be a permissions
+  // change nobody asked for.
+  "--allowedTools",
+  "--allowed-tools",
 ])
 
 function recognised(): string {
@@ -478,11 +486,23 @@ async function replayTurn(
     emitted.push(rewritten)
   }
 
-  if (turn.cost !== undefined && results !== 1) {
+  // One turn, one result. `result_index` and `queued_turn_count` show that a
+  // real process can emit more than one, and within a process those figures
+  // are cumulative, so the running total above would double-count them -- the
+  // exact error docs/HANDOFF.md warns about for the real arithmetic. Refuse
+  // rather than quietly inflate a budget a later test asserts on.
+  if (results > 1) {
     die(
       2,
-      `fake-claude: ${path} has ${results} result events, so the turn's cost override has no ` +
-        "single result to apply to and would silently do nothing",
+      `fake-claude: ${path} holds ${results} result events; this double replays one result per ` +
+        "turn, and summing cumulative figures would double-count the turn's cost",
+    )
+  }
+  if (turn.cost !== undefined && results === 0) {
+    die(
+      2,
+      `fake-claude: ${path} has no result event, so the turn's cost override has nothing to ` +
+        "apply to and would silently do nothing",
     )
   }
 

@@ -16,21 +16,37 @@ async function workspace(name: string): Promise<string> {
 
 type Run = { out: string; err: string; code: number }
 
+/**
+ * The child's environment: the ambient one with every `ORCH_FAKE_*` stripped,
+ * plus what the test asks for.
+ *
+ * Without the strip, a test that deliberately configures no script would pick
+ * one up from the developer's shell, and the refusal it asserts on would
+ * depend on who ran the suite.
+ */
+function childEnv(overrides: Record<string, string | undefined> = {}): Record<string, string> {
+  const env: Record<string, string> = {}
+  for (const [k, v] of Object.entries(process.env)) {
+    if (v !== undefined && !k.startsWith("ORCH_FAKE_")) env[k] = v
+  }
+  for (const [k, v] of Object.entries(overrides)) {
+    if (v === undefined) delete env[k]
+    else env[k] = v
+  }
+  return env
+}
+
 /** Spawns the fake by bare path, the way a spawner holding ORCH_CLAUDE_BIN does. */
 async function runFake(opts: {
   args: string[]
   stdin?: string
   env?: Record<string, string | undefined>
 }): Promise<Run> {
-  const env: Record<string, string> = {}
-  for (const [k, v] of Object.entries({ ...process.env, ...opts.env })) {
-    if (v !== undefined) env[k] = v
-  }
   const p = Bun.spawn([FAKE, ...opts.args], {
     stdin: new TextEncoder().encode(opts.stdin ?? ""),
     stdout: "pipe",
     stderr: "pipe",
-    env,
+    env: childEnv(opts.env),
   })
   const [out, err, code] = await Promise.all([
     new Response(p.stdout).text(),
@@ -1144,15 +1160,11 @@ async function runFakeReads(opts: {
   stdin?: string
   env?: Record<string, string | undefined>
 }): Promise<{ chunks: Uint8Array[]; code: number }> {
-  const env: Record<string, string> = {}
-  for (const [k, v] of Object.entries({ ...process.env, ...opts.env })) {
-    if (v !== undefined) env[k] = v
-  }
   const p = Bun.spawn([FAKE, ...opts.args], {
     stdin: new TextEncoder().encode(opts.stdin ?? ""),
     stdout: "pipe",
     stderr: "pipe",
-    env,
+    env: childEnv(opts.env),
   })
   const chunks: Uint8Array[] = []
   for await (const chunk of p.stdout) chunks.push(chunk as Uint8Array)
@@ -1225,7 +1237,11 @@ test("a chunk boundary can fall inside a multi-byte character", async () => {
     env: {
       ORCH_FAKE_SCRIPT: script,
       ORCH_FAKE_CHUNK: String(lead + 1),
-      ORCH_FAKE_CHUNK_DELAY_MS: "20",
+      // Generous on purpose: the assertion below is about where the boundary
+      // falls, and a short gap on a loaded machine lets two writes arrive as
+      // one read. If this ever flakes, raise the delay rather than weakening
+      // the assertion.
+      ORCH_FAKE_CHUNK_DELAY_MS: "40",
     },
   })
 
@@ -1385,4 +1401,122 @@ test("a fixture line that is not JSON is refused", async () => {
   })
   expect(code).toBe(2)
   expect(err).toContain("line 1")
+})
+
+// ---------------------------------------------------------------------------
+// The half-duplex pattern Tasks 8 and 13 will actually use: stdin stays open,
+// a turn goes in, its result comes back, the next turn follows.
+//
+// Every other test here hands stdin over as one closed buffer, which would
+// hide a double that only replayed after EOF. That failure would surface in
+// Task 8 as a hang, and the spawner would get the blame.
+// ---------------------------------------------------------------------------
+
+test("serves each turn while stdin is still open", async () => {
+  const dir = await workspace("stdin-half-duplex")
+  const script = await writeScript(dir, [{ fixture: PLAN }, { fixture: QUESTION }])
+  const p = Bun.spawn([FAKE, ...baseArgs(["--session-id", randomUUID()])], {
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: childEnv({ ORCH_FAKE_SCRIPT: script }),
+  })
+
+  const reader = p.stdout.getReader()
+  const decoder = new TextDecoder()
+  let pending = ""
+
+  /** Reads until a result event completes, leaving stdin open throughout. */
+  async function nextResult(): Promise<Record<string, unknown>> {
+    for (;;) {
+      for (const line of pending.split("\n")) {
+        if (line.trim() === "" || !line.endsWith("}")) continue
+        const event = JSON.parse(line) as Record<string, unknown>
+        if (event["type"] === "result") {
+          pending = ""
+          return event
+        }
+      }
+      const { value, done } = await reader.read()
+      if (done) throw new Error("stdout closed before a result arrived")
+      pending += decoder.decode(value, { stream: true })
+    }
+  }
+
+  p.stdin.write(userTurn("plan this"))
+  p.stdin.flush()
+  expect(String((await nextResult())["result"])).toContain("I wrote the plan")
+
+  p.stdin.write(userTurn("now ask me something"))
+  p.stdin.flush()
+  expect(String((await nextResult())["result"])).toContain("AskUserQuestion")
+
+  p.stdin.end()
+  expect(await p.exited).toBe(0)
+}, 15000)
+
+// ---------------------------------------------------------------------------
+// --allowedTools, which the permissions task in the plan says Task 8 will pass
+// "when the mode is acceptEdits".
+// ---------------------------------------------------------------------------
+
+test("--allowedTools is accepted, in both spellings the real CLI offers", async () => {
+  const dir = await workspace("allowed-tools")
+  const script = await writeScript(dir, [{ fixture: PLAN }, { fixture: PLAN }])
+  const log = join(dir, "argv.jsonl")
+  for (const flag of ["--allowedTools", "--allowed-tools"]) {
+    const { err, code } = await runFake({
+      args: baseArgs(["--session-id", randomUUID()], [flag, "Edit Write Bash(git *)"]),
+      stdin: userTurn("plan this"),
+      env: { ORCH_FAKE_SCRIPT: script, ORCH_FAKE_ARGV_LOG: log },
+    })
+    expect({ flag, code, err }).toEqual({ flag, code: 0, err: "" })
+  }
+  const first = (await readLog(log))[0]?.["argv"] as string[]
+  expect(first[first.indexOf("--allowedTools") + 1]).toBe("Edit Write Bash(git *)")
+})
+
+test("--allowedTools spread over several tokens is refused, naming the token", async () => {
+  // The real CLI declares it variadic (<tools...>) as well as accepting one
+  // comma or space separated value. The double takes one value, so the
+  // variadic form stops here with the stray token named rather than being
+  // silently dropped from the allowlist, which would be a permissions change
+  // nobody asked for.
+  const dir = await workspace("allowed-tools-variadic")
+  const script = await writeScript(dir, [{ fixture: PLAN }])
+  const { err, code } = await runFake({
+    args: baseArgs(["--session-id", randomUUID()], ["--allowedTools", "Edit", "Write"]),
+    stdin: userTurn("plan this"),
+    env: { ORCH_FAKE_SCRIPT: script },
+  })
+  expect(code).toBe(2)
+  expect(err).toContain("Write")
+})
+
+test("a fixture with two result events is refused, override or not", async () => {
+  // test/fixtures/README.md notes that result_index and queued_turn_count
+  // imply a process can emit more than one result. Within one process those
+  // figures are cumulative, so adding them up double-counts, which is the
+  // exact error docs/HANDOFF.md warns about for the real arithmetic. The
+  // double's model is one turn, one result: anything else stops here instead
+  // of quietly inflating the running total.
+  const dir = await workspace("two-results")
+  const fixture = join(dir, "two-results.jsonl")
+  const result = (cost: number) =>
+    JSON.stringify({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      total_cost_usd: cost,
+      session_id: "11111111-1111-1111-1111-111111111111",
+    })
+  await writeFile(fixture, `${result(0.01)}\n${result(0.03)}\n`)
+  const script = await writeScript(dir, [{ fixture }])
+  const { err, code } = await runFake({
+    args: baseArgs(["--session-id", randomUUID()]),
+    stdin: userTurn("hi"),
+    env: { ORCH_FAKE_SCRIPT: script },
+  })
+  expect(code).toBe(2)
+  expect(err).toContain("result")
 })
