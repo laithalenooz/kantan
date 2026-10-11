@@ -8,7 +8,7 @@
  * The design is authoritative and lives in docs/design/. Read the artboard for
  * a region before building it; it is far more specific than this file.
  */
-export default function App() {
+export function App() {
   return (
     <div className="min-h-dvh">
       <header className="flex h-14 items-center gap-3 border-b border-edge bg-white/90 px-5">
