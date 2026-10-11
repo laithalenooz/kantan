@@ -116,6 +116,16 @@ test("bounds each output in the prompt without truncating the record", async () 
   expect(result.outputs[0]).toHaveLength(50_000)
 })
 
+test("keeps the end of a long output, where the failure is", async () => {
+  // A test runner prints the summary last, so a head-only window would show
+  // the model nothing but passing-test noise.
+  const long = `FIRST LINE\n${"passing noise\n".repeat(5_000)}LAST LINE: 3 failed`
+  const stub = replying("three tests fail")
+  await summarizeStall([long, long, long], stub.ask)
+  expect(stub.prompts[0]).toContain("LAST LINE: 3 failed")
+  expect(stub.prompts[0]).toContain("FIRST LINE")
+})
+
 // --- The seam: CLAUDE_BIN, so the fake binary can stand in -------------------
 
 const repoRoot = join(import.meta.dir, "..")
@@ -133,9 +143,11 @@ test("the default call goes through CLAUDE_BIN on claude-haiku-5-5", async () =>
     is_error: false,
     result: "the same assertion fails on every run",
   })
+  // U+001F between arguments, not newlines: the prompt is itself multi-line.
   await writeFile(
     stub,
-    `#!/bin/sh\nprintf '%s\\n' "$@" > ${JSON.stringify(argv)}\n` + `cat <<'JSON'\n${envelope}\nJSON\n`,
+    `#!/bin/sh\nprintf '%s\\037' "$@" > ${JSON.stringify(argv)}\n` +
+      `cat <<'JSON'\n${envelope}\nJSON\n`,
   )
   await chmod(stub, 0o755)
 
@@ -162,12 +174,23 @@ test("the default call goes through CLAUDE_BIN on claude-haiku-5-5", async () =>
   if (code !== 0) throw new Error(`probe exited ${code}: ${err}`)
 
   expect(out).toBe("the same assertion fails on every run|3")
-  const args = (await readFile(argv, "utf8")).split("\n")
+
+  // The terminating separator leaves an empty trailing field.
+  const args = (await readFile(argv, "utf8")).split("\u001f").slice(0, -1)
+  const valueOf = (flag: string) => {
+    const at = args.indexOf(flag)
+    return at === -1 ? `no ${flag} in argv` : args[at + 1]
+  }
   expect(args).toContain("-p")
-  expect(args).toContain("--output-format")
-  expect(args).toContain("json")
-  expect(args).toContain("--model")
-  expect(args).toContain("claude-haiku-5-5")
+  expect(valueOf("--model")).toBe("claude-haiku-5-5")
   // One answer, not a feed.
+  expect(valueOf("--output-format")).toBe("json")
   expect(args).not.toContain("stream-json")
+  // No tools, so untrusted test output cannot talk the call into reading a
+  // path out of a stack trace; no settings, CLAUDE.md, skills, hooks, plugins
+  // or MCP servers, so nothing turns one bounded call into an agent run.
+  expect(valueOf("--tools")).toBe("")
+  expect(args).toContain("--safe-mode")
+  expect(args).toContain("--strict-mcp-config")
+  expect(valueOf("--max-budget-usd")).toBe("0.05")
 })

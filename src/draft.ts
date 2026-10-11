@@ -47,7 +47,7 @@ import { CLAUDE_BIN } from "./version"
  * | empty or whitespace-only reply | refused |
  * | valid markdown with no checkboxes | refused: this is exactly the file that renders as an empty feature |
  * | checkboxes under a second heading | refused: the parser ends the task region at a heading, so those lines are unreachable |
- * | a checkbox that is indented, blockquoted, missing the space after the dash, or truncated mid-line | refused: it reads as a task to a human and is not one to the parser |
+ * | a checkbox that is indented, blockquoted, ordered (`2. [ ]`), missing the space after the dash, or truncated mid-line | refused: it reads as a task to a human and is not one to the parser |
  * | a task line with no text | refused |
  * | a ref-less task line | refused, never repaired |
  * | duplicate refs, refs with a gap, refs out of order | refused |
@@ -111,13 +111,15 @@ const FENCE_RE = /^(?:```|~~~)/
 const TITLE_RE = /^# \S/
 
 /**
- * A line whose first token is a bracket, bulleted or not, indented or not,
- * quoted or not. Wider than a task line on purpose: everything it matches
- * reads to a human as a checkbox, so anything it matches that is *not* a
- * well-formed task line is a line the parser and the human would disagree
- * about, and that disagreement is what this module exists to prevent.
+ * A line whose first token is a bracket, after an optional list marker:
+ * bulleted or ordered, indented or not, quoted or not. Wider than a task line
+ * on purpose: everything it matches reads to a human as a checkbox, so
+ * anything it matches that is *not* a well-formed task line is a line the
+ * parser and the human would disagree about, and that disagreement is what
+ * this module exists to prevent. The marker alternation mirrors
+ * `backlog.ts`'s `BULLET_RE`, because GFM renders `2. [ ]` as a checkbox too.
  */
-const LOOKS_LIKE_BOX = /^[ \t>]*[-*+]?[ \t]*\[/
+const LOOKS_LIKE_BOX = /^[ \t>]*(?:[-*+]|\d+[.)])?[ \t]*\[/
 
 /** A well-formed, column-zero, non-empty task line. */
 const TASK_LINE = /^- \[[ xX]\] \S/
@@ -341,6 +343,38 @@ export function haikuReply(run: HaikuRun): string {
 }
 
 /**
+ * The ceiling on one of these calls. Haiku is $0.10/$0.50 per MTok, so five
+ * cents is tens of thousands of tokens: orders of magnitude above a feature
+ * file or a one-line summary, which means it can only fire on a runaway. The
+ * CLI answers an exhausted budget with an error subtype and an empty result,
+ * and `haikuReply` refuses that by name rather than reporting "empty reply".
+ */
+const BUDGET_USD = "0.05"
+
+/**
+ * The flags that keep a bounded job from becoming an agent run.
+ *
+ * `-p` means non-interactive, **not** single-turn - design §3.1 runs the
+ * whole multi-turn implement loop through `claude -p`. What makes these calls
+ * one turn is having nothing to loop on: there is no `--max-turns` in the
+ * installed CLI (2.1.296), so `--tools ""` is the enforcement. It also means
+ * a stack trace in a stall's output cannot talk the call into reading a path.
+ *
+ * `--safe-mode` drops CLAUDE.md, skills, hooks, plugins, MCP servers and the
+ * user's settings, with auth and model selection untouched. Without it these
+ * two jobs inherit whatever the developer's own configuration asks of every
+ * session - this repo's global config, for one, makes skill loading a hard
+ * rule - and a transformation prompt comes back wrapped in that work.
+ * `--strict-mcp-config` pins the MCP half independently, since `--safe-mode`'s
+ * list is documented per version and this one is cheap to state.
+ *
+ * Every flag here was read out of the installed binary's own `--help`, not
+ * recalled. A CLI too old to know one of them exits non-zero and `haikuReply`
+ * names the flag it refused, which is a clear failure for an additive job.
+ */
+const BOUNDING_FLAGS = ["--tools", "", "--safe-mode", "--strict-mcp-config"] as const
+
+/**
  * The real single-turn call: `claude -p` on Haiku, through `CLAUDE_BIN` so the
  * fake binary can stand in. Hardcoding `"claude"` would bypass the seam every
  * test depends on.
@@ -350,9 +384,22 @@ export function haikuReply(run: HaikuRun): string {
  * move `askHaiku` there rather than duplicating it.
  */
 export const askHaiku: Ask = async (prompt) => {
+  const argv = [
+    CLAUDE_BIN,
+    "-p",
+    prompt,
+    "--output-format",
+    "json",
+    "--model",
+    HAIKU_MODEL,
+    ...BOUNDING_FLAGS,
+    "--max-budget-usd",
+    BUDGET_USD,
+  ]
+
   let p
   try {
-    p = Bun.spawn([CLAUDE_BIN, "-p", prompt, "--output-format", "json", "--model", HAIKU_MODEL], {
+    p = Bun.spawn(argv, {
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",

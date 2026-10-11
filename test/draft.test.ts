@@ -166,6 +166,16 @@ test("refuses a checkbox missing the space after the dash", async () => {
   await expect(draft("# W\n-[ ] T1 a\n")).rejects.toThrow(/checkbox|column/i)
 })
 
+test("refuses a blockquoted checkbox", async () => {
+  await expect(draft("# W\n- [ ] T1 a\n> - [ ] T2 b\n")).rejects.toThrow(/checkbox|column/i)
+})
+
+test("refuses a checkbox on an ordered-list marker", async () => {
+  // GFM renders "2. [ ]" as a checkbox and parseFeature does not read it as a
+  // task, which is the same human-sees-a-task-the-runner-cannot-tick trap.
+  await expect(draft("# W\n- [ ] T1 a\n2. [ ] T2 b\n")).rejects.toThrow(/checkbox|column/i)
+})
+
 test("refuses a pre-ticked task", async () => {
   await expect(draft("# W\n- [x] T1 a\n- [ ] T2 b\n")).rejects.toThrow(/ticked|done/i)
 })
@@ -306,11 +316,13 @@ test("the default call goes through CLAUDE_BIN on claude-haiku-5-5", async () =>
   await mkdir(dir, { recursive: true })
 
   // A stub that records its argv and answers with one JSON result envelope.
+  // The arguments are separated by U+001F, not newlines, because the prompt is
+  // itself multi-line and would otherwise shift every index after it.
   const argv = join(dir, "argv.txt")
   const stub = join(dir, "stub-claude")
   await writeFile(
     stub,
-    `#!/bin/sh\nprintf '%s\\n' "$@" > ${JSON.stringify(argv)}\n` +
+    `#!/bin/sh\nprintf '%s\\037' "$@" > ${JSON.stringify(argv)}\n` +
       `cat <<'JSON'\n${ok(CLEAN)}\nJSON\n`,
   )
   await chmod(stub, 0o755)
@@ -338,13 +350,24 @@ test("the default call goes through CLAUDE_BIN on claude-haiku-5-5", async () =>
   if (code !== 0) throw new Error(`probe exited ${code}: ${err}`)
 
   expect(out.startsWith("docs/features/widget-export.md\n")).toBe(true)
-  const args = (await readFile(argv, "utf8")).split("\n")
+
+  // The terminating separator leaves an empty trailing field.
+  const args = (await readFile(argv, "utf8")).split("\u001f").slice(0, -1)
+  const valueOf = (flag: string) => {
+    const at = args.indexOf(flag)
+    return at === -1 ? `no ${flag} in argv` : args[at + 1]
+  }
   expect(args).toContain("-p")
-  expect(args).toContain("--output-format")
-  expect(args).toContain("json")
-  expect(args).toContain("--model")
-  expect(args).toContain("claude-haiku-5-5")
   expect(args.some((a) => a.includes("export widgets to csv"))).toBe(true)
+  expect(valueOf("--model")).toBe("claude-haiku-5-5")
   // One answer, not a feed.
+  expect(valueOf("--output-format")).toBe("json")
   expect(args).not.toContain("stream-json")
+  // No tools, so there is no tool loop and nothing reads a path out of the
+  // description; no settings, CLAUDE.md, skills, hooks, plugins or MCP
+  // servers, so a project's own conventions cannot rewrite a drafting call.
+  expect(valueOf("--tools")).toBe("")
+  expect(args).toContain("--safe-mode")
+  expect(args).toContain("--strict-mcp-config")
+  expect(valueOf("--max-budget-usd")).toBe("0.05")
 })

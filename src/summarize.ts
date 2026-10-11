@@ -74,7 +74,7 @@ export async function summarizeStall(
     throw new Error("every output is blank, so there is nothing to summarize")
   }
 
-  const shown = outputs.map((out, i) => `Run ${i + 1}:\n${cap(out, PROMPT_CHARS)}`).join("\n\n")
+  const shown = outputs.map((out, i) => `Run ${i + 1}:\n${excerpt(out, PROMPT_CHARS)}`).join("\n\n")
   const reply = await ask(`${STALL_PROMPT}${shown}\n`)
 
   const summary = cap(reply.replaceAll(/\s+/g, " ").trim(), SUMMARY_CHARS)
@@ -89,4 +89,17 @@ export async function summarizeStall(
 function cap(text: string, limit: number): string {
   if (text.length <= limit) return text
   return `${text.slice(0, limit - 3).trimEnd()}...`
+}
+
+/**
+ * About `limit` characters of `text`, taken from **both ends** and marked in
+ * the middle. A test runner prints the command first and the failure summary
+ * last, so a head-only window would show the model passing-test noise and
+ * nothing of what broke.
+ */
+function excerpt(text: string, limit: number): string {
+  if (text.length <= limit) return text
+  const head = Math.floor(limit / 4)
+  const tail = limit - head
+  return `${text.slice(0, head)}\n... ${text.length - limit} characters cut ...\n${text.slice(-tail)}`
 }
