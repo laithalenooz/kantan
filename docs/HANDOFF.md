@@ -105,10 +105,11 @@ still lose an update, though `rename` means the file is never left truncated. Al
 `fsync` after the rename, so a power loss can lose the newest write but never corrupt the file.
 Crash-left `.tmp` files are ignored on read and never cleaned up.
 
-### `project.path` is only lexically normalised — Task 12 (git guards)
-`/repo/` and `/repo` collapse to one record, but **two symlinked spellings of one repo remain two
-records**, and nothing checks that the path exists or is a git repository. Task 12 owns the "is
-this a usable git repo" question, and should expect to be handed a path that is neither.
+### Two spellings of one repo still split the records — whoever owns project registration
+Task 12 consumed the git half of this: the guards resolve to the real root and the lock lives in
+`$GIT_COMMON_DIR`, so **two symlinked spellings cannot run at once**. But `projects.json`, the run
+logs and the index are still keyed on `project.path`, so the same repo registered twice is two
+records with two histories.
 
 `reportPath` may contain `..`; refusing it would mean guessing at monorepo layouts, so the code
 that joins it owns that check.
@@ -268,6 +269,40 @@ No real browser was involved in Task 16's suite. These are taken from the spec: 
 send `Origin` on non-GET/HEAD; browsers lowercase the host; `SameSite=Strict` semantics;
 `EventSource` cannot send custom headers. **If any is wrong, the GET/HEAD Origin exemption is the
 row that bites.** Worth one real-browser check during Task 25 or 26.
+
+### Call the git guards in `src/git.ts`'s documented order, and release in `finally` — Task 13
+The module header gives the call order. **A refusal at steps 3 to 5 otherwise leaves a lock
+holding a live pid that nothing reclaims until restart.** That ordering is documented but *not*
+tested, deliberately, because building an orchestrator inside Task 12 would have been
+over-building. So it is your responsibility, not the module's.
+
+**Resume must NOT call `recordBaseBranch`.** The branch and base come from the run header.
+Re-deriving them is both wrong — HEAD is on `orch/*`, which that function refuses — and is the
+branch-stacking bug the base discipline exists to prevent.
+
+`taskBranchName` needs `{ feature (repo-relative), ref }`. A ref-less task **throws**, so the open
+ref-less decision is still yours.
+
+### `isMergedIntoBase` reports ancestry, not intent — Task 7b, Task 13
+So a **squash merge** and a merge made only on the remote both read as **unmerged**. A task
+legitimately finished via squash will keep reporting `done, unmerged` and stay unstartable. Decide
+whether that is acceptable or needs an override.
+
+### A SIGKILLed server can leave a `claude` child still writing — Task 8 or 13
+The run lock judges only the server process, so reclaiming a stale lock can admit a second run
+into a tree where an orphaned child is still writing files. Task 11's process-group kill covers
+the test command; the agent child is not covered.
+
+### A clean `git status` does not mean a clean repo — Task 13
+Probed: a merge resolved back to HEAD's own content leaves `git status --porcelain` **completely
+empty** while `MERGE_HEAD` is still set, and the agent's next commit then silently becomes a merge
+commit carrying the user's second parent. `src/git.ts` checks `MERGE_HEAD`, `CHERRY_PICK_HEAD`,
+`REVERT_HEAD`, `rebase-merge`, `rebase-apply` and `BISECT_LOG` separately for this reason. Do not
+add a second porcelain-only check anywhere and treat it as sufficient.
+
+Also probed: **repo config can blind a porcelain check.** `status.showUntrackedFiles=no` hides
+untracked files and `diff.ignoreSubmodules=all` hides submodules, so every flag is passed
+explicitly. A guard whose blindness is configurable by the repo it guards is not a guard.
 
 ### A run has TWO session ids and using the wrong one fails silently — Task 13
 `runId` names the run. `planSessionId` and `implementSessionId` are separate conversations, and

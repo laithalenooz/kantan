@@ -63,6 +63,17 @@ Build what the task asks for. Over-building is a defect, not a bonus: an unreque
 
 Add no dependencies without a reason that survives being written down.
 
+## `bun --watch` reloads in the same process
+
+Probed across three reloads: the pid and `/proc/<pid>/stat` field 22 (start time) are **identical**
+after a reload. So the standard `(pid, start time)` liveness fingerprint cannot tell a reloaded
+server from the one that was running before it, and any lock or lease keyed on that pair will read
+its own abandoned state as live until you restart.
+
+`src/git.ts`'s run lock carries a per-module-load nonce for exactly this reason, and checks it
+*before* the start-time check. If you add anything else that claims an exclusive resource, it needs
+the same discriminator.
+
 ## Working alongside a background agent
 
 This repo is developed with background agents, and they edit files in the same working tree.
