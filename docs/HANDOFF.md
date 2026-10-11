@@ -18,6 +18,34 @@ Setting `process.env` inside a test body is a no-op. Any test that substitutes t
 it in the environment of a **fresh process**. `test/version.test.ts` and
 `test/fake-claude.test.ts`'s `claudeVersion()` test both do this; the pattern is worth copying.
 
+### The fixtures cannot exercise partial multi-byte reads — anyone testing a byte stream
+Task 4's redaction re-serialised the fixtures through Python, so they are pure ASCII with
+`\uXXXX` escapes where the CLI emits raw UTF-8. **No chunk boundary inside them can split a code
+point**, so a parser decoding each read independently passes every fixture test and corrupts real
+output. Supply raw-UTF-8 input for that case. Both Task 5 and Task 6 hit this independently.
+
+### A prefix filter passes the entire fixture suite — proven, not theoretical
+`src/stream.ts`'s mutation battery showed that `subtype.startsWith("hook")` passes **all 44**
+fixture-driven tests, because the fixtures hold only the three known hook subtypes and
+`thinking_tokens` does not match the prefix. Only a synthetic `system/hook_invented_future_thing`
+test separates an allowlist from a prefix. This is `CLAUDE.md`'s corollary in the flesh: the suite
+cannot see what the suite never varied.
+
+### A user-side `text` block must never map to `text` — Task 13 and the UI
+`src/stream.ts` routes it to `unknown` on purpose. Echoed prompts and system-reminders arrive as
+user text, and **the implement prompt contains the literal `ORCH: done`** — so mapping user text
+to `text` would feed the sentinel parser its own prompt and end a phase that never finished.
+
+### `CLAUDE_CONFIG_DIR` leaks in from the developer's shell — Task 8
+Spawning with `{...process.env}` inherits it. An "absent when the project names none" assertion
+must delete it explicitly, or it passes for the wrong reason on a machine that has it set and
+fails on one that does not.
+
+### The fake double does not cover Task 26b's invocation shape — Task 26b
+Its Haiku calls are a positional prompt with text or JSON output. The double refuses that by
+design, so use the real CLI (Haiku is cheap and both jobs are off the critical path) or a separate
+stub. Do not widen the double to a second invocation shape.
+
 ### The sentinel literals exist in two places and can drift — Task 13 or whoever notices
 `src/sentinel.ts` keeps `ORCH: done` and `ORCH: blocked` module-private, correctly, since its
 brief scoped it to one function. `src/prompts.ts` must emit the same literals. **Nothing currently
@@ -178,7 +206,7 @@ replacement snippet; do not skip it. This repo is open source.
 |---|---|
 | Hook events are filtered for display but the run log stays **raw** | The log doubles as permanent history and replay source. Filtering on write would make it unreplayable against a future parser. |
 | `system/thinking_tokens` exists and is **not** hook noise | Found only by inspecting real captures. Easy to lose to a `startsWith("hook")` filter, which is why Task 6 uses an allowlist. |
-| `error_max_budget_usd` carries **no `result` key at all** | Not an empty string: the field is absent. So `result` must be typed optional, the sentinel parser must never read text on an error event, and an error subtype outranks any sentinel. I originally recorded this as "empty string" because my check used `.get("result", "")`, which cannot distinguish absent from empty. Task 9 caught it. |
+| `error_max_budget_usd` carries **no `result` key at all** | Not an empty string: the field is absent. So `result` must be typed `string | undefined` (`src/stream.ts` keeps the key present and sets it `undefined`, so absent stays distinguishable from empty), the sentinel parser must never read text on an error event, and an error subtype outranks any sentinel. I originally recorded this as "empty string" because my check used `.get("result", "")`, which cannot distinguish absent from empty. Task 9 caught it. |
 | Cost resets per process, not per run | `--max-budget-usd` bounds one process. A resumed process reports only its own spend, which includes re-reading history. Sum the **last result of each process**; summing every result inside one process double-counts. |
 | The effort ladder stops at `xhigh`, not `max` | Anthropic's FrontierCode figures show Sonnet 5.5 scoring **lower at Max than at xhigh**. The top setting is worse, not just dearer. |
 | Escalating effort requires a respawn | `--effort` is spawn-time. `--resume` accepts a different one and keeps context (probed). |

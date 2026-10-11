@@ -26,7 +26,7 @@ Counted from these files, not imagined:
 | `assistant` | `text`, `tool_use` and `thinking` blocks. |
 | `user` | `tool_result` blocks, paired back by `tool_use_id`. |
 | `rate_limit_event` | Window utilization. |
-| `result/success`, `result/error_max_budget_usd` | Terminal. The error subtype outranks any sentinel. **`result` is optional** — absent on the error event, so do not type it as `string`. |
+| `result/success`, `result/error_max_budget_usd` | Terminal. The error subtype outranks any sentinel. **`result` is optional** — absent on the error event, so do not type it as `string`. On `error_max_budget_usd` the only prose explanation of the failure is `errors`, e.g. `["Reached maximum budget ($0.0001)"]`; a UI failure banner needs that field, not the missing text. |
 
 The error event also carries `errors`, `terminal_reason`, `stop_reason`, `permission_denials`,
 `result_index` and `queued_turn_count`. `result_index` and `queued_turn_count` imply a process can
