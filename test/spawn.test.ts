@@ -180,7 +180,6 @@ function project(over: Record<string, unknown> = {}): Record<string, unknown> {
     implementModel: "claude-sonnet-5-5",
     planEffort: "high",
     implementEffort: "medium",
-    resumePlanSession: false,
     ...over,
   }
 }
