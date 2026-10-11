@@ -16,13 +16,20 @@ import type { RunRecord } from "./runlog"
 /**
  * The tree's shapes, borrowed from the component rather than restated here.
  *
- * **Type-only, and that is what keeps React out of the server.**
- * `verbatimModuleSyntax` is on, so this form is erased rather than preserved as
- * a side-effect import - the inline `import { type X }` spelling would leave
- * `import {} from "./ui/Tree.tsx"` behind and load the component, `react/jsx-runtime`
- * and `motion` into the server process. Verified, not assumed: a
- * `bun build --target=bun` of this file pulls in neither `jsx-runtime` nor
- * `ui/Tree`, and the server boots and answers with no React in its graph.
+ * **Type-only, and that is what keeps React out of the server.** Verified, not
+ * assumed: a `bun build --target=bun` of this file bundles 15 modules with no
+ * `jsx-runtime` and no `ui/Tree` in them, importing this module leaves nothing
+ * matching react or motion in the module registry - importing `Tree.tsx`
+ * directly puts four such entries there - and the server boots and answers.
+ *
+ * The **top-level** spelling, deliberately, rather than an inline
+ * `import { type TreeProject }`. Probed, both ways, because the two are only
+ * equivalent by Bun's choice: with `verbatimModuleSyntax` on, `tsc` emits
+ * `import {} from "./m"` for the inline form - a side-effect import that loads
+ * the module - and nothing at all for this one, while **Bun erases both** (a
+ * module whose top level logs was not evaluated under either). So the inline
+ * form would work here today and is one transpiler away from loading React
+ * into the server, and this form cannot.
  *
  * Borrowed because the client feeds this payload straight into `<Tree>`: a
  * field renamed there becomes a compile error here instead of a row that
@@ -1099,6 +1106,18 @@ type FileRead =
  * `root` must already be canonical - both sides of the containment check are
  * compared as resolved paths, and a `root` that is itself a symlinked spelling
  * would refuse every file under it.
+ *
+ * **What this does not stop is a hard link**, and that is worth saying plainly
+ * rather than leaving to be discovered: `ln ~/.ssh/id_rsa docs/features/x.md`
+ * is a second directory entry for the same inode, not a link to follow, so
+ * `realpath` answers the path inside the repository and `O_NOFOLLOW` has
+ * nothing to refuse. Probed through this route, and the contents came back.
+ * Both callers inherit it. Refusing on `st_nlink > 1` would close it, and is
+ * not done here because it is a judgement about the threat model rather than
+ * about this function: the agent that could make the link can already read the
+ * file and paste it into the repo, so the hole is about what this server
+ * *renders*, not about what that agent can reach - and a hard-linked file is a
+ * thing a real repository can contain.
  */
 async function readInside(root: string, joined: string, maxBytes: number): Promise<FileRead> {
   let real: string
@@ -1388,8 +1407,16 @@ async function featuresOf(
   return { features, warnings }
 }
 
-/** Prose for a refused read, naming no resolved path: where a link inside the
- * user's repo points is not this route's to publish. */
+/**
+ * Prose for a refused read.
+ *
+ * None of these quotes the path the file resolved **to**: where a link inside
+ * the user's repo points is not this route's to publish, and the caller already
+ * names the path the project lists. The one exception is `failed`, which
+ * forwards an errno message, and `open`'s errno messages carry the resolved
+ * path - which by then has passed the containment check, so it is a path inside
+ * the repository either way.
+ */
 function whyUnread(read: Extract<FileRead, { ok: false }>): string {
   switch (read.why) {
     case "missing":
