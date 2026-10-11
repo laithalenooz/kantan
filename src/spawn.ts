@@ -68,8 +68,9 @@ export interface PhaseExit {
  * unread stdout stops the child mid-write and `exited` never resolves.
  */
 export interface PhaseProcess {
-  /** The flags the child was invoked with, for the run log header. Excludes
-   * the binary itself, which `claudeVersion()` already records. */
+  /** The flags the child was invoked with, for the run log header. The binary
+   * is not among them: `CLAUDE_BIN` names it, and the header records the
+   * version it reported rather than its path. */
   readonly argv: readonly string[]
   readonly stdout: ReadableStream<Uint8Array>
   readonly exited: Promise<PhaseExit>
@@ -82,9 +83,10 @@ export interface PhaseProcess {
 }
 
 /**
- * The smallest budget the CLI accepts, used when the ceiling is already spent.
+ * The budget passed when the ceiling is already spent: small enough that the
+ * first turn must exceed it, and still accepted.
  *
- * Probed: `--max-budget-usd 1e-9` is accepted and `<= 0` is refused with a
+ * Probed: `--max-budget-usd 1e-9` is accepted, and `<= 0` is refused with a
  * commander error and exit 1. See `budgetFlag` for why a floor beats passing
  * the real remainder through.
  */
@@ -112,6 +114,12 @@ const MIN_BUDGET_USD = 1e-9
  * run gets `subtype=error_max_budget_usd`, which §3.4 already handles by
  * offering a raise. The floor is tiny on purpose, so it cannot be mistaken for
  * a budget that could fund anything.
+ *
+ * **The floor is a backstop, not a policy.** The CLI checks the budget after
+ * the turn, not before: `test/fixtures/budget-exhausted.jsonl` was captured at
+ * `--max-budget-usd 0.0001` and reports `num_turns: 1` having spent $0.0046.
+ * So a spawn on an exhausted ceiling still costs about one turn, and the layer
+ * that tracks the total should refuse to spawn rather than lean on this.
  *
  * A non-finite remainder means the cost arithmetic upstream broke, and
  * flooring it would hide that for the rest of the run while every later
@@ -207,9 +215,10 @@ function startChild(argv: string[], project: Project) {
       stderr: "pipe",
     })
   } catch (cause) {
-    // Bun throws synchronously when the binary or the directory is missing,
-    // and the raw ENOENT names neither. A wrong ORCH_CLAUDE_BIN and a repo
-    // that has moved are both likely, so the message carries both candidates.
+    // Bun throws synchronously for both a missing binary and a missing cwd,
+    // and probed, the ENOENT names the **binary** either way - so a repo that
+    // has moved reads as a broken ORCH_CLAUDE_BIN. Naming the directory too is
+    // what tells the two apart.
     throw new Error(`cannot spawn ${CLAUDE_BIN} in ${cwd}: ${(cause as Error).message}`, { cause })
   }
 }

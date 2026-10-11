@@ -28,8 +28,10 @@ const BUDGET = join(FIXTURES, "budget-exhausted.jsonl")
 
 /**
  * The driver, generated because it must be a separate process and
- * `.orch-test/` is gitignored. It is typechecked along with everything else,
- * since `tsconfig.json` has no `exclude`.
+ * `.orch-test/` is gitignored. Being under a dot-prefixed directory, it is
+ * **not** typechecked: tsc's wildcard include skips those, so a type error in
+ * here surfaces only as a driver that fails at runtime, which `drive` reports
+ * with its stderr.
  *
  * It consumes stdout unconditionally: `plan-success.jsonl` is 93 KB, larger
  * than a pipe buffer, so an unread stdout wedges the child and `exited` never
@@ -735,6 +737,10 @@ test("the permission flags are the permissions module's, spliced in unchanged", 
 // ---------------------------------------------------------------------------
 
 test("the prompt reaches the child as one stream-json user message", async () => {
+  // The shape is the real CLI's, not the double's: the double only checks that
+  // `type` is "user" (anything else is a bug in the orchestrator that would
+  // hang in production), so agreement with it would prove nothing. Every
+  // script in docs/probes/ writes exactly this envelope to the real binary.
   const ws = await workspace("prompt-shape")
   const prompt = "write the plan to docs/plans/x.md\n\nORCH: done when finished"
   const out = await drive(ws, { spec: spec(), prompts: [prompt] })
