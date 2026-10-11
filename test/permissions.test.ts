@@ -57,7 +57,7 @@ const ENUMERATION: Row[] = [
   {
     testCmd: "cd packages/api && npm test",
     grant: null,
-    why: "two commands: `Bash(cd *)` denies the suite, and it matches the whole line, so it is also a blanket shell",
+    why: "two commands: no allow rule matches a chained command, so a rule derived from `cd` cannot cover the line and `npm test` stays denied",
   },
   {
     testCmd: "npx vitest run",
@@ -189,6 +189,89 @@ test("no testCmd can produce a blanket shell grant", () => {
       expect(program, testCmd).not.toContain("?")
       expect(program.length, testCmd).toBeGreaterThan(0)
     }
+  }
+})
+
+test("a leading word that runs another command refuses instead of deriving a blanket shell", () => {
+  // The adversarial loop above cannot see these, which is the point: every
+  // shape check it makes passes for `Bash(sudo *)` - one literal word, one
+  // trailing wildcard - while the grant is "run anything you like". A wrapper
+  // is only visible as a wrapper, and the CLI strips these before matching a
+  // deny rule precisely because they hide the real program; it does not strip
+  // them for allow rules.
+  const wrappers = [
+    ".",
+    "source",
+    "bash",
+    "builtin",
+    "chrt",
+    "command",
+    "csh",
+    "dash",
+    "doas",
+    "env",
+    "eval",
+    "exec",
+    "fish",
+    "flock",
+    "ionice",
+    "ksh",
+    "ltrace",
+    "nice",
+    "nocorrect",
+    "noglob",
+    "nohup",
+    "nsenter",
+    "pkexec",
+    "script",
+    "setsid",
+    "sh",
+    "strace",
+    "su",
+    "sudo",
+    "taskset",
+    "tcsh",
+    "time",
+    "timeout",
+    "unshare",
+    "watch",
+    "xargs",
+    "zsh",
+  ]
+  for (const word of wrappers) {
+    const testCmd = `${word} npm test`
+    expect(() => deriveAllowedTools(withTestCmd(testCmd)), testCmd).toThrow(/arbitrary shell/)
+  }
+  // And a quoted form, which the metacharacter checks deliberately let past:
+  // quotes in the arguments do not change what the rule would grant.
+  expect(() => deriveAllowedTools(withTestCmd("sh -c 'npm test'"))).toThrow(/arbitrary shell/)
+})
+
+test("a leading word that only changes the shell's state refuses, because no suite runs", () => {
+  // The opposite failure to a wrapper, and the brief's own example: granting
+  // `cd` is useless rather than dangerous, and the run fails at verification
+  // with nothing in the output naming this field.
+  for (const testCmd of ["cd", "cd packages/api", "cd /"]) {
+    expect(() => deriveAllowedTools(withTestCmd(testCmd)), testCmd).toThrow(
+      /changes the shell's own state/,
+    )
+  }
+})
+
+test("quotes and redirections in the arguments still derive the right rule", () => {
+  // Refusing these would be the too-narrow direction for no gain: the rule
+  // carries only the first word, and the CLI strips redirections from the
+  // command before matching it against a rule.
+  expect(deriveAllowedTools(withTestCmd('pytest -k "not slow"'))).toEqual([...BASE, "Bash(pytest *)"])
+  expect(deriveAllowedTools(withTestCmd("npm test > out.txt"))).toEqual([...BASE, "Bash(npm *)"])
+  expect(deriveAllowedTools(withTestCmd("npm test $EXTRA"))).toEqual([...BASE, "Bash(npm *)"])
+})
+
+test("a command nested inside the test command refuses, because no rule covers it", () => {
+  for (const testCmd of ["$(echo npm) test", "`id`", "(npm test)", "npm test ${ echo hi;}"]) {
+    expect(() => deriveAllowedTools(withTestCmd(testCmd)), testCmd).toThrow(
+      /runs a command inside itself|more than one command|not a literal program name/,
+    )
   }
 })
 

