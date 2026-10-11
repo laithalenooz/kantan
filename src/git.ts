@@ -21,9 +21,17 @@
  *   ... and `releaseRunLock` in a `finally`, or a refusal at 3, 4 or 5 leaves a
  *   lock holding a live pid, which nothing will ever reclaim.
  *
- * Resuming is the same list without step 4 and with `resumeTaskBranch` in place
- * of step 5: the dirty check must never block a run from re-entering its own
- * branch, because a SIGTERM leaves half-written files there by design.
+ * Resuming is steps 1 and 2, then `resumeTaskBranch`. It must **not** call
+ * `recordBaseBranch`: the branch and the base were recorded in the run log at
+ * run start, and re-deriving them is both wrong (the checkout is on the task's
+ * own `orch/` branch, which `recordBaseBranch` refuses by design) and the
+ * stacking bug that recording the base exists to prevent.
+ *
+ * `resumeTaskBranch` carries its own dirty check, exempt in exactly one case:
+ * the checkout is already on the branch being resumed, where the half-written
+ * files a SIGTERM left are that run's own. Anywhere else they are somebody's,
+ * and a `git switch` would carry them onto the task branch for the agent to
+ * commit. An operation left in progress is refused either way.
  */
 
 import { createHash, randomUUID } from "node:crypto"
@@ -121,25 +129,24 @@ export async function requireUsableRepo(path: string): Promise<Repo> {
  * Recording it is what stops run 2 branching off run 1 and tasks silently
  * stacking (design §3.6). Two states have no base and are refused:
  *
- * - **A detached HEAD.** `git branch --show-current` exits 0 and prints nothing
- *   (probed), so the string is what has to be tested, not the exit code. There
- *   is no branch to record and none to return to, and the state is usually a
- *   stopped rebase, bisect or cherry-pick whose anchor is not the project's
- *   mainline at all - branching a task from it is the stacking this prevents.
- *   The fix is one `git switch`, so refusing is the cheap direction.
+ * - **A detached HEAD.** There is no branch to record and none to return to,
+ *   and the state is usually a stopped rebase, bisect or cherry-pick whose
+ *   anchor is not the project's mainline at all - branching a task from it is
+ *   the stacking this prevents. The fix is one `git switch`, so refusing is the
+ *   cheap direction. Note that `git branch --show-current` exits 0 and prints
+ *   nothing here (probed), which is why `currentBranch` reads `symbolic-ref`.
  * - **A checkout left on an `orch/` branch.** This is the crash case: a run
  *   that never returned to base. Recording it would make the next task a child
  *   of the last one, which is exactly the failure base discipline exists for.
  */
 export async function recordBaseBranch(repo: Repo): Promise<string> {
-  const head = await runGit(repo.root, ["symbolic-ref", "--quiet", "--short", "HEAD"])
-  if (head.code !== 0) {
+  const branch = await currentBranch(repo)
+  if (branch === null) {
     const at = (await runGit(repo.root, ["rev-parse", "--short", "HEAD"])).out.trim()
     throw new Error(
       `${repo.root} has a detached HEAD at ${at}, so there is no base branch to record and none to return to when the run finishes. An unfinished rebase, bisect or cherry-pick looks like this too. Run \`git switch <your base branch>\` first.`,
     )
   }
-  const branch = head.out.trim()
   if (branch.startsWith(BRANCH_PREFIX)) {
     throw new Error(
       `${repo.root} is checked out on ${branch}, which is a kantan task branch rather than a base - an earlier run was interrupted before it returned to base. Recording ${branch} as the base would branch this task off that one. Run \`git switch <your base branch>\` first.`,
@@ -221,16 +228,27 @@ export async function requireCleanTreeForNewRun(repo: Repo): Promise<void> {
     )
   }
   if (dirty.length === 0) return
-
-  const kinds = new Set(dirty.map((e) => e.kind))
-  const advice = kinds.has("conflicted")
-    ? "Resolve the conflicts, or abandon the operation that caused them, before starting a run."
-    : kinds.has("untracked")
-      ? "Commit or stash them first: `git stash -u`. A plain `git stash` leaves untracked files behind, and you would hit this again."
-      : "Commit or stash them first: `git stash`."
   throw new Error(
-    `${repo.root}: ${count(dirty.length, "file")} ${dirty.length === 1 ? "has" : "have"} uncommitted changes, so starting a new run there could commit over work nobody asked kantan to touch.${listing(dirty)}\n${advice}`,
+    `${repo.root}: ${count(dirty.length, "file")} ${dirty.length === 1 ? "has" : "have"} uncommitted changes, so starting a new run there could commit over work nobody asked kantan to touch.${listing(dirty)}\n${stashAdvice(dirty)}`,
   )
+}
+
+/**
+ * How to clear the dirt, which depends on what kind it is.
+ *
+ * A plain `git stash` leaves untracked files behind, so a user told to stash
+ * would clear the tracked changes and hit the same refusal again on the next
+ * attempt - the fix has to match the dirt it is being offered for. A conflict
+ * is not stashable at all.
+ */
+function stashAdvice(entries: readonly DirtyEntry[]): string {
+  if (entries.some((e) => e.kind === "conflicted")) {
+    return "Resolve the conflicts, or abandon the operation that caused them, first."
+  }
+  if (entries.some((e) => e.kind === "untracked")) {
+    return "Commit or stash them first: `git stash -u`. A plain `git stash` leaves untracked files behind, and you would hit this again."
+  }
+  return "Commit or stash them first: `git stash`."
 }
 
 // --- Slugifying a task into a branch name ----------------------------------
@@ -365,12 +383,18 @@ export async function createTaskBranch(repo: Repo, branch: string, base: string)
 /**
  * Checks out the branch a run recorded, to resume it.
  *
- * No dirty check: a SIGTERM leaves half-written files on the task's own branch
- * by design, and refusing them would make an interrupted run unresumable.
+ * **The dirty-check exemption is for a run on its own branch, and only there.**
+ * A SIGTERM leaves half-written files behind, and refusing those would make an
+ * interrupted run unresumable - but they are only *this run's* files while the
+ * checkout is still on *this* branch. If HEAD has moved elsewhere since, the
+ * dirty files belong to someone else, and `git switch` would carry them onto
+ * the task branch for the agent to commit. So the exemption is conditional on
+ * HEAD, not on the fact that this is a resume.
  *
  * The branch must already exist. `git switch <name>` would otherwise invent one
- * from a remote-tracking ref of the same name, which would resume the run on
- * code nobody here wrote; `--no-guess` is belt to that braces.
+ * from a remote-tracking ref of the same name (probed: the DWIM needs the remote
+ * configured), which would resume the run on code nobody here wrote;
+ * `--no-guess` is belt to that braces.
  */
 export async function resumeTaskBranch(repo: Repo, branch: string): Promise<void> {
   requireTaskBranch(branch)
@@ -379,9 +403,37 @@ export async function resumeTaskBranch(repo: Repo, branch: string): Promise<void
       `the run recorded ${branch}, but ${repo.root} has no such branch any more - it was deleted, so there is nothing to resume. Start the task again.`,
     )
   }
+  // The sentinel cannot collide with a branch name: a refname holds no space.
+  const where = (await currentBranch(repo)) ?? "a detached HEAD"
+  const dirty = await dirtyEntries(repo)
+
+  // Checked before the own-branch exemption below, not after: a merge, revert
+  // or cherry-pick left in progress keeps HEAD on the branch, so the exemption
+  // would wave it through and the agent's next commit would inherit it.
+  const operation = await inProgressOperation(repo)
+  if (operation !== null) {
+    throw new Error(
+      `${repo.root} is in the middle of ${operation.what} on ${where}, so the run on ${branch} cannot be resumed yet: the agent's next commit would silently inherit it.${listing(dirty)}\nFinish it, or abandon it with \`${operation.abort}\`.`,
+    )
+  }
+
+  if (where === branch) return // already there, and the mess is this run's own
+  if (dirty.length > 0) {
+    // The escape hatch is only offered when a switch could actually work: git
+    // refuses to move a checkout with an unresolved index.
+    const hatch = dirty.some((e) => e.kind === "conflicted")
+      ? ""
+      : ` Or, if you know they belong to that run, \`git switch ${branch}\` yourself - which carries them deliberately - and resume again.`
+    throw new Error(
+      `${repo.root} is on ${where}, not on ${branch}, and it has uncommitted changes. Switching to resume the run would carry them onto ${branch} for the agent to commit, and kantan will not guess whether they are that interrupted run's work or somebody else's.${listing(dirty)}\n${stashAdvice(dirty)}${hatch}`,
+    )
+  }
+
   const moved = await runGit(repo.root, ["switch", "--no-guess", branch])
   if (moved.code !== 0) {
-    throw new Error(`could not switch ${repo.root} to ${branch} to resume the run: ${gitSaid(moved)}`)
+    throw new Error(
+      `could not switch ${repo.root} to ${branch} to resume the run: ${gitSaid(moved)}`,
+    )
   }
 }
 
@@ -394,8 +446,8 @@ export async function resumeTaskBranch(repo: Repo, branch: string): Promise<void
  * opposite of what this function is for.
  */
 export async function returnToBase(repo: Repo, base: string): Promise<void> {
-  const head = await runGit(repo.root, ["symbolic-ref", "--quiet", "--short", "HEAD"])
-  const where = head.code === 0 ? head.out.trim() : "a detached HEAD"
+  // The sentinel cannot collide with a branch name: a refname holds no space.
+  const where = (await currentBranch(repo)) ?? "a detached HEAD"
   const dirty = await dirtyEntries(repo)
   if (dirty.length > 0) {
     throw new Error(
@@ -831,6 +883,26 @@ async function runGit(dir: string, args: string[]): Promise<GitResult> {
 function gitSaid(r: GitResult): string {
   const [first] = r.err.trim().split("\n")
   return first === undefined || first === "" ? `git exited ${r.code}` : first
+}
+
+/**
+ * The branch HEAD is on, or null when HEAD is detached.
+ *
+ * `symbolic-ref --short` is deliberately not used. Probed: it shortens only as
+ * far as the name stays unambiguous, so a **tag** named `orch/t1-9f3a1c08`
+ * makes it print `heads/orch/t1-9f3a1c08`, and every comparison against a
+ * branch name here would quietly stop matching - including the one that refuses
+ * `orch/*` as a base, which is what stops tasks stacking.
+ */
+async function currentBranch(repo: Repo): Promise<string | null> {
+  const r = await runGit(repo.root, ["symbolic-ref", "--quiet", "HEAD"])
+  if (r.code !== 0) return null
+  const ref = r.out.trim()
+  // Anything outside refs/heads is not a branch this code can switch to or
+  // compare, so it is handled as a detached HEAD rather than guessed at.
+  if (!ref.startsWith("refs/heads/")) return null
+  const name = ref.slice("refs/heads/".length)
+  return name === "" ? null : name
 }
 
 /** The commit `rev` names, or null when there is no such thing. */

@@ -64,7 +64,10 @@ test("a lock whose pid has since been reused by another process is reclaimed", a
   expect(lock.reclaimed).not.toBeNull()
 })
 
-test("a lock written before the last reboot is reclaimed", async () => {
+// The boot id comes from /proc, so the check it feeds does not exist off Linux.
+const HAS_BOOT_ID = await Bun.file("/proc/sys/kernel/random/boot_id").exists()
+
+test.skipIf(!HAS_BOOT_ID)("a lock written before the last reboot is reclaimed", async () => {
   // After a reboot the pid may be live and its start time may even match, because
   // start time is measured from boot. The boot id is what breaks the tie.
   const { repo } = await repoWithCommit()
@@ -537,6 +540,28 @@ test("a new run refuses a task branch that already has commits ahead of base", a
   expect(await git(dir, "rev-parse", branch)).toBe(tip)
 })
 
+test("two tasks whose slugs collide get two branches, and the first one's tip is untouched", async () => {
+  // The pure-function injectivity test above says the names differ; this says
+  // the repo agrees, which is what stops two tasks overwriting each other.
+  const { dir, repo } = await repoWithCommit()
+  const base = await recordBaseBranch(repo)
+  const a = taskBranchName({ feature: "docs/importer!!.md", ref: "T1" })
+  const b = taskBranchName({ feature: "docs/importer--.md", ref: "T1" })
+  expect(a).not.toBe(b)
+
+  await createTaskBranch(repo, a, base)
+  await writeFile(join(dir, "t1.txt"), "task A's work")
+  await git(dir, "add", "-A")
+  await git(dir, "commit", "-m", "a")
+  const tipOfA = await git(dir, "rev-parse", a)
+  await returnToBase(repo, base)
+
+  await createTaskBranch(repo, b, base)
+
+  expect(await git(dir, "rev-parse", a)).toBe(tipOfA)
+  expect(await git(dir, "rev-parse", b)).toBe(await git(dir, "rev-parse", base))
+})
+
 test("a new run refuses an existing task branch even when it is merged into base", async () => {
   // Its tip can be an ancestor of base, so checking it out would hand the agent a
   // stale tree. Deleting the branch is the documented way to start the task over.
@@ -583,6 +608,59 @@ test("the dirty check applies to new runs but never to resuming a run on its own
 
   expect(await git(dir, "branch", "--show-current")).toBe(branch)
   await expect(requireCleanTreeForNewRun(repo)).rejects.toThrow()
+})
+
+test("resuming from a different branch IS blocked by a dirty tree", async () => {
+  // The exemption above is for a run's own branch. Here the dirty files are
+  // somebody else's, and `git switch` would carry them onto the task branch for
+  // the agent to commit.
+  const { dir, repo } = await repoWithCommit()
+  const base = await recordBaseBranch(repo)
+  const branch = taskBranchName({ feature: "docs/f.md", ref: "T1" })
+  await createTaskBranch(repo, branch, base)
+  await returnToBase(repo, base)
+  await writeFile(join(dir, "a.txt"), "somebody's unrelated edit")
+
+  const message = await messageOf(resumeTaskBranch(repo, branch))
+  expect(message).toContain("a.txt")
+  expect(await git(dir, "branch", "--show-current")).toBe(base)
+})
+
+test("an operation left in progress blocks a resume even on the run's own branch", async () => {
+  // A merge resolved back to HEAD's content leaves the tree looking clean, and
+  // the own-branch exemption must not wave that through.
+  const { dir, repo } = await repoWithCommit()
+  const base = await recordBaseBranch(repo)
+  const branch = taskBranchName({ feature: "docs/f.md", ref: "T1" })
+  await createTaskBranch(repo, branch, base)
+  await git(dir, "switch", "-c", "theirs")
+  await writeFile(join(dir, "a.txt"), "theirs\n")
+  await git(dir, "commit", "-am", "theirs")
+  await git(dir, "switch", branch)
+  await writeFile(join(dir, "a.txt"), "ours\n")
+  await git(dir, "commit", "-am", "ours")
+  await gitExit(dir, "merge", "theirs")
+  await writeFile(join(dir, "a.txt"), "ours\n")
+  await git(dir, "add", "a.txt")
+
+  expect(await git(dir, "status", "--porcelain")).toBe("")
+  expect(await messageOf(resumeTaskBranch(repo, branch))).toMatch(/merge/i)
+})
+
+test("a tag sharing a branch's name does not defeat the branch comparisons", async () => {
+  // Probed: `symbolic-ref --short HEAD` prints `heads/orch/...` when a tag of
+  // the same name exists, which would silently unmatch every comparison here -
+  // including the one that refuses an orch/ branch as a base.
+  const { dir, repo } = await repoWithCommit()
+  const base = await recordBaseBranch(repo)
+  const branch = taskBranchName({ feature: "docs/f.md", ref: "T1" })
+  await createTaskBranch(repo, branch, base)
+  await git(dir, "tag", branch, "HEAD")
+  await writeFile(join(dir, "a.txt"), "half-written when the server was killed")
+
+  expect(await messageOf(recordBaseBranch(repo))).toContain(branch)
+  await resumeTaskBranch(repo, branch) // still the run's own branch: exempt
+  expect(await git(dir, "branch", "--show-current")).toBe(branch)
 })
 
 test("resuming a run whose branch was deleted says so rather than creating one", async () => {
