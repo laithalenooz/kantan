@@ -100,18 +100,39 @@ The strictness is deliberate: a misspelled *optional* key (`configdir`) reads as
 dropped on the next write, which a missing-field check cannot catch because the field is optional.
 Verified: it throws naming the file, record index, bad key and the full allowed set.
 
-### `defaults()` throws on unknown keys — whoever adds project registration
-Reassigned from Task 18, which turned out not to be the consumer: `POST /api/runs` names a project
-by path and hands no request body to `defaults()`, so the throw is unreachable from the actions.
-The real consumer is the endpoint that *registers* a project from a form, which **no task in the
-plan builds** — Task 21's empty state ("point at a repo") needs one. When it is written: the throw
-is a **4xx, not a 500**, because it is the caller's typo rather than a server fault, and the same
-holds for `loadProjects` on a damaged store, which is a 5xx that forwards its message (it names the
-file and the field, and the user owns the file).
+### `POST /api/projects` is how a repo is registered, and it takes three keys — Task 21's empty state
 
-`src/server.ts` already has the shape to copy: body validation returns a refusal rather than
-throwing, and every handler's throw is caught and logged as a 500, so a validator that throws can
-never become an unhandled rejection.
+Consumed: `defaults()`'s throw now has a consumer, and it is a **400** that forwards the message.
+The contract, so the dialog does not learn it by trial:
+
+```
+POST /api/projects  {"path", "testCmd", "configDir"?}   -> 201 {"ok":true,"project":<the stored record>}
+```
+
+- **`path` and `testCmd` are required non-empty strings; `configDir` is optional and absolute.**
+  The dialog's "personal" / "work" account label is a `configDir` — a CLI profile directory, which
+  carries a CLAUDE.md, skills and settings as well as credentials — and the **UI owns that
+  mapping**. Sending `{"account":"personal"}` is a 400 naming the keys the route takes.
+- **The task file the dialog also asks for is not a project field.** It names a run, and it reaches
+  `POST /api/runs` as `featureFile`. Sending it here is a 400.
+- **Everything else takes the design's default** (`budgetUsd` 50, the two models, the two efforts,
+  `allowedTools: null`, no `reportPath`) and is edited in `projects.json`. The route's key list is
+  deliberately **not** a copy of `src/projects.ts`'s `FIELDS`: adding a field to `Project` is
+  already a four-place change and copying it would make it five.
+- **`path` comes back as git's resolved root**, which is why the 201 returns the whole stored
+  record: a trailing slash is gone and a symlinked spelling is resolved, and that path is the
+  identity every start request and every run log keys on.
+- **400** for a body `defaults()` refuses (its message is forwarded: "configDir must be an absolute
+  path - the CLI expands no `~`" is the only thing that fixes the mistake) and for a path
+  `requireUsableRepo` refuses, with git's own reason. **409** for a repo already registered —
+  `addProject` replaces a record wholesale, so a second trip through a three-field dialog would
+  reset a hand-tuned `budgetUsd` or `allowedTools`, and the store is the one state no repository can
+  rebuild; the message names the file to edit instead. **500 forwarding its message** for a damaged
+  store, which is the one 5xx that does: it names the file and the field, and the user owns that
+  file. **503** when the launch named no store at all.
+- `ServerOptions.projectsFile` has **no default**, unlike `runsDir`: the entry point passes
+  `defaultProjectsFile()` to the server *and* to `createRunner`, so the two provably read one file,
+  and a test that forgets to inject one gets a 503 rather than writing the developer's own store.
 
 ### `projects.json` has no cross-process lock — nobody, unless kantan grows a second process
 Writes are serialised in-process only, which is sound for one local server. A second process can
@@ -119,14 +140,19 @@ still lose an update, though `rename` means the file is never left truncated. Al
 `fsync` after the rename, so a power loss can lose the newest write but never corrupt the file.
 Crash-left `.tmp` files are ignored on read and never cleaned up.
 
-### Two spellings of one repo still split the records — whoever owns project registration
-Task 12 consumed the git half of this: the guards resolve to the real root and the lock lives in
-`$GIT_COMMON_DIR`, so **two symlinked spellings cannot run at once**. But `projects.json`, the run
-logs and the index are still keyed on `project.path`, so the same repo registered twice is two
-records with two histories.
+### Two spellings of one repo: closed over HTTP, still open for a hand-edited store — anyone writing one
+Task 12 consumed the git half: the guards resolve to the real root and the lock lives in
+`$GIT_COMMON_DIR`, so **two symlinked spellings cannot run at once**. `POST /api/projects` consumed
+the store half: it registers **git's resolved root**, not the spelling that was typed, so a second
+spelling meets the "already registered" 409 instead of forking the project's runs, logs and task
+tree. `projects.json`, the run logs and the index are all still keyed on `project.path`, so a store
+**hand-edited** to hold two spellings of one repo is still two records with two histories —
+`loadProjects` only refuses two records with the *same* path.
 
 `reportPath` may contain `..`; refusing it would mean guessing at monorepo layouts, so the code
-that joins it owns that check.
+that joins it owns that check. A recorded **`planPath` may not**: `GET /api/runs/:id/plan` refuses
+one by construction, because the machine dictates `docs/plans/<date>-<slug>.md` and nothing
+legitimate there contains a `..`.
 
 ### Driving the fake binary — Tasks 8 through 14
 `test/fake-claude.ts` is executable with a `bun` shebang, so `ORCH_CLAUDE_BIN=<abs>/test/fake-claude.ts`
@@ -262,19 +288,50 @@ while `replay` does not. A record appended after `end` therefore never reaches a
 will, since a reconnect replays from byte 0 and stops there again. Nothing writes past `end` today;
 the alternative was a poller and a descriptor per tab on every finished run.
 
+### The plan the gate renders has its own route, with three states — the gate UI
+
+`GET /api/runs/:id/plan` answers **200** with one of three shapes, and the gate's `undictated` and
+`unreadable` states are two of them:
+
+```
+{"ok":true,"state":"ready","planPath":"docs/plans/2026-10-11-x-t7.md","plan":"# The plan\n…"}
+{"ok":true,"state":"undictated","message":"…"}
+{"ok":true,"state":"unreadable","planPath":"…","message":"…"}
+```
+
+- **All three are a 200, because all three are states of a run** rather than failed requests. A run
+  can legitimately sit at a gate with no plan behind it: `ORCH: done` without a file written is
+  `unreadable`, and a log that never carried a path at all - an older log, or a run resumed from
+  one, where `src/run.ts` rehydrates `folded.planPath ?? ""` - is `undictated`. **Switch on
+  `state`, and render `message` as written**: it is prose for a person, which is what the card's
+  `role="alert"` needs.
+- **A 4xx means the request cannot be answered**: 400 for an unusable run id, 404 for a run with no
+  log, and 400 for a recorded path that does not sit inside the repo. That last one never quotes
+  the path back, so do not expect to render it.
+- **The path is read from the log's `phase` record and never re-derived.** `planPathFor` builds it
+  from the branch name and the date the run *started*, so a convention-derived path would point at
+  a file nothing wrote the moment either moved. The plan path is **repo-relative**, resolved against
+  git's own root for `header.projectPath`; a project whose repo has moved is `unreadable` carrying
+  git's reason.
+- **A plan over 1 MiB is `unreadable` rather than served**, with its size in the message. The file
+  is still on disk; nothing truncates it.
+- Invalid UTF-8 is `unreadable` too, rather than decoded with U+FFFD: a mangled plan is one someone
+  could approve.
+
 ### `GET` must have no side effects — every UI task
 `SameSite=Strict` ignores **ports**, so a page on any other localhost port is same-site. Its
 no-cors GETs (`img`, `script`, navigation) carry the auth cookie and send no `Origin`. Actions
 must be `POST`. A convenience GET that starts a run is reachable from any other local page.
 
-Task 18 consumed its half: all four actions are `POST`, and a loop in `test/server.test.ts` tries
+Task 18 consumed its half: every action is a `POST`, and a loop in `test/server.test.ts` tries
 `GET` and `HEAD` on every action path with no `Origin` and asserts both a 404 and that the phase
 machine recorded no call. Adding a `GET` spelling of an action therefore fails a test first.
 
-### What the four actions accept, so the UI does not learn it by trial — Tasks 21 to 25
+### What the run actions accept, so the UI does not learn it by trial — Tasks 21 to 25
 `POST /api/runs` takes `{"projectPath","featureFile","taskRef"}`, all three required non-empty
 strings, and answers **201** `{"ok":true,"runId"}`. `POST /api/runs/:id/approve` and `/stop` take
-**no body and no keys**; `/feedback` takes `{"text"}`. All three answer 200 `{"ok":true}`.
+**no body and no keys**; `/feedback` and `/answer` each take `{"text"}`. All four answer 200
+`{"ok":true}`.
 
 - **An unknown key is a 400**, as in `projects.json`, because a near-miss spelling is a value
   somebody typed and silence would drop it. The message names the keys the route *takes* and never
@@ -290,12 +347,24 @@ strings, and answers **201** `{"ok":true,"runId"}`. `POST /api/runs/:id/approve`
 - **413 over 64 KiB**, read with a running cap rather than from `Content-Length`, which a chunked
   request does not send at all. Invalid UTF-8 is a 400 rather than U+FFFD, since the big field is
   the human's own words.
-- Feedback text is forwarded **byte for byte**. Emptiness is judged on a trimmed copy; nothing
-  trimmed is ever sent on.
-- **503** on every action from a server launched without a phase machine, which is what
-  `bun run src/server.ts` still is: `createRunner()` in `src/run.ts` is the implementation of
-  `Runner`, and **nothing constructs one yet**. Wiring it is a two-line change in
-  `import.meta.main` (`runner: createRunner()`), left to whoever owns that file.
+- Feedback and answer text are forwarded **byte for byte**. Emptiness is judged on a trimmed copy;
+  nothing trimmed is ever sent on.
+- **`/answer` is not `/feedback`, and the UI needs two controls on one reply box rather than one
+  route that guesses.** `/feedback` revises a plan a human read at the gate; `/answer` replies to a
+  run parked at `waiting(question)` **or `waiting(blocked)`**, as the next turn on the session that
+  asked. Sending a reply to `/feedback` would put it into `feedbackPrompt`, which opens with "a
+  human read that plan at the gate and did not approve it".
+- **No action takes a `waitId`, and none will.** The gate's `${runId}#${phaseRecordIndex}` is a
+  client-side disambiguator: which states accept which action is the machine's rule, and a server
+  that re-read the log to check an id would encode run state a second time and race between the
+  check and the doing — the exact race the `Runner` port exists to avoid. The index is derivable
+  where the gate already reads: every stream connection replays from byte 0, so a client counting
+  `record` events has the log's own record index. Sending `waitId` to an action is a 400, like any
+  unknown key.
+- **503** on every action from a server launched without a phase machine. `bun run src/server.ts`
+  is **no longer** one: `import.meta.main` constructs `createRunner({ projectsFile, runsDir })` and
+  passes the same two paths to `createServer`, so the store the registration route writes is the
+  store the machine reads.
 
 ### Four security claims are spec-level, not observed — whoever tests with a real browser
 No real browser was involved in Task 16's suite. These are taken from the spec: browsers always
@@ -374,14 +443,15 @@ replacement snippet; do not skip it. This repo is open source.
 types and the machine's stay independent and a drift shows up as an assignability error at the one
 line that wires them.
 
-Three things to know before wiring it:
+It is wired: `import.meta.main` in `src/server.ts` constructs one and shares `projectsFile` and
+`runsDir` with it. Three things to know, the first of them settled rather than open:
 
-- **The port has no `answer`.** A run that ends a turn in prose, or with `ORCH: blocked <reason>`,
-  parks as `waiting(question)` / `waiting(blocked)`, and **no HTTP route can move it**: approve and
-  feedback both refuse (`wrong-state`), and stop/resume only re-park it. `createRunner` exposes
-  `answer(runId, text)` already, so the gap is a route and a `Runner` method, not machine work.
+- **`answer` is on the port now, and has a route.** A run that ends a turn in prose, or with
+  `ORCH: blocked <reason>`, parks as `waiting(question)` / `waiting(blocked)`, which approve and
+  feedback both refuse (`wrong-state`) and stop/resume only re-park. `POST /api/runs/:id/answer`
+  takes `{"text"}` and calls `Runner.answer`, which `createRunner` already had.
 
-  This also settles the question `docs/SEAMS.md` left open - whether `feedback` should accept
+  The reason it is its own action also settles the question `docs/SEAMS.md` left open - whether `feedback` should accept
   `waiting(question)` as well as `waiting(gate)`. It should not. `feedbackPrompt` opens with "a
   human read that plan at the gate and did not approve it", which is false for an agent that asked
   something and is waiting for the answer, and it is the wrong instruction for a question raised
@@ -436,10 +506,11 @@ replay in the same change - two sources will drift.
 
 ### Five things Task 13 left undone deliberately — their owners are named
 
-- **Nothing checks that the plan file exists at the gate.** An agent that answers `ORCH: done`
-  without writing one parks the run at a gate rendering nothing. Untestable against
-  `test/fake-claude.ts`, which cannot create files, so the check was left rather than written
-  blind - **the gate UI task** will see the empty render first.
+- **Nothing checks that the plan file exists at the gate**, and nothing will: the machine still
+  parks a run whose agent answered `ORCH: done` without writing one. What changed is that the gate
+  no longer renders nothing for it - `GET /api/runs/:id/plan` reports that as `unreadable` with the
+  path it looked at, so the failure is named where a human sees it rather than checked where
+  `test/fake-claude.ts` (which cannot create files) could not have tested it.
 - **A plan phase killed mid-first-turn cannot be resumed.** The session never completed a turn, so
   `--resume` meets `No conversation found` and the run fails with that message. Recovering means
   `git branch -D orch/<task>` and starting over. The same kill *after* the first turn resumes fine.

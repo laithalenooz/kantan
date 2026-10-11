@@ -1,6 +1,10 @@
 import { randomBytes, timingSafeEqual } from "node:crypto"
-import { stat } from "node:fs/promises"
+import { readFile, stat } from "node:fs/promises"
+import { isAbsolute, resolve, sep } from "node:path"
 import type { Server } from "bun"
+import { requireUsableRepo } from "./git"
+import { addProject, defaults, loadProjects } from "./projects"
+import type { Project } from "./projects"
 import { defaultRunsDir, replay, runLogPath } from "./runlog"
 import type { RunRecord } from "./runlog"
 
@@ -30,17 +34,22 @@ import type { RunRecord } from "./runlog"
  * owns the child process, so a reconnecting client replays everything and then
  * tails, with no cursor and no reconnect state machine.
  *
- * The four actions - start, approve, feedback, stop - are all `POST`, and that
- * is not a stylistic choice. `SameSite=Strict` ignores **ports**, so a page on
- * any other localhost port is same-site: its no-cors GETs (an `img`, a
- * `script`, a navigation) carry the auth cookie and send no `Origin`. A
- * convenience GET that started a run would be reachable from every other local
- * page on this machine.
+ * Every action - start, approve, feedback, answer, stop, and registering a
+ * project - is a `POST`, and that is not a stylistic choice. `SameSite=Strict`
+ * ignores **ports**, so a page on any other localhost port is same-site: its
+ * no-cors GETs (an `img`, a `script`, a navigation) carry the auth cookie and
+ * send no `Origin`. A convenience GET that started a run would be reachable
+ * from every other local page on this machine.
  *
- * None of them does any orchestration here. They validate a request and hand
- * it to the `Runner` the server was constructed with - the phase machine - so
- * the states a run can be in are decided in one place rather than encoded a
- * second time in a status code.
+ * None of the five run actions does any orchestration here. They validate a
+ * request and hand it to the `Runner` the server was constructed with - the
+ * phase machine - so the states a run can be in are decided in one place
+ * rather than encoded a second time in a status code.
+ *
+ * Registration is the exception, and deliberately so: there is no run and no
+ * machine involved, only `src/projects.ts`'s store plus the one check the store
+ * cannot make, which is whether the path is a git repository kantan could run
+ * in at all.
  */
 
 const LOOPBACK = "127.0.0.1"
@@ -170,6 +179,28 @@ export interface Runner {
    */
   feedback(runId: string, text: string): Promise<Acted>
   /**
+   * The reply to a run parked at `waiting(question)` or `waiting(blocked)`,
+   * sent as the next turn on **the session that asked** - plan or implement,
+   * whichever the phase record names.
+   *
+   * **It is not `feedback`, and that is the whole reason this method exists.**
+   * A question and a completion are indistinguishable in `claude -p`, so an
+   * agent that asked something exits `success` and kantan catches it by the
+   * missing sentinel. Routing that reply through `feedback` would send it into
+   * `feedbackPrompt`, which opens with "a human read that plan at the gate and
+   * did not approve it" - false for an agent waiting on an answer, and the
+   * wrong instruction for a question raised mid-implement, where the gate's
+   * feedback revises a plan while an answer continues work. `answerPrompt`
+   * carries the reply verbatim plus the one clause that differs by phase.
+   *
+   * Without this route such a run is unreachable: approve and feedback both
+   * refuse it `wrong-state`, and stop and resume only re-park it.
+   *
+   * Which states take an answer stays the machine's rule, per fact 3 above:
+   * `wrong-state` for a run that is not waiting on one.
+   */
+  answer(runId: string, text: string): Promise<Acted>
+  /**
    * Stops the run and leaves it **resumable**: SIGTERM the child, per
    * `src/spawn.ts`'s `terminate`, which deliberately does not close stdin or
    * clean up, because the session resumes from the same id and stopping
@@ -198,10 +229,19 @@ export interface ServerOptions {
   streamPollMs?: number
   /** How often an idle run stream sends a keep-alive comment. */
   streamKeepAliveMs?: number
-  /** The phase machine the four actions drive. Absent means a server that can
-   * serve pages and stream run logs but cannot drive a run, which answers 503
-   * on every action rather than 500 or a missing route. */
+  /** The phase machine the five run actions drive. Absent means a server that
+   * can serve pages and stream run logs but cannot drive a run, which answers
+   * 503 on every action rather than 500 or a missing route. */
   runner?: Runner
+  /**
+   * `projects.json`, which registration writes. **Deliberately without a
+   * default**, unlike `runsDir`: the store's location is a deployment fact that
+   * `defaultProjectsFile()` in `src/run.ts` owns, and the entry point passes
+   * the same path to the machine, so the two provably read one file. A default
+   * here would also mean every test that forgot to inject one registering
+   * projects in the developer's own `~/.orch/projects.json`.
+   */
+  projectsFile?: string
 }
 
 export interface Launch {
@@ -231,6 +271,10 @@ export interface RouteContext {
   /** `null` when the server was launched without one. Nullable rather than
    * optional so a handler cannot forget the case. */
   runner: Runner | null
+  /** `projects.json`, or `null` when the launch named none - see
+   * `ServerOptions.projectsFile`, which has no default on purpose. Nullable for
+   * the same reason as `runner`. */
+  projectsFile: string | null
 }
 
 /**
@@ -284,11 +328,25 @@ export const ROUTES: Record<string, RouteHandler> = {
    * handed to `runLogPath` exactly as sent. */
   "GET /api/runs/:id/stream": (req, ctx, params) => streamRunLog(req, ctx, params?.["id"] ?? ""),
 
-  // The four actions, design §4.4. POST, never GET: see the module header.
+  /** The plan the gate renders. A `GET`, and side-effect-free, which it must
+   * stay: `SameSite=Strict` ignores ports, so a page on any other localhost
+   * port can make this request with our cookie - it cannot read the answer,
+   * but it must not be able to *cause* anything. */
+  "GET /api/runs/:id/plan": (_req, ctx, params) => readPlan(ctx, params?.["id"] ?? ""),
+
+  // The run actions, design §4.4. POST, never GET: see the module header.
   "POST /api/runs": (req, ctx) => startRun(req, ctx),
   "POST /api/runs/:id/approve": (req, ctx, params) => approveRun(req, ctx, params?.["id"] ?? ""),
   "POST /api/runs/:id/feedback": (req, ctx, params) => feedbackOnRun(req, ctx, params?.["id"] ?? ""),
+  /** The reply to a run that asked a question, which no other route can move.
+   * Not `feedback`: see `Runner.answer`. */
+  "POST /api/runs/:id/answer": (req, ctx, params) => answerRun(req, ctx, params?.["id"] ?? ""),
   "POST /api/runs/:id/stop": (req, ctx, params) => stopRun(req, ctx, params?.["id"] ?? ""),
+
+  /** Registering a repository, which is what the design's empty state offers
+   * and what nothing wrote until now: `projects.json` was read everywhere and
+   * written by nobody. */
+  "POST /api/projects": (req, ctx) => registerProject(req, ctx),
 }
 
 /**
@@ -447,7 +505,7 @@ function fault(key: string, cause: unknown): Response {
  * trailing-slash normalisation, no case folding: a `:name` segment matches one
  * whole path segment and is handed over as sent.
  *
- * Patterns are tried in declaration order and the first match wins. The four
+ * Patterns are tried in declaration order and the first match wins. The ones
  * that exist cannot overlap: the method is segment 0 of the key and the verb is
  * the last segment, so `POST /api/runs/x/stop` meets exactly one of them. Two
  * patterns able to match a single path would be a mistake in the table rather
@@ -729,6 +787,215 @@ function send(controller: ReadableStreamDefaultController<Uint8Array>, chunk: Ui
   }
 }
 
+// --- The plan the gate renders ----------------------------------------------
+
+/**
+ * The most a plan file may be, read into memory and sent to a browser.
+ *
+ * The dimension is the file's size on disk, written by an agent in the user's
+ * own repo, and the two directions are not symmetric. **No cap**: one `GET`
+ * decides how much memory the server spends and how much the browser is asked
+ * to render, and a plan is the one file in the repo an agent is told to create
+ * from scratch - a loop that appended to it would be found this way.
+ * **Capped**: a plan longer than this renders as `unreadable` with its size in
+ * the message, which is a visible, correctable state rather than a lost one -
+ * the file is still on disk and the path is in the answer.
+ *
+ * 1 MiB is roughly 150,000 words of markdown. Design §3.1's plan is a document
+ * a human reads at a gate before approving it, so anything near this is already
+ * a plan nobody will read.
+ */
+const MAX_PLAN_BYTES = 1024 * 1024
+
+/**
+ * What the gate needs to render, in the three shapes it already models.
+ *
+ * Why these are a 200 and not a 404: a run can legitimately be parked at a gate
+ * with no plan behind it. The implement prompt tells the agent to write one at a
+ * dictated path, and an agent that answers `ORCH: done` without writing it
+ * parks the run at a gate rendering nothing (HANDOFF names the gate UI as where
+ * that surfaces). So "there is no plan" is a **state of the run**, which the
+ * gate shows with Approve disabled, rather than a request that failed. A 4xx
+ * here is reserved for a request that cannot be answered at all: an unusable
+ * run id, a run with no log, or a recorded path that points outside the repo.
+ *
+ * `message` is prose for a human, because the gate shows a refusal in a
+ * `role="alert"`: a code alone would be rendered to someone who then has to
+ * guess what to do about it.
+ */
+export type PlanAnswer =
+  | { ok: true; state: "ready"; planPath: string; plan: string }
+  /** No `phase` record carried a `planPath`, so the run never dictated one -
+   * an older log, or a run that failed before the plan phase started. */
+  | { ok: true; state: "undictated"; message: string }
+  /** A path was dictated and its contents cannot be had: never written, since
+   * deleted, not a file, not UTF-8, too large, or a project whose repo has
+   * moved. */
+  | { ok: true; state: "unreadable"; planPath: string; message: string }
+
+/**
+ * The path a plan may be recorded at, or `null`.
+ *
+ * `planPath` arrives from a **log record**, which is a file on disk that a
+ * person can edit and that an older or newer writer may have written
+ * differently, so it is caller input in the same class as a run id - and the
+ * check is `runLogPath`'s: refuse by construction rather than resolve and
+ * compare. The dimension is the recorded string, enumerated:
+ *
+ * - **Empty.** Names nothing. The caller answers `undictated` for it before
+ *   reaching here; refused again at this level so a future caller cannot join
+ *   an empty path to the root and read the directory itself.
+ * - **Absolute** (`/etc/passwd`, and on Windows a drive or a UNC path).
+ *   Refused: the prompt dictates a path *relative to the repository root*, and
+ *   `resolve(root, "/etc/passwd")` would discard the root entirely.
+ * - **Containing a `..` segment** (`../../.ssh/id_rsa`, `docs/../../x`).
+ *   Refused, which is cheap here: the machine dictates
+ *   `docs/plans/<date>-<slug>.md`, so nothing legitimate contains one.
+ *   `src/projects.ts`'s `reportPath` is the opposite case - there `..` is
+ *   allowed because monorepo layouts need it - and this is why that decision
+ *   belongs to each joiner rather than to a shared rule.
+ * - **Containing a NUL.** Refused: it truncates a path at the syscall boundary,
+ *   so what is checked and what is opened could differ.
+ * - **A backslash.** Kept as an ordinary character on POSIX, where it is a
+ *   legal filename byte, and rejected as a `..` segment on Windows by the
+ *   normalisation `isAbsolute`/`resolve` do there. A blanket refusal would
+ *   reject a legal POSIX path for a platform this tool is not running on.
+ * - **Anything else.** Taken as written and joined to the repo root, with the
+ *   containment check below as the second line of defence.
+ */
+function plannedPath(recorded: string): string | null {
+  if (recorded === "" || recorded.includes("\0")) return null
+  if (isAbsolute(recorded)) return null
+  // Split on both separators, so a Windows-style spelling cannot hide a `..`
+  // segment from a POSIX split.
+  if (recorded.split(/[/\\]/).includes("..")) return null
+  return recorded
+}
+
+const PLAN_OUTSIDE_REPO = "refused: this run's log records a plan path that does not sit inside its repository"
+
+/** What the log says about a run's plan: the project it belongs to and the last
+ * `planPath` any `phase` record carried. One pass over the log, which is what
+ * the stream route already costs per connection. The **last** one, because that
+ * is how `src/run.ts` folds it when it rehydrates a run; they agree today
+ * because every record that carries one carries the same value. */
+async function plannedFor(path: string): Promise<{ projectPath: string | null; planPath: string | null }> {
+  let projectPath: string | null = null
+  let planPath: string | null = null
+  for await (const record of replay(path)) {
+    if (record.kind === "header") projectPath = record.projectPath
+    if (record.kind === "phase" && record.planPath !== undefined) planPath = record.planPath
+  }
+  return { projectPath, planPath }
+}
+
+/**
+ * The contents of the plan file the run dictated.
+ *
+ * Read from the path the **log** records and never re-derived by convention:
+ * `planPathFor` builds it from the branch name and the date, so recomputing it
+ * here would mean a second slugger and a date that can have moved on since the
+ * run started - and a gate pointed at a file nothing wrote renders empty while
+ * the real plan sits beside it.
+ */
+async function readPlan(ctx: RouteContext, id: string): Promise<Response> {
+  const log = runLogPathFor(id, ctx.runsDir)
+  if (log === null) return refuse(400, UNUSABLE_RUN_ID)
+  try {
+    if (!(await stat(log)).isFile()) return refuse(404, NO_SUCH_RUN)
+  } catch {
+    return refuse(404, NO_SUCH_RUN)
+  }
+
+  const { projectPath, planPath } = await plannedFor(log)
+  // An empty recorded path is undictated rather than refused, and it is a real
+  // record rather than a hypothetical one: `src/run.ts` rehydrates a run with
+  // `folded.planPath ?? ""`, so a run resumed from a log that never carried one
+  // writes `planPath: ""` on its next phase record. It names no file either
+  // way, and "the run never dictated a path" is what the gate shows for it.
+  if (planPath === null || planPath === "") {
+    return planAnswer({
+      ok: true,
+      state: "undictated",
+      message:
+        "this run's log records no plan path, so there is nothing to show. A run that failed before its plan phase started, or one resumed from a log written without one, looks like this.",
+    })
+  }
+
+  // Before anything touches the filesystem, so a traversal is refused rather
+  // than attempted. Loud - a 400 - because a log recording a path outside its
+  // own repository is either hand-edited or a bug, and neither should read as
+  // "the plan is missing".
+  const relative = plannedPath(planPath)
+  if (relative === null || projectPath === null) return refuse(400, PLAN_OUTSIDE_REPO)
+
+  // git's own answer for the root, so a project registered through a symlink
+  // resolves to the directory the plan was actually written in. A project whose
+  // repo has moved or is no longer a repository is `unreadable` rather than a
+  // refusal: the request was fine, and the gate's own state for "the plan
+  // cannot be had" is exactly what that is.
+  let root: string
+  try {
+    root = (await requireUsableRepo(projectPath)).root
+  } catch (cause) {
+    return planAnswer({ ok: true, state: "unreadable", planPath, message: (cause as Error).message })
+  }
+
+  const file = resolve(root, relative)
+  // Unreachable given `plannedPath`, and kept because the two guards fail in
+  // different ways: that one reads the recorded string, this one reads the
+  // result of joining it. A future edit that loosened either alone would still
+  // meet this.
+  if (file !== root && !file.startsWith(root + sep)) return refuse(400, PLAN_OUTSIDE_REPO)
+
+  let size: number
+  try {
+    const info = await stat(file)
+    if (!info.isFile()) {
+      return planAnswer({
+        ok: true,
+        state: "unreadable",
+        planPath,
+        message: `${planPath} exists in ${root} but is not a file, so there is no plan to read.`,
+      })
+    }
+    size = info.size
+  } catch {
+    // The common case, and the one HANDOFF predicted: the agent answered
+    // `ORCH: done` without writing the plan it was told to write.
+    return planAnswer({
+      ok: true,
+      state: "unreadable",
+      planPath,
+      message: `${planPath} is the plan path this run dictated, and there is no file there. The agent ended its planning turn without writing one.`,
+    })
+  }
+  if (size > MAX_PLAN_BYTES) {
+    return planAnswer({
+      ok: true,
+      state: "unreadable",
+      planPath,
+      message: `${planPath} is ${size} bytes, past the ${MAX_PLAN_BYTES} a plan may be, so it is not rendered here. It is still on disk.`,
+    })
+  }
+
+  try {
+    // Not `utf8`: a decoder that substitutes U+FFFD would show a human mangled
+    // prose and let them approve it. Invalid bytes are `unreadable` instead.
+    const bytes = await readFile(file)
+    const plan = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes)
+    return planAnswer({ ok: true, state: "ready", planPath, plan })
+  } catch (cause) {
+    return planAnswer({ ok: true, state: "unreadable", planPath, message: (cause as Error).message })
+  }
+}
+
+/** No caching, as nothing else here is cached: a plan is rewritten when the
+ * human sends feedback, and a cached one would show the previous round's. */
+function planAnswer(answer: PlanAnswer): Response {
+  return Response.json(answer, { headers: { "Cache-Control": "no-store" } })
+}
+
 // --- The actions ------------------------------------------------------------
 
 /**
@@ -766,8 +1033,9 @@ function noRunner(): Response {
 /**
  * The most a request body may be, in bytes.
  *
- * The only field that can be large is the feedback a human types at the gate,
- * and 64 KiB is roughly ten thousand words: an order of magnitude past what
+ * The only fields that can be large are the words a human types - feedback at
+ * the gate, or an answer to a question the agent asked - and 64 KiB is roughly
+ * ten thousand words: an order of magnitude past what
  * anyone types into a textarea, with room left for a pasted diff or stack
  * trace, which is a legitimate thing to paste at a gate. Both directions were
  * weighed: a tighter cap refuses that paste, and no cap at all lets one request
@@ -911,7 +1179,33 @@ function nonEmptyString(value: unknown): string | null {
 
 const START_KEYS = ["projectPath", "featureFile", "taskRef"] as const
 const FEEDBACK_KEYS = ["text"] as const
+/** The same single key as feedback, and a separate constant on purpose: the two
+ * routes are different actions on different conversations, and sharing the
+ * literal would invite sharing the handler. */
+const ANSWER_KEYS = ["text"] as const
 const NO_KEYS: readonly string[] = []
+/**
+ * What registering a project takes, which is **not** every field a `Project`
+ * has.
+ *
+ * These three are what the design's "Add a repository" dialog asks for: the
+ * repo path, the test command, and the Claude account - which is spelled
+ * `configDir`, an absolute path to a CLI profile, because a profile carries a
+ * CLAUDE.md, skills and settings as well as credentials. Everything else
+ * (`budgetUsd`, the models, the efforts, `allowedTools`, `reportPath`) takes
+ * the design's default and is edited in `projects.json`, which is a file people
+ * hand-edit and read in diffs.
+ *
+ * Deliberately not a copy of `src/projects.ts`'s `FIELDS`: adding a field to
+ * `Project` is already a four-place change, and copying the list here would
+ * make it five. The cost of this list being short is that a setting the store
+ * supports cannot be set over HTTP, which is a 400 naming the keys this route
+ * does take rather than a silently dropped value.
+ *
+ * The task file the dialog also asks for is **not** a project field: it names a
+ * run, and it reaches `POST /api/runs` as `featureFile`.
+ */
+const PROJECT_KEYS = ["path", "testCmd", "configDir"] as const
 
 async function startRun(req: Request, ctx: RouteContext): Promise<Response> {
   const runner = ctx.runner
@@ -981,10 +1275,146 @@ async function feedbackOnRun(req: Request, ctx: RouteContext, id: string): Promi
   return acted(await gate.runner.feedback(id, text))
 }
 
+/**
+ * The reply to a run that asked a question, or that parked `blocked`.
+ *
+ * The same shape as feedback and a different action: `feedback` revises a plan
+ * a human read at the gate, this continues work the agent stopped to ask about,
+ * and the two go into different prompts. See `Runner.answer` for why one route
+ * cannot serve both. The text is forwarded exactly as sent, for the reasons
+ * spelled out on `feedbackOnRun`.
+ */
+async function answerRun(req: Request, ctx: RouteContext, id: string): Promise<Response> {
+  const gate = await actionGate(req, ctx, id, ANSWER_KEYS)
+  if ("refused" in gate) return gate.refused
+
+  const text = nonEmptyString(gate.fields["text"])
+  if (text === null) {
+    return badBody(ANSWER_KEYS, "an answer is the human's own text, and must be a non-empty string")
+  }
+  return acted(await gate.runner.answer(id, text))
+}
+
 async function stopRun(req: Request, ctx: RouteContext, id: string): Promise<Response> {
   const gate = await actionGate(req, ctx, id, NO_KEYS)
   if ("refused" in gate) return gate.refused
   return acted(await gate.runner.stop(id))
+}
+
+// --- Registering a project --------------------------------------------------
+
+function noStore(): Response {
+  return refuse(503, "refused: this server was launched without a project store, so it cannot register a project")
+}
+
+/**
+ * Registers a repository: `projects.json`'s first writer.
+ *
+ * Three validators run, in an order their answers depend on:
+ *
+ * 1. **The body's shape**, as every action does it - unknown keys refused by
+ *    name of the keys this route *takes*, never by echoing what was sent.
+ * 2. **`defaults()`**, which fills the design's defaults around what the dialog
+ *    supplied and then validates the record the store will accept. It
+ *    **throws**, and that throw is a **4xx**: it is the caller's typo - a
+ *    relative `configDir`, a blank `testCmd` - and not a server fault. It also
+ *    has to run before git, because a relative path must never reach a `git -C`
+ *    whose answer would then depend on where the server was launched from.
+ * 3. **`requireUsableRepo()`**, which is what the store cannot do.
+ *    `projects.json` only checks that `path` is an absolute string, so without
+ *    this a path that is not a repository, is a subdirectory of one, is bare,
+ *    or has no commits yet all register happily and fail at the first run -
+ *    where the message is about a run rather than about the registration that
+ *    was wrong.
+ *
+ * Both of those messages are forwarded as written, which is not a breach of
+ * `refuse`'s no-echo rule: that rule is about the *guards*, where the offending
+ * value is attacker-chosen and tells a legitimate caller nothing. These are
+ * `src/projects.ts`'s and `src/git.ts`'s own prose about a path the human typed
+ * into their own dialog, and quoting it back is the entire diagnosis - "it sits
+ * inside the repository rooted at X" is the sentence that fixes the mistake.
+ * The machine already answers this way: `src/run.ts`'s `unknown-project`
+ * refusal quotes the `projectPath` it was given.
+ */
+async function registerProject(req: Request, ctx: RouteContext): Promise<Response> {
+  const projectsFile = ctx.projectsFile
+  if (projectsFile === null) return noStore()
+
+  const body = await readBody(req)
+  if ("refused" in body) return body.refused
+  const parsed = parseBody(body.text, PROJECT_KEYS)
+  if ("refused" in parsed) return parsed.refused
+
+  const path = nonEmptyString(parsed.fields["path"])
+  const testCmd = nonEmptyString(parsed.fields["testCmd"])
+  if (path === null || testCmd === null) {
+    return badBody(PROJECT_KEYS, "a project is a repo path and the command that tests it, each a non-empty string")
+  }
+  const configDir = parsed.fields["configDir"]
+
+  let project: Project
+  try {
+    project = defaults({
+      path,
+      testCmd,
+      // Whether it is absolute, blank or absent is `defaults()`'s judgement to
+      // make - it owns the rule that the CLI expands no `~` - so the cast is
+      // the one place the body's shape is asserted rather than checked, and the
+      // throw it may produce is the 400 below. `null` reads as absent there,
+      // which is the store's own spelling of "the default profile".
+      ...(configDir === undefined ? {} : { configDir: configDir as string }),
+    })
+  } catch (cause) {
+    return refuse(400, (cause as Error).message)
+  }
+
+  let repoRoot: string
+  try {
+    repoRoot = (await requireUsableRepo(project.path)).root
+  } catch (cause) {
+    return refuse(400, (cause as Error).message)
+  }
+
+  // The repository's real root, not the spelling that arrived. `projects.json`
+  // is keyed on `path` and normalises lexically only, so two symlinked
+  // spellings of one repo would otherwise be two records with two histories
+  // (HANDOFF). `requireUsableRepo` has already refused anything that is not a
+  // root, so this differs from what was sent only where a symlink was involved
+  // - and registering the other spelling now meets the 409 below instead of
+  // quietly forking the project's history.
+  const record: Project = { ...project, path: repoRoot }
+
+  let registered: Project[]
+  try {
+    registered = await loadProjects(projectsFile)
+  } catch (cause) {
+    // A damaged store is a 5xx, and the one 5xx that forwards its message: it
+    // names the file, the record and the field, the user owns that file, and an
+    // editor fixes what a message points at. `fault`'s generic body would send
+    // them to a terminal they are not looking at. Logged there as well, because
+    // this is still a server-side surprise.
+    console.error(`POST /api/projects: ${projectsFile} cannot be read:`, cause)
+    return refuse(500, (cause as Error).message)
+  }
+
+  // Registering a known repo again is refused rather than applied, because
+  // `addProject` replaces a record **wholesale**: a second trip through a
+  // dialog that offers three fields would reset a `budgetUsd` or an
+  // `allowedTools` list that was tuned by hand, and the store is the one piece
+  // of state no repository can rebuild. Refusing costs an edit in a file the
+  // user already owns; accepting can cost settings nothing can recover.
+  if (registered.some((p) => p.path === record.path)) {
+    return refuse(
+      409,
+      `${record.path} is already registered in ${projectsFile}, so there is nothing to add. Edit that file to change its settings - registering it again would replace the whole record, including anything tuned there by hand.`,
+    )
+  }
+
+  await addProject(projectsFile, record)
+  // 201, and the stored record: `path` may differ from what was sent - a
+  // symlinked spelling, a trailing slash - and it is the identity every start
+  // request and every run log keys on, so the caller is told what it is.
+  return Response.json({ ok: true, project: record }, { status: 201 })
 }
 
 export function createServer(opts: ServerOptions = {}): Launch {
@@ -1005,6 +1435,7 @@ export function createServer(opts: ServerOptions = {}): Launch {
     // `null` rather than left undefined, so the 503 branch in every action is
     // reachable by a check and not by a TypeError.
     runner: opts.runner ?? null,
+    projectsFile: opts.projectsFile ?? null,
     hosts: new Set(),
     origins: new Set(),
   }
@@ -1042,7 +1473,31 @@ function parsePort(raw: string | undefined): number {
 
 if (import.meta.main) {
   const dev = process.env.ORCH_DEV === "1"
-  const launch = createServer({ port: parsePort(process.env.ORCH_PORT), dev })
+
+  // Imported here and nowhere else in this file. The `Runner` port exists so
+  // the server does not depend on the phase machine - the types either side
+  // stay independent and a drift shows up as an assignability error at the one
+  // line below that wires them - and a top-level import would undo half of
+  // that, putting `src/run.ts` and everything it spawns from into the module
+  // graph of every file that imports this one. The process entry point is the
+  // one place that has to know both.
+  const { createRunner, defaultProjectsFile } = await import("./run")
+
+  // One runs directory and one store, resolved once and given to both. Each
+  // defaults on its own otherwise, so threading them is what makes
+  // `POST /api/projects` and the machine provably read the same file: a server
+  // registering projects somewhere the runner never looks would answer 201 and
+  // then `unknown-project` on every start.
+  const runsDir = defaultRunsDir()
+  const projectsFile = defaultProjectsFile()
+
+  const launch = createServer({
+    port: parsePort(process.env.ORCH_PORT),
+    dev,
+    runsDir,
+    projectsFile,
+    runner: createRunner({ projectsFile, runsDir }),
+  })
   // The token is not printed: it belongs in the cookie, and a terminal is a
   // place things get pasted from.
   console.log(`kantan on http://${LOOPBACK}:${launch.port}${dev ? " (dev: Vite origin allowed)" : ""}`)

@@ -1,9 +1,22 @@
 import { afterAll, expect, test } from "bun:test"
-import { mkdtemp, open as openFile, readdir, readlink, realpath, rm, writeFile } from "node:fs/promises"
+import {
+  mkdir,
+  mkdtemp,
+  open as openFile,
+  readFile,
+  readdir,
+  readlink,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises"
 import { connect } from "node:net"
 import { networkInterfaces, tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, sep } from "node:path"
 import { requireCleanTreeForNewRun, requireUsableRepo } from "../src/git"
+import { loadProjects } from "../src/projects"
+import type { Project } from "../src/projects"
 import { createRunLog, runLogPath } from "../src/runlog"
 import type { RunHeader, RunLog, RunRecord } from "../src/runlog"
 import { ROUTES, TOKEN_EXEMPT, createServer, type Launch, type RouteContext } from "../src/server"
@@ -1256,6 +1269,7 @@ test("an id runLogPath refuses becomes a 400, not an unhandled rejection", async
     streamPollMs: 2,
     streamKeepAliveMs: 1000,
     runner: null,
+    projectsFile: null,
   }
 
   for (const id of ["..", ".", "", "a/b", "a\\b", "a\0b"]) {
@@ -1271,8 +1285,8 @@ test("an id runLogPath refuses becomes a 400, not an unhandled rejection", async
 // 10. Actions: start, approve, feedback, stop
 // ---------------------------------------------------------------------------
 
-// Design §4.4: SSE carries the run stream, plain POST carries the actions. All
-// four are POSTs and none of them is a GET, because `SameSite=Strict` ignores
+// Design §4.4: SSE carries the run stream, plain POST carries the actions.
+// Every one of them is a POST and none is a GET, because `SameSite=Strict` ignores
 // **ports**: a page on any other localhost port is same-site, so its no-cors
 // GETs - an `img`, a `script`, a navigation - carry the auth cookie and send no
 // `Origin`. A convenience GET that started a run would be reachable from every
@@ -1287,17 +1301,23 @@ test("an id runLogPath refuses becomes a 400, not an unhandled rejection", async
 const START = "POST /api/runs"
 const APPROVE = "POST /api/runs/:id/approve"
 const FEEDBACK = "POST /api/runs/:id/feedback"
+/** The reply to a run that asked a question. Not `feedback`: `feedbackPrompt`
+ * opens with "a human read that plan at the gate and did not approve it", which
+ * is false for an agent waiting on an answer, and the two replies go into
+ * different prompts and continue different conversations. */
+const ANSWER = "POST /api/runs/:id/answer"
 const STOP = "POST /api/runs/:id/stop"
-const ACTION_ROUTES = [START, APPROVE, FEEDBACK, STOP]
+const ACTION_ROUTES = [START, APPROVE, FEEDBACK, ANSWER, STOP]
 
 /** One call the server made on the machine, in arrival order. */
 interface RunnerCall {
-  name: "start" | "approve" | "feedback" | "stop"
+  name: "start" | "approve" | "feedback" | "answer" | "stop"
   /** Present on `start`, as the server built it from the body. */
   request?: StartRequest
-  /** Present on the three `:id` actions, exactly as the URL spelled it. */
+  /** Present on the four `:id` actions, exactly as the URL spelled it. */
   runId?: string
-  /** Present on `feedback`. Compared byte for byte: this is the human's text. */
+  /** Present on `feedback` and `answer`. Compared byte for byte: this is the
+   * human's own text. */
   text?: string
 }
 
@@ -1325,6 +1345,10 @@ function fakeRunner(over: Partial<Runner> = {}): Fake {
       calls.push({ name: "feedback", runId, text })
       return over.feedback === undefined ? { ok: true } : await over.feedback(runId, text)
     },
+    async answer(runId, text) {
+      calls.push({ name: "answer", runId, text })
+      return over.answer === undefined ? { ok: true } : await over.answer(runId, text)
+    },
     async stop(runId) {
       calls.push({ name: "stop", runId })
       return over.stop === undefined ? { ok: true } : await over.stop(runId)
@@ -1335,12 +1359,30 @@ function fakeRunner(over: Partial<Runner> = {}): Fake {
 
 const TASK: StartRequest = { projectPath: "/repo", featureFile: "docs/features/x.md", taskRef: "T7" }
 
-/** A started-run launch with its double, on a runs directory of its own so the
- * "wrote no record" assertions have something to read. */
-async function withRunner(over: Partial<Runner> = {}): Promise<{ l: Launch; fake: Fake; dir: string }> {
+/**
+ * A store path in a directory of its own, with **no file at it yet**: an absent
+ * store reads as "no projects", which is what a fresh install is.
+ *
+ * Never the developer's own `~/.orch/projects.json`. `ServerOptions` has no
+ * default for it for exactly this reason - a test that forgot to inject one
+ * would register projects in the store the developer runs kantan against.
+ */
+async function storeFile(): Promise<string> {
+  const dir = await realpath(await mkdtemp(join(tmpdir(), "orch-store-")))
+  scratchDirs.push(dir)
+  return join(dir, "projects.json")
+}
+
+/** A started-run launch with its double, on a runs directory and a store of its
+ * own so the "wrote no record" and "wrote no project" assertions have something
+ * to read. */
+async function withRunner(
+  over: Partial<Runner> = {},
+): Promise<{ l: Launch; fake: Fake; dir: string; store: string }> {
   const dir = await runsDir()
+  const store = await storeFile()
   const fake = fakeRunner(over)
-  return { l: serve({ runsDir: dir, runner: fake.runner }), fake, dir }
+  return { l: serve({ runsDir: dir, runner: fake.runner, projectsFile: store }), fake, dir, store }
 }
 
 function post(l: Launch, path: string, body?: string): Promise<{ status: number; headers: Headers; body: string }> {
@@ -1349,7 +1391,16 @@ function post(l: Launch, path: string, body?: string): Promise<{ status: number;
 
 // --- The route surface ------------------------------------------------------
 
-test("all four actions are POSTs registered in ROUTES, and none is token-exempt", () => {
+/** The path an action route is reached at, with a run id in place of `:id`.
+ * Derived from the table rather than listed again, so an action added to
+ * `ACTION_ROUTES` cannot fall out of the loops below - the slip those loops
+ * exist to prevent. */
+function actionPath(key: string, runId = "run-1"): string {
+  const [, pattern = ""] = key.split(" ")
+  return pattern.replace(":id", runId)
+}
+
+test("every action is a POST registered in ROUTES, and none is token-exempt", () => {
   for (const key of ACTION_ROUTES) {
     expect(Object.keys(ROUTES)).toContain(key)
     expect(key).toStartWith("POST ")
@@ -1360,12 +1411,17 @@ test("all four actions are POSTs registered in ROUTES, and none is token-exempt"
   expect([...TOKEN_EXEMPT].sort()).toEqual(["GET /", "GET /api/session"])
 })
 
-test("no action is reachable by GET or HEAD, so no local page can drive a run with an img tag", async () => {
-  // Structural, not a sample: every action path is tried with every method a
-  // no-cors cross-site request can use, and the double proves nothing ran.
-  const { l, fake } = await withRunner()
-  const paths = ["/api/runs", "/api/runs/run-1/approve", "/api/runs/run-1/feedback", "/api/runs/run-1/stop"]
-  for (const path of paths) {
+test("nothing that acts is reachable by GET or HEAD, so no local page can drive kantan with an img tag", async () => {
+  // Structural, not a sample: the paths come from every POST in the table -
+  // registering a project included, since a no-cors GET must not be able to
+  // write projects.json either - and each is tried with every method a no-cors
+  // cross-site request can use. The double proves nothing ran, and the absent
+  // store file proves nothing was written.
+  const { l, fake, store } = await withRunner()
+  const posts = Object.keys(ROUTES).filter((key) => key.startsWith("POST "))
+  expect(posts.length).toBeGreaterThanOrEqual(ACTION_ROUTES.length)
+
+  for (const path of posts.map((key) => actionPath(key))) {
     for (const method of ["GET", "HEAD"]) {
       // No Origin either, which is what those requests send.
       const res = await call(l, { path, method, origin: null })
@@ -1373,6 +1429,7 @@ test("no action is reachable by GET or HEAD, so no local page can drive a run wi
     }
   }
   expect(fake.calls).toEqual([])
+  expect(await loadProjects(store)).toEqual([])
 })
 
 // --- Start ------------------------------------------------------------------
@@ -1472,6 +1529,47 @@ test("feedback carries the human's text through byte for byte, including whitesp
   expect(fake.calls).toEqual([{ name: "feedback", runId: "abc", text }])
 })
 
+test("an answer reaches the machine's answer, not its feedback, and carries the reply byte for byte", async () => {
+  // The whole reason this route exists. `feedbackPrompt` opens with "a human
+  // read that plan at the gate and did not approve it", which is false for an
+  // agent that asked a question and is waiting - and it is the wrong
+  // instruction for a question raised mid-implement, where the gate's feedback
+  // revises a plan while an answer continues work. One route that guessed which
+  // conversation it was talking to would have to encode that rule here, where
+  // the machine already owns it.
+  const { l, fake } = await withRunner()
+  const text = " Persist it with sqflite.\n\n\tThe migration is fine - café ✓ 🙂 "
+  const res = await post(l, "/api/runs/abc/answer", JSON.stringify({ text }))
+
+  expect(res.status).toBe(200)
+  expect(JSON.parse(res.body)).toEqual({ ok: true })
+  expect(fake.calls).toEqual([{ name: "answer", runId: "abc", text }])
+  // And the other direction: feedback is still feedback.
+  const other = await withRunner()
+  await post(other.l, "/api/runs/abc/feedback", JSON.stringify({ text: "narrow it" }))
+  expect(other.fake.calls.map((c) => c.name)).toEqual(["feedback"])
+})
+
+test("an answer to a run that is not waiting on one is a 409 whose message is worth showing a person", async () => {
+  // The state rule stays in the machine: the server asks and renders the
+  // answer. The gate shows a refusal in a role="alert", so the message - and
+  // not only the code - is what a human is left with.
+  const { l } = await withRunner({
+    async answer() {
+      return {
+        ok: false,
+        refusal: "wrong-state",
+        message: "run abc is implementing, so it is not waiting for an answer",
+      }
+    },
+  })
+  const res = await post(l, "/api/runs/abc/answer", JSON.stringify({ text: "in memory is fine" }))
+  expect(res.status).toBe(409)
+  const body = JSON.parse(res.body) as { error: string; refusal: string }
+  expect(body.refusal).toBe("wrong-state")
+  expect(body.error).toContain("not waiting for an answer")
+})
+
 test("stop answers 200 on a live run and 409 on one that is already over", async () => {
   const { l, fake } = await withRunner()
   expect((await post(l, "/api/runs/abc/stop")).status).toBe(200)
@@ -1487,22 +1585,33 @@ test("stop answers 200 on a live run and 409 on one that is already over", async
   expect(JSON.parse(res.body).refusal).toBe("wrong-state")
 })
 
+/** The body an action needs to get past validation, keyed by its route. The
+ * two text actions need one; the rest must have none. */
+function actionBody(key: string): string | undefined {
+  return key === FEEDBACK || key === ANSWER ? JSON.stringify({ text: "again please" }) : undefined
+}
+
 test("an unknown run id is a 404 on every action, not a 500", async () => {
-  for (const path of ["approve", "feedback", "stop"]) {
+  const unknown = { ok: false as const, refusal: "unknown-run" as const, message: "no such run" }
+  for (const key of ACTION_ROUTES) {
+    if (key === START) continue
     const { l } = await withRunner({
       async approve() {
-        return { ok: false, refusal: "unknown-run", message: "no such run" }
+        return unknown
       },
       async feedback() {
-        return { ok: false, refusal: "unknown-run", message: "no such run" }
+        return unknown
+      },
+      async answer() {
+        return unknown
       },
       async stop() {
-        return { ok: false, refusal: "unknown-run", message: "no such run" }
+        return unknown
       },
     })
-    const body = path === "feedback" ? JSON.stringify({ text: "again please" }) : undefined
-    const res = await post(l, `/api/runs/11111111-1111-4111-8111-111111111111/${path}`, body)
-    expect(res.status, path).toBe(404)
+    const path = actionPath(key, "11111111-1111-4111-8111-111111111111")
+    const res = await post(l, path, actionBody(key))
+    expect(res.status, key).toBe(404)
     expect(JSON.parse(res.body).refusal).toBe("unknown-run")
   }
 })
@@ -1510,9 +1619,10 @@ test("an unknown run id is a 404 on every action, not a 500", async () => {
 test("the actions write nothing to the runs directory: the machine is the only writer of a run log", async () => {
   const { l, dir } = await withRunner()
   await post(l, "/api/runs", JSON.stringify(TASK))
-  await post(l, "/api/runs/abc/approve")
-  await post(l, "/api/runs/abc/feedback", JSON.stringify({ text: "no" }))
-  await post(l, "/api/runs/abc/stop")
+  for (const key of ACTION_ROUTES) {
+    if (key === START) continue
+    await post(l, actionPath(key, "abc"), actionBody(key))
+  }
   expect(await readdir(dir)).toEqual([])
 })
 
@@ -1552,15 +1662,20 @@ test("an id runLogPath refuses is a 4xx and never reaches the machine", async ()
     streamPollMs: 2,
     streamKeepAliveMs: 1000,
     runner: fake.runner,
+    projectsFile: null,
   }
 
-  for (const key of [APPROVE, FEEDBACK, STOP]) {
+  for (const key of [APPROVE, FEEDBACK, ANSWER, STOP]) {
     const handler = ROUTES[key]
     if (handler === undefined) throw new Error(`${key} is not registered`)
     for (const id of ["..", ".", "", "a/b", "a\\b", "a\0b"]) {
+      // The body each route actually accepts, so the 400 under test is the id
+      // guard's: a `text` key on approve or stop is a 400 of its own, and the
+      // assertion would then pass with the id guard deleted.
+      const body = actionBody(key)
       const req = new Request("http://127.0.0.1:3100/api/runs/x/stop", {
         method: "POST",
-        body: JSON.stringify({ text: "hello" }),
+        ...(body === undefined ? {} : { body }),
       })
       const res = await handler(req, ctx, { id })
       expect(res.status, `${key} with id ${JSON.stringify(id)}`).toBe(400)
@@ -1591,6 +1706,7 @@ interface BodyRow {
 const START_PATH = "/api/runs"
 const APPROVE_PATH = "/api/runs/abc/approve"
 const FEEDBACK_PATH = "/api/runs/abc/feedback"
+const ANSWER_PATH = "/api/runs/abc/answer"
 const STOP_PATH = "/api/runs/abc/stop"
 
 const bodyRows: BodyRow[] = [
@@ -1637,6 +1753,18 @@ const bodyRows: BodyRow[] = [
   { path: FEEDBACK_PATH, body: JSON.stringify({ text: "" }), status: 400, why: "empty feedback would re-plan with nothing said" },
   { path: FEEDBACK_PATH, body: JSON.stringify({ text: " \t\n " }), status: 400, why: "whitespace-only is empty, judged on a trimmed copy" },
   { path: FEEDBACK_PATH, body: JSON.stringify({ text: " x " }), status: 200, why: "padding around real text is the human's, and is kept" },
+
+  // The answer route takes the same single key, and has its own validator: the
+  // rows below are what keeps deleting it from being a green change.
+  { path: ANSWER_PATH, body: JSON.stringify({ text: "persist it" }), status: 200, why: "the one key an answer needs" },
+  { path: ANSWER_PATH, status: 400, why: "an answer with nothing said would spend a turn on silence" },
+  { path: ANSWER_PATH, body: "{}", status: 400, why: "and an object with no text in it says nothing either" },
+  { path: ANSWER_PATH, body: JSON.stringify({ text: "" }), status: 400, why: "an empty answer is not an answer" },
+  { path: ANSWER_PATH, body: JSON.stringify({ text: " \t\n " }), status: 400, why: "whitespace-only is empty, judged on a trimmed copy" },
+  { path: ANSWER_PATH, body: JSON.stringify({ text: 123 }), status: 400, why: "a number is not the human's reply" },
+  { path: ANSWER_PATH, body: JSON.stringify({ text: "x", extra: 1 }), status: 400, why: "the same strictness about keys" },
+  { path: ANSWER_PATH, body: JSON.stringify({ answer: "x" }), status: 400, why: "the key is `text`, as on feedback, and a near-miss is refused rather than dropped" },
+  { path: ANSWER_PATH, body: JSON.stringify({ text: " x " }), status: 200, why: "padding around a real reply is the human's, and is kept" },
 
   // A body on a route that takes none. Ignoring it is the dangerous direction:
   // a client that put feedback text on the approve route would silently approve
@@ -1807,6 +1935,7 @@ test("a server launched with no machine answers 503 on every action, and still s
     [START_PATH, JSON.stringify(TASK)],
     [APPROVE_PATH, undefined],
     [FEEDBACK_PATH, JSON.stringify({ text: "x" })],
+    [ANSWER_PATH, JSON.stringify({ text: "x" })],
     [STOP_PATH, undefined],
   ] as const) {
     const res = await post(l, path, body)
@@ -1815,33 +1944,672 @@ test("a server launched with no machine answers 503 on every action, and still s
   expect((await call(l, { path: "/api/health" })).status).toBe(200)
 })
 
-// --- A repo that is dirty, for real -----------------------------------------
+test("a server launched with no project store answers 503 on registration, and nothing else notices", async () => {
+  // The same honest answer for the other capability a launch can be without.
+  // `ServerOptions.projectsFile` has no default on purpose, so this is also the
+  // state every test that forgets to inject one is in - which is why it cannot
+  // be a path to the developer's own store.
+  const l = serve({ runner: fakeRunner().runner })
+  const res = await post(l, "/api/projects", JSON.stringify({ path: "/repo", testCmd: "npm test" }))
+  expect(res.status).toBe(503)
+  expect(res.body).toContain("project store")
+  // The run actions are unaffected: the two capabilities are independent.
+  expect((await post(l, APPROVE_PATH)).status).toBe(200)
+})
+
+// --- Repos, for real --------------------------------------------------------
+
+/** The developer's own git identity and config are kept out: a `commit.gpgsign`
+ * or a `core.excludesFile` in their global config would otherwise decide
+ * whether these tests pass. */
+const GIT_ENV = {
+  ...process.env,
+  GIT_CONFIG_GLOBAL: "/dev/null",
+  GIT_CONFIG_SYSTEM: "/dev/null",
+  GIT_AUTHOR_NAME: "kantan test",
+  GIT_AUTHOR_EMAIL: "test@example.invalid",
+  GIT_COMMITTER_NAME: "kantan test",
+  GIT_COMMITTER_EMAIL: "test@example.invalid",
+}
+
+async function gitIn(dir: string, ...args: string[]): Promise<void> {
+  const p = Bun.spawn(["git", "-C", dir, ...args], { env: GIT_ENV, stdout: "pipe", stderr: "pipe" })
+  const code = await p.exited
+  if (code !== 0) throw new Error(`git ${args.join(" ")} failed: ${await new Response(p.stderr).text()}`)
+}
+
+/** An empty scratch directory of its own, canonicalised so a comparison against
+ * git's resolved root compares like with like. `mkdtemp` is unique per call, so
+ * two `bun run check` processes cannot delete each other's work - the pid rule
+ * in CLAUDE.md. */
+async function scratch(prefix: string): Promise<string> {
+  const dir = await realpath(await mkdtemp(join(tmpdir(), prefix)))
+  scratchDirs.push(dir)
+  return dir
+}
+
+/** A repo with one commit, clean, returning its real path. */
+async function cleanRepo(): Promise<string> {
+  const dir = await scratch("orch-repo-")
+  await gitIn(dir, "init")
+  await writeFile(join(dir, "app.txt"), "one\n")
+  await gitIn(dir, "add", "app.txt")
+  await gitIn(dir, "commit", "-m", "first")
+  return dir
+}
 
 /** A repo with one commit and one modified tracked file, returning its path.
  * The dirt is a tracked modification rather than an untracked file, because a
  * developer's global `core.excludesFile` can hide the latter and the test would
  * pass for the wrong reason. */
 async function dirtyRepo(): Promise<string> {
-  const dir = await realpath(await mkdtemp(join(tmpdir(), "orch-repo-")))
-  scratchDirs.push(dir)
-  const env = {
-    ...process.env,
-    GIT_CONFIG_GLOBAL: "/dev/null",
-    GIT_CONFIG_SYSTEM: "/dev/null",
-    GIT_AUTHOR_NAME: "kantan test",
-    GIT_AUTHOR_EMAIL: "test@example.invalid",
-    GIT_COMMITTER_NAME: "kantan test",
-    GIT_COMMITTER_EMAIL: "test@example.invalid",
-  }
-  const git = async (...args: string[]) => {
-    const p = Bun.spawn(["git", "-C", dir, ...args], { env, stdout: "pipe", stderr: "pipe" })
-    const code = await p.exited
-    if (code !== 0) throw new Error(`git ${args.join(" ")} failed: ${await new Response(p.stderr).text()}`)
-  }
-  await git("init")
-  await writeFile(join(dir, "app.txt"), "one\n")
-  await git("add", "app.txt")
-  await git("commit", "-m", "first")
+  const dir = await cleanRepo()
   await writeFile(join(dir, "app.txt"), "two\n")
   return dir
 }
+
+// ---------------------------------------------------------------------------
+// 11. The plan the gate renders
+// ---------------------------------------------------------------------------
+
+// The gate is the product's central screen and it has nothing to show without
+// this route. Two things it must get right, and both are about where the path
+// comes from:
+//
+// The path is read from the **log**, never re-derived. `planPathFor` builds
+// `docs/plans/<date>-<slug>.md` from the branch name and the date the run
+// started, so recomputing it here would be a second slugger plus a date that
+// has since moved on - and a gate pointed at a file nothing wrote renders empty
+// while the real plan sits beside it.
+//
+// And the path is **untrusted**, because it arrives from a file on disk that a
+// person can edit. A recorded `../../.ssh/id_rsa` is a 4xx, not a file read.
+
+const PLAN_ROUTE = "GET /api/runs/:id/plan"
+
+/** A log for `id` whose header names `projectPath`, with a plan phase record
+ * carrying `planPath` when one is given. Real records through `runlog.ts`: the
+ * thing under test is how the server reads what the machine writes. */
+async function planLog(dir: string, id: string, projectPath: string, planPath?: string): Promise<void> {
+  const log = await createRunLog(runLogPath(id, dir), header({ runId: id, projectPath }))
+  await log.append({
+    kind: "phase",
+    phase: "plan",
+    state: "running",
+    ...(planPath === undefined ? {} : { planPath }),
+  })
+  await log.append({ kind: "phase", phase: "plan", state: "waiting", reason: "gate" })
+  // Closed, unlike `startLog`'s live run: a handle left to the garbage
+  // collector is an error on bun 1.4, and it surfaces inside whichever test
+  // happens to be running when the collector reaches it.
+  await log.close()
+}
+
+interface PlanBody {
+  ok?: boolean
+  state?: string
+  planPath?: string
+  plan?: string
+  message?: string
+  error?: string
+}
+
+async function getPlan(l: Launch, id: string): Promise<{ status: number; body: PlanBody; raw: string }> {
+  const res = await call(l, { path: `/api/runs/${id}/plan` })
+  return { status: res.status, body: JSON.parse(res.body) as PlanBody, raw: res.body }
+}
+
+test("the plan route is a GET registered in ROUTES, behind the guards, and not token-exempt", () => {
+  expect(Object.keys(ROUTES)).toContain(PLAN_ROUTE)
+  expect(TOKEN_EXEMPT.has(PLAN_ROUTE)).toBe(false)
+  expect([...TOKEN_EXEMPT].sort()).toEqual(["GET /", "GET /api/session"])
+})
+
+test("the plan is served from the path the log recorded, not from the naming convention", async () => {
+  // The sharp half of this test is the decoy: a file at the conventional path
+  // holds different text, so a route that re-derived the path would pass a
+  // weaker assertion and fail this one.
+  const repo = await cleanRepo()
+  await mkdir(join(repo, "docs", "plans"), { recursive: true })
+  await writeFile(join(repo, "docs", "plans", "agent-preferred-name.md"), "# The plan\n\nStep 1. café ✓ 🙂\n")
+  await writeFile(join(repo, "docs", "plans", "2026-10-11-x-t7.md"), "# A plan nobody dictated\n")
+
+  const dir = await runsDir()
+  const l = serve({ runsDir: dir })
+  await planLog(dir, "plan-ok", repo, "docs/plans/agent-preferred-name.md")
+
+  const { status, body } = await getPlan(l, "plan-ok")
+  expect(status).toBe(200)
+  expect(body).toEqual({
+    ok: true,
+    state: "ready",
+    planPath: "docs/plans/agent-preferred-name.md",
+    plan: "# The plan\n\nStep 1. café ✓ 🙂\n",
+  })
+})
+
+test("a run that never dictated a path is undictated, which is not the same as unreadable", async () => {
+  // The gate models the two separately and disables Approve on both, so they
+  // have to be distinguishable: one is "there is no plan to read", the other is
+  // "there is a plan path and its contents cannot be had".
+  const repo = await cleanRepo()
+  const dir = await runsDir()
+  const l = serve({ runsDir: dir })
+  await planLog(dir, "no-path", repo)
+  await planLog(dir, "empty-path", repo, "")
+
+  for (const id of ["no-path", "empty-path"]) {
+    const { status, body } = await getPlan(l, id)
+    expect(status, id).toBe(200)
+    expect(body.state, id).toBe("undictated")
+    expect(body.planPath, id).toBeUndefined()
+    // Prose, because the gate renders it to a person.
+    expect(body.message, id).toContain("no plan path")
+  }
+})
+
+test("a dictated path with nothing at it is unreadable, and says which path it looked at", async () => {
+  // HANDOFF's open gap, which Task 13 left for the gate: an agent that answers
+  // `ORCH: done` without writing the plan it was told to write parks the run at
+  // a gate with nothing to show. This is what that looks like over HTTP.
+  const repo = await cleanRepo()
+  const dir = await runsDir()
+  const l = serve({ runsDir: dir })
+  await planLog(dir, "missing", repo, "docs/plans/never-written.md")
+
+  const { status, body } = await getPlan(l, "missing")
+  expect(status).toBe(200)
+  expect(body.state).toBe("unreadable")
+  expect(body.planPath).toBe("docs/plans/never-written.md")
+  expect(body.message).toContain("docs/plans/never-written.md")
+  expect(body.plan).toBeUndefined()
+})
+
+test("a plan path that is a directory, is not UTF-8, or is enormous is unreadable rather than a 500", async () => {
+  const repo = await cleanRepo()
+  await mkdir(join(repo, "docs", "plans", "a-directory.md"), { recursive: true })
+  // A lone 0x80 is not valid UTF-8. The gate must not render a plan with a
+  // replacement character in it and let someone approve that.
+  await writeFile(join(repo, "docs", "plans", "latin1.md"), Buffer.from([0x23, 0x20, 0x63, 0x61, 0x66, 0x80]))
+  await writeFile(join(repo, "docs", "plans", "huge.md"), "x".repeat(1024 * 1024 + 1))
+
+  const dir = await runsDir()
+  const l = serve({ runsDir: dir })
+  const cases = [
+    ["dir", "docs/plans/a-directory.md", "not a file"],
+    ["latin1", "docs/plans/latin1.md", ""],
+    ["huge", "docs/plans/huge.md", "bytes"],
+  ] as const
+  for (const [id, planPath, says] of cases) {
+    await planLog(dir, id, repo, planPath)
+    const { status, body } = await getPlan(l, id)
+    expect(status, id).toBe(200)
+    expect(body.state, id).toBe("unreadable")
+    expect(body.planPath, id).toBe(planPath)
+    expect(body.plan, id).toBeUndefined()
+    if (says !== "") expect(body.message, id).toContain(says)
+    expect(body.message, id).toBeTypeOf("string")
+  }
+})
+
+test("a recorded plan path that escapes the repo is a 4xx and reads nothing", async () => {
+  // The path comes from a log record, which is a file a person can edit, so it
+  // is caller input in the same class as a run id - and the check is
+  // `runLogPath`'s: refuse by construction rather than resolve and compare.
+  const repo = await cleanRepo()
+  const outside = join(await scratch("orch-secret-"), "id_rsa")
+  await writeFile(outside, "PRIVATE KEY MATERIAL\n")
+
+  const dir = await runsDir()
+  const l = serve({ runsDir: dir })
+  const escapes = [
+    "../../id_rsa",
+    "docs/../../id_rsa",
+    `..${sep}..${sep}id_rsa`,
+    outside, // an absolute path discards the root entirely
+    "/etc/passwd",
+    "docs/plans/x\0.md",
+    "..",
+  ]
+
+  for (const [i, planPath] of escapes.entries()) {
+    const id = `escape-${i}`
+    await planLog(dir, id, repo, planPath)
+    const { status, body, raw } = await getPlan(l, id)
+    expect(status, planPath).toBe(400)
+    expect(body.error, planPath).toContain("repository")
+    // Never the contents, and never the path it was asked for: that is
+    // caller-chosen text in a body a page may be able to read.
+    expect(raw, planPath).not.toContain("PRIVATE KEY")
+    expect(raw, planPath).not.toContain("id_rsa")
+  }
+})
+
+test("a project whose repo has moved is unreadable with git's own reason, not a 500", async () => {
+  const gone = join(await scratch("orch-gone-"), "repo")
+  const dir = await runsDir()
+  const l = serve({ runsDir: dir })
+  await planLog(dir, "moved", gone, "docs/plans/x.md")
+
+  const { status, body } = await getPlan(l, "moved")
+  expect(status).toBe(200)
+  expect(body.state).toBe("unreadable")
+  expect(body.message).toContain("git repository")
+})
+
+test("the plan route refuses an unusable run id and 404s a run with no log", async () => {
+  const dir = await runsDir()
+  const l = serve({ runsDir: dir })
+  // The matcher refuses an empty segment before the handler sees it, and the
+  // URL parser resolves `..`, so these are the ids that can actually arrive.
+  expect((await getPlan(l, "..%2F..%2Fetc%2Fpasswd")).status).toBe(404)
+  const unknown = await getPlan(l, "11111111-1111-4111-8111-111111111111")
+  expect(unknown.status).toBe(404)
+  expect(unknown.body.error).toContain("no log")
+})
+
+test("reading a plan changes nothing on disk, because a local page can make this request", async () => {
+  // `SameSite=Strict` ignores ports, so any page on another localhost port can
+  // trigger this GET with our cookie - it cannot read the answer, but the route
+  // must not be able to *cause* anything either. No Origin, as those requests
+  // send none.
+  const repo = await cleanRepo()
+  await mkdir(join(repo, "docs", "plans"), { recursive: true })
+  await writeFile(join(repo, "docs", "plans", "p.md"), "# P\n")
+  const dir = await runsDir()
+  const l = serve({ runsDir: dir })
+  await planLog(dir, "quiet", repo, "docs/plans/p.md")
+
+  const before = (await readdir(dir)).sort()
+  const res = await call(l, { path: "/api/runs/quiet/plan", origin: null })
+  expect(res.status).toBe(200)
+  expect(JSON.parse(res.body).state).toBe("ready")
+  expect((await readdir(dir)).sort()).toEqual(before)
+  expect((await readdir(join(repo, "docs", "plans"))).sort()).toEqual(["p.md"])
+  // Still a document, not a page: nothing here renders HTML.
+  expect(res.headers.get("content-type")).toStartWith("application/json")
+  expect(res.headers.get("cache-control")).toBe("no-store")
+})
+
+// ---------------------------------------------------------------------------
+// 12. Registering a project
+// ---------------------------------------------------------------------------
+
+// `projects.json` was read everywhere and written by nothing, so the design's
+// empty state ("Add a repository") had no backend at all. The dialog asks for a
+// repo path, a Claude account and a test command; the task file it also asks
+// for is not a project field - it names a run, and it reaches `POST /api/runs`
+// as `featureFile`.
+//
+// Two validators, with two different owners. `defaults()` fills the design's
+// defaults and validates the record the store will accept, and it **throws**:
+// that throw is a 4xx, because it is the caller's typo and not a server fault.
+// `requireUsableRepo()` is what the store cannot do - `projects.json` only
+// checks that the path is an absolute string, so without it a path that is not
+// a repository registers happily and fails at the first run, where the message
+// is about a run rather than about the registration that was wrong.
+
+const REGISTER = "POST /api/projects"
+const REGISTER_PATH = "/api/projects"
+
+/** A launch with a store of its own and no machine: registration needs no
+ * runner, and leaving it out proves it. */
+async function withStore(): Promise<{ l: Launch; store: string }> {
+  const store = await storeFile()
+  return { l: serve({ runsDir: await runsDir(), projectsFile: store }), store }
+}
+
+function register(l: Launch, body: unknown): Promise<{ status: number; headers: Headers; body: string }> {
+  return post(l, REGISTER_PATH, JSON.stringify(body))
+}
+
+test("registration is a POST registered in ROUTES, behind the guards, and not token-exempt", () => {
+  expect(Object.keys(ROUTES)).toContain(REGISTER)
+  expect(TOKEN_EXEMPT.has(REGISTER)).toBe(false)
+  expect([...TOKEN_EXEMPT].sort()).toEqual(["GET /", "GET /api/session"])
+})
+
+test("registering a repo writes a record the store itself accepts, and answers it back", async () => {
+  // Read back with `loadProjects`, not `JSON.parse`: the invariant that matters
+  // is that the tool's own write is a record the store will load again. A
+  // record it refuses would brick every later read.
+  const repo = await cleanRepo()
+  const { l, store } = await withStore()
+
+  const res = await register(l, { path: repo, testCmd: "npm test" })
+  expect(res.status).toBe(201)
+
+  const expected: Project = {
+    path: repo,
+    testCmd: "npm test",
+    permissionMode: "acceptEdits",
+    allowedTools: null,
+    budgetUsd: 50,
+    planModel: "claude-opus-5-5",
+    implementModel: "claude-sonnet-5-5",
+    planEffort: "high",
+    implementEffort: "medium",
+  }
+  expect(JSON.parse(res.body)).toEqual({ ok: true, project: expected })
+  expect(await loadProjects(store)).toEqual([expected])
+  expect(res.body).not.toContain(l.token)
+})
+
+test("the Claude account is the configDir, absolute, and an account label is a 400", async () => {
+  // The dialog's "personal" or "work" is a label over a CLI profile directory,
+  // which carries a CLAUDE.md, skills and settings as well as credentials. The
+  // store spells it `configDir`; the UI owns the mapping.
+  const repo = await cleanRepo()
+  const profile = await scratch("orch-profile-")
+  const { l, store } = await withStore()
+
+  const ok = await register(l, { path: repo, testCmd: "npm test", configDir: profile })
+  expect(ok.status).toBe(201)
+  expect((await loadProjects(store))[0]?.configDir).toBe(profile)
+
+  const other = await withStore()
+  const bad = await register(other.l, { path: await cleanRepo(), testCmd: "npm test", account: "personal" })
+  expect(bad.status).toBe(400)
+  expect(bad.body).toContain("configDir")
+  expect(bad.body).not.toContain("account")
+  expect(await loadProjects(other.store)).toEqual([])
+})
+
+test("a relative configDir is a 4xx with the store's own reason, not a 500", async () => {
+  // HANDOFF's entry, consumed: `defaults()` throws on a field it cannot read,
+  // and the throw is the caller's typo rather than a server fault. The reason
+  // is forwarded because it is the only thing that fixes the mistake - the CLI
+  // expands no `~`, which is not something a bare 400 would tell anyone.
+  const repo = await cleanRepo()
+  const { l, store } = await withStore()
+  for (const configDir of ["~/.claude-work", "relative/profile", " "]) {
+    const res = await register(l, { path: repo, testCmd: "npm test", configDir })
+    expect(res.status, configDir).toBe(400)
+    expect(res.body, configDir).toContain("configDir")
+  }
+  expect(await loadProjects(store)).toEqual([])
+})
+
+test("the task file the dialog asks for is not a project field, and saying so is a 400", async () => {
+  const repo = await cleanRepo()
+  const { l, store } = await withStore()
+  for (const key of ["taskFile", "featureFile", "testcmd", "resumePlanSession", "<script>alert(1)</script>"]) {
+    const res = await register(l, { path: repo, testCmd: "npm test", [key]: "docs/features/x.md" })
+    expect(res.status, key).toBe(400)
+    // The keys this route takes, never the key that was sent: that is
+    // caller-chosen text in a body a page may be able to read.
+    expect(res.body, key).toContain("path, testCmd, configDir")
+    expect(res.body, key).not.toContain(key)
+  }
+  expect(await loadProjects(store)).toEqual([])
+})
+
+test("every repo state kantan cannot run in is refused, with the reason git gave", async () => {
+  // The enumeration, rather than a sample of it: each row is a thing that
+  // otherwise registers happily and fails at the first run.
+  const empty = await scratch("orch-plain-")
+  const file = join(await scratch("orch-file-"), "notadir")
+  await writeFile(file, "x\n")
+  const bare = await scratch("orch-bare-")
+  await gitIn(bare, "init", "--bare")
+  const unborn = await scratch("orch-unborn-")
+  await gitIn(unborn, "init")
+  const repo = await cleanRepo()
+  const inside = join(repo, "docs")
+  await mkdir(inside, { recursive: true })
+
+  const rows: [string, string, string][] = [
+    ["a path with nothing at it", join(empty, "nope"), "git repository"],
+    ["a file, not a directory", file, "git repository"],
+    ["a directory that is not a repo", empty, "git repository"],
+    ["a subdirectory of a repo, which git answers for", inside, "not the root"],
+    ["a bare repo, which has no working tree", bare, "bare"],
+    ["a repo with no commits, which has no base to branch from", unborn, "no commits"],
+    ["a relative path, refused by the store before git is asked", "relative/repo", "absolute"],
+  ]
+
+  for (const [why, path, says] of rows) {
+    const { l, store } = await withStore()
+    const res = await register(l, { path, testCmd: "npm test" })
+    expect(res.status, why).toBe(400)
+    expect(res.body, why).toContain(says)
+    expect(await loadProjects(store), why).toEqual([])
+  }
+})
+
+test("a second spelling of one repo is one project, not two histories", async () => {
+  // HANDOFF's "two spellings split the records": the store normalises a path
+  // lexically only, so the registered path is git's resolved root. A symlinked
+  // spelling then meets the 409 below instead of forking the project's runs,
+  // its logs and its task tree.
+  const repo = await cleanRepo()
+  const link = join(await scratch("orch-link-"), "repo-by-another-name")
+  await symlink(repo, link)
+  const { l, store } = await withStore()
+
+  const first = await register(l, { path: `${repo}/`, testCmd: "npm test" })
+  expect(first.status).toBe(201)
+  // The trailing slash is gone and the path is the root git reports.
+  expect(JSON.parse(first.body).project.path).toBe(repo)
+
+  const second = await register(l, { path: link, testCmd: "npm test" })
+  expect(second.status).toBe(409)
+  expect(second.body).toContain(repo)
+  expect(await loadProjects(store)).toHaveLength(1)
+})
+
+test("registering a known repo again is refused, because the store is the one state nothing can rebuild", async () => {
+  // `addProject` replaces a record wholesale, so a second trip through a dialog
+  // that offers three fields would reset a budget or an allowlist someone tuned
+  // by hand. Refusing costs an edit in a file they already own.
+  const repo = await cleanRepo()
+  const { l, store } = await withStore()
+  expect((await register(l, { path: repo, testCmd: "npm test" })).status).toBe(201)
+
+  const again = await register(l, { path: repo, testCmd: "vendor/bin/pest" })
+  expect(again.status).toBe(409)
+  // Prose a person can act on: it names the file to edit.
+  expect(again.body).toContain(store)
+  const [stored] = await loadProjects(store)
+  expect(stored?.testCmd).toBe("npm test")
+})
+
+test("a damaged store is a 500 that forwards its own message, which names the file", async () => {
+  // The exception to "a fault's reason goes to the terminal": this message
+  // names the file and what is wrong with it, the user owns that file, and an
+  // editor fixes what a message points at. A generic 500 would send someone to
+  // a terminal they are not looking at. The terminal still gets it too.
+  const repo = await cleanRepo()
+  const { l, store } = await withStore()
+  await writeFile(store, "{ not json\n")
+
+  const said: unknown[][] = []
+  const original = console.error
+  console.error = (...args: unknown[]) => void said.push(args)
+  let res: { status: number; body: string }
+  try {
+    res = await register(l, { path: repo, testCmd: "npm test" })
+  } finally {
+    console.error = original
+  }
+
+  expect(res.status).toBe(500)
+  expect(res.body).toContain(store)
+  expect(said).toHaveLength(1)
+  // And the damaged file is left exactly as it was, not replaced with a store
+  // holding one project.
+  expect(await readFile(store, "utf8")).toBe("{ not json\n")
+})
+
+test("a malformed registration body is refused before anything is written", async () => {
+  // The same enumeration the actions get, because the costs are the same shape:
+  // over-accepting writes a project nothing can run, over-rejecting means the
+  // empty state cannot get anyone started.
+  const repo = await cleanRepo()
+  const rows: { body?: string; status: number; why: string }[] = [
+    { status: 400, why: "no body names no repository" },
+    { body: "", status: 400, why: "nor does an empty one" },
+    { body: "not json", status: 400, why: "the body must parse as JSON" },
+    { body: "null", status: 400, why: "typeof null is object, which is the trap" },
+    { body: "[]", status: 400, why: "an array is not a record" },
+    { body: "5", status: 400, why: "nor is a scalar" },
+    { body: "{}", status: 400, why: "an object with neither required key" },
+    { body: JSON.stringify({ path: repo }), status: 400, why: "a repo with no test command: the design branches on its exit code" },
+    { body: JSON.stringify({ testCmd: "npm test" }), status: 400, why: "a test command with no repo to run it in" },
+    { body: JSON.stringify({ path: repo, testCmd: "" }), status: 400, why: 'an empty testCmd runs as sh -c "", which exits 0 and passes every task' },
+    { body: JSON.stringify({ path: repo, testCmd: "   " }), status: 400, why: "and whitespace is the same thing" },
+    { body: JSON.stringify({ path: "", testCmd: "npm test" }), status: 400, why: "an empty path names no repo" },
+    { body: JSON.stringify({ path: 7, testCmd: "npm test" }), status: 400, why: "a number is not a path" },
+    { body: JSON.stringify({ path: [repo], testCmd: "npm test" }), status: 400, why: "nor an array of one" },
+    { body: JSON.stringify({ path: repo, testCmd: "npm test" }), status: 201, why: "the control: the two keys a project needs" },
+  ]
+
+  for (const row of rows) {
+    const { l, store } = await withStore()
+    const res = await call(l, {
+      path: REGISTER_PATH,
+      method: "POST",
+      ...(row.body === undefined ? {} : { body: row.body }),
+    })
+    expect(res.status, row.why).toBe(row.status)
+    expect(await loadProjects(store), row.why).toHaveLength(row.status === 201 ? 1 : 0)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// 13. The launch itself: `bun run src/server.ts`
+// ---------------------------------------------------------------------------
+
+// Everything above injects its dependencies, which is what makes the tests
+// honest about the seam and blind to the one line nobody tests: what
+// `import.meta.main` actually constructs. For three tasks that line built a
+// server with **no** phase machine, so every action answered 503 and the tool
+// could not start a run at all - and no test could see it, because every test
+// passes its own runner in.
+//
+// So this section runs the real entry point in a real process, against a HOME
+// of its own, and drives it over HTTP.
+
+/** A free port, released immediately. The window between this and the server's
+ * own bind is the price of `ORCH_PORT` refusing 0 - which it should, since a
+ * port nobody can predict is no use to a person opening a browser. */
+async function freePort(): Promise<number> {
+  const probe = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("probe") })
+  const port = probe.port
+  probe.stop(true)
+  if (port === undefined) throw new Error("the probe server bound no TCP port")
+  return port
+}
+
+test("the real entry point builds a server that can register a project and start a run", async () => {
+  const home = await scratch("orch-home-")
+  const repo = await cleanRepo()
+  await mkdir(join(repo, "docs", "features"), { recursive: true })
+  await writeFile(join(repo, "docs", "features", "x.md"), "# Importer\n\n- [ ] T1 Parse the manifest\n")
+  await gitIn(repo, "add", "-A")
+  await gitIn(repo, "commit", "-m", "feature file")
+
+  const port = await freePort()
+  const env: Record<string, string> = {}
+  for (const [key, value] of Object.entries(process.env)) if (value !== undefined) env[key] = value
+  env["HOME"] = home
+  env["ORCH_PORT"] = String(port)
+  // The double, so no real `claude` is spawned and no money is spent. Its
+  // shebang needs `bun` on PATH, which the inherited PATH has.
+  env["ORCH_CLAUDE_BIN"] = join(import.meta.dir, "fake-claude.ts")
+  // Both deleted rather than left: a developer's shell or a leaked value would
+  // otherwise decide whether this test runs in dev mode or against their own
+  // CLI profile, and it would pass for the wrong reason on one machine.
+  delete env["ORCH_DEV"]
+  delete env["CLAUDE_CONFIG_DIR"]
+
+  const server = Bun.spawn(["bun", "run", join(import.meta.dir, "..", "src", "server.ts")], {
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  // Drained from the start, so a chatty phase cannot fill the pipe and wedge
+  // the server we are talking to. Resolves when the process ends.
+  const stderr = new Response(server.stderr).text()
+  try {
+    // Read incrementally: the greeting is one line and the process then keeps
+    // serving, so a read to EOF would only resolve once the server was dead.
+    const decoder = new TextDecoder()
+    const reader = server.stdout.getReader()
+    let greeting = ""
+    const deadline = Date.now() + 15_000
+    while (!greeting.includes(`http://127.0.0.1:${port}`)) {
+      const left = deadline - Date.now()
+      if (left <= 0) throw new Error(`the server never greeted; it said ${JSON.stringify(greeting)}`)
+      // Each read is raced against what is left of the deadline, rather than
+      // the deadline being checked between reads: a server that hung before
+      // greeting would block in `read()` with no deadline in reach, and the
+      // kill in `finally` would never run.
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const chunk = await Promise.race([
+        reader.read(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`the server never greeted; it said ${JSON.stringify(greeting)}`)), left)
+        }),
+      ]).finally(() => clearTimeout(timer))
+      if (chunk.done) {
+        throw new Error(`the server exited before greeting: ${JSON.stringify(greeting)} / ${await stderr}`)
+      }
+      greeting += decoder.decode(chunk.value, { stream: true })
+    }
+    // Kept draining afterwards, for the reason stderr is: anything the entry
+    // point or a phase writes past the greeting would otherwise fill the pipe
+    // and wedge the server this test is talking to.
+    void (async () => {
+      for (;;) if ((await reader.read()).done) return
+    })().catch(() => {})
+
+    // The cookie comes from the page load, as a browser's would.
+    const bootstrap = await fetch(`http://127.0.0.1:${port}/`, { headers: { Host: `127.0.0.1:${port}` } })
+    await bootstrap.arrayBuffer()
+    const setCookie = bootstrap.headers.get("set-cookie") ?? ""
+    const token = /orch_token=([^;]+)/.exec(setCookie)?.[1]
+    if (token === undefined) throw new Error(`no token cookie in ${JSON.stringify(setCookie)}`)
+
+    const live = (path: string, body: unknown): Promise<Response> =>
+      fetch(`http://127.0.0.1:${port}${path}`, {
+        method: "POST",
+        headers: {
+          Host: `127.0.0.1:${port}`,
+          Origin: `http://127.0.0.1:${port}`,
+          Cookie: `orch_token=${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      })
+
+    // 1. Nothing is registered yet, so the machine - not a 503 - answers. This
+    // is the whole of gap 1: before the wiring this was a 503 on every action.
+    const unknown = await live("/api/runs", { projectPath: repo, featureFile: "docs/features/x.md", taskRef: "T1" })
+    const unknownBody = (await unknown.json()) as { refusal?: string }
+    expect(unknown.status).toBe(404)
+    expect(unknownBody.refusal).toBe("unknown-project")
+
+    // 2. Register it, through the route this task added.
+    const added = await live("/api/projects", { path: repo, testCmd: "true" })
+    expect(added.status).toBe(201)
+    // Written where the entry point said, which is also where the machine looks.
+    expect(await loadProjects(join(home, ".orch", "projects.json"))).toHaveLength(1)
+
+    // 3. And now a run starts: a 201 with a run id, and a log under the same
+    // HOME. The phase itself fails behind us - the double is scriptless - which
+    // is beside the point: the transition is what an action resolves at.
+    const started = await live("/api/runs", { projectPath: repo, featureFile: "docs/features/x.md", taskRef: "T1" })
+    const startedBody = (await started.json()) as { ok?: boolean; runId?: string }
+    expect(started.status).toBe(201)
+    expect(startedBody.runId).toBeTypeOf("string")
+    await until(
+      async () =>
+        (await readdir(join(home, ".orch", "runs")).catch((): string[] => [])).includes(`${startedBody.runId}.jsonl`),
+      "the run log the machine opened under this HOME",
+    )
+  } finally {
+    server.kill()
+    await server.exited
+  }
+}, 30_000)
