@@ -448,6 +448,18 @@ test("tail: a complete line that is not a JSON object carries no record", async 
   expect(await collect(path)).toEqual([JSON.parse(WHOLE)])
 })
 
+test("an append arriving while the log is closing is refused, not half-written", async () => {
+  const { path } = await scratch()
+  const log = await createRunLog(path, header())
+
+  // The stdout pump can still be appending when the phase machine closes.
+  const closing = log.close()
+  await expect(log.append({ kind: "test", exitCode: 0, attempt: 1 })).rejects.toThrow(/closed/)
+  await closing
+
+  expect(await logLines(path)).toHaveLength(1)
+})
+
 test("appending to a closed log fails loudly", async () => {
   const { path } = await scratch()
   const log = await createRunLog(path, header())
@@ -537,7 +549,8 @@ function kindOf(record: RunRecord): string {
   return record.kind
 }
 
-/** How many file descriptors this process holds. */
+/** How many file descriptors this process holds. `/dev/fd` rather than
+ * `/proc/self/fd`, so the suite runs on macOS too. */
 async function openHandles(): Promise<number> {
-  return (await readdir("/proc/self/fd")).length
+  return (await readdir("/dev/fd")).length
 }

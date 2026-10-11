@@ -281,6 +281,13 @@ class AppendOnlyRunLog implements RunLog {
 
   /** Queues `line` plus its terminator as one write. */
   writeLine(line: string): Promise<void> {
+    // Refused here rather than when the job runs, because `close` sets the
+    // flag synchronously and then awaits the queue once. A write accepted
+    // after that drain was computed would start against a handle `close` is
+    // about to take away, and a short write would finish against a closed one.
+    // The stdout pump appending its last lines while the phase machine closes
+    // the log is exactly this.
+    if (this.closed) return Promise.reject(new Error(`${this.path}: the run log is closed`))
     const bytes = new TextEncoder().encode(`${line}\n`)
     const run = this.queue.then(
       () => this.writeBytes(bytes),
