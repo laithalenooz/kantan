@@ -12,29 +12,6 @@ Stable project-wide rules live in `CLAUDE.md`, not here. This file is only the m
 
 ## Open: things later tasks must handle
 
-### A stale `reportPath` makes `failureSignature` report a false stall — Task 13
-`src/stall.ts` prefers `project.reportPath` and cannot tell a fresh report from the previous
-attempt's. A run that crashed, or was killed by `runTests`' timeout before flushing, leaves the
-old XML on disk, where it parses perfectly and names the **previous** attempt's failures. Two
-attempts then hash equal, and the detector escalates effort — and finally interrupts a human —
-against a run that may have been converging. This is the expensive direction.
-
-`src/testrun.ts` does not touch the file. **Whoever spawns `testCmd` must delete the report
-first**, because only that code knows when the run began; an mtime check inside
-`failureSignature` would still need to be handed that moment. Nothing in `TestOutcome` dates the
-file, so there is no way to catch this later. Delete the **joined** path, per the next two
-entries: unlinking `project.reportPath` as stored would either miss the real file, leaving this
-bug live, or unlink something of the same name beside the server.
-
-### Two different `TestOutcome` types exist, and they are compatible by luck — Task 13
-`src/testrun.ts` and `src/stall.ts` each export an interface of that name. `runTests`' result is
-structurally assignable to the signature's, so `failureSignature(await runTests(p))` compiles —
-excess property checks only bite on fresh object literals. But `reportPath` lives only on the
-`stall.ts` one, so the report branch is **dead unless the caller passes it in**, joined as the
-next entry requires: `failureSignature({ ...outcome, reportPath: join(project.path, rp) })`.
-Forget it and every signature silently comes from the parsed output, which still works and is
-simply weaker. There is no error to catch.
-
 ### `failureSignature`'s window must stay well under `MAX_OUTPUT_BYTES` — anyone tuning either
 `src/testrun.ts` keeps the last 1 MiB of each stream; `src/stall.ts` hashes the last 256 Ki
 **UTF-16 code units** of that, so up to about 768 KB of UTF-8 in the worst case. If the two ever
@@ -42,17 +19,6 @@ meet, the signature reaches bytes that a chatty run had already dropped and a qu
 had, and one failure hashes two ways depending on how much the suite printed. The marker
 `testrun.ts` prepends is normalized in `stall.ts` as well, so the byte counts in it cannot reach
 the digest even if the windows do change.
-
-### `reportPath` must be joined with `project.path`, or the JUnit branch never runs — Task 13
-`failureSignature` takes an **absolute** path and resolves nothing. `validateProject` **refuses
-an absolute `reportPath`** — "reportPath is relative to the repo" — so every stored value is
-relative by construction. Passed through as stored, it is read against the **server's** working
-directory, missed, and the signature falls back to the parsed output **for every project, always**.
-This is not an edge case; it is the whole branch, dead, with no error and no log line. The run
-works and the signature is merely weaker, so nothing surfaces it.
-
-The caller joins. It also owns the `..` check, per "Two spellings of one repo still split the
-records" below.
 
 ### `CLAUDE_BIN` binds at module load — anything spawning
 `src/version.ts` resolves `process.env.ORCH_CLAUDE_BIN` **once, when the module is imported**.
@@ -73,7 +39,7 @@ fixture-driven tests, because the fixtures hold only the three known hook subtyp
 test separates an allowlist from a prefix. This is `CLAUDE.md`'s corollary in the flesh: the suite
 cannot see what the suite never varied.
 
-### A user-side `text` block must never map to `text` — Task 13 and the UI
+### A user-side `text` block must never map to `text` — the UI tasks
 `src/stream.ts` routes it to `unknown` on purpose. Echoed prompts and system-reminders arrive as
 user text, and **the implement prompt contains the literal `ORCH: done`** — so mapping user text
 to `text` would feed the sentinel parser its own prompt and end a phase that never finished.
@@ -87,14 +53,6 @@ fails on one that does not.
 Its Haiku calls are a positional prompt with text or JSON output. The double refuses that by
 design, so use the real CLI (Haiku is cheap and both jobs are off the critical path) or a separate
 stub. Do not widen the double to a second invocation shape.
-
-### The sentinel literals exist in two places and can drift — Task 13 or whoever notices
-`src/sentinel.ts` keeps `ORCH: done` and `ORCH: blocked` module-private, correctly, since its
-brief scoped it to one function. `src/prompts.ts` must emit the same literals. **Nothing currently
-makes them agree.** Export a shared constant from one side and import it in the other, with a test
-that the prompt contains exactly what the parser accepts. Until then a one-character edit to either
-breaks every run silently: the agent emits a sentinel the parser does not recognise, so every
-completed phase reads as a question.
 
 ### A process can emit more than one `result` event — Task 14 (budget)
 The error event carries `result_index` and `queued_turn_count`. Cost accounting must take the
@@ -186,10 +144,12 @@ anything else, so installing it suite-wide leaves `test/version.test.ts` passing
 - **`--allowedTools` takes one value here**, though the real CLI also accepts it variadically. Pass
   the list as a single comma or space separated token; a second bare token stops at the positional
   guard rather than being dropped from the allowlist.
-- **A session becomes resumable only once a turn's replay finishes.** A SIGTERM mid-turn leaves the
-  turn unspent and the session unresumable, so Task 13's "killed mid-implement is resumable" test
-  must kill **between** turns or it meets `No conversation found`. What the real CLI does when
-  killed mid-turn is unprobed: probing it costs an API call.
+- **A session becomes resumable only once a turn's replay finishes**, and the cursor that records
+  that is written **after** the turn's bytes are out. So a kill timed off the orchestrator's own
+  output can still land in the window where the result has arrived but the session is not
+  resumable yet, and the resumed run then meets `No conversation found`. `test/run.test.ts` polls
+  `<script>.cursor` for the session id before killing, which closes it. What the real CLI does
+  when killed mid-turn is unprobed: probing it costs an API call.
 - **The shebang needs `bun` on the child's PATH.** A spawner that passes a curated env without
   `PATH` gets exit 127 from `env`, which looks like neither a CLI error nor a refusal by the double.
 - Replaying a full fixture on turn 2 re-emits the `SessionStart` hook prefix, which the real CLI
@@ -216,70 +176,17 @@ fixture's bytes.
 both redaction passes; the telemetry pass is the one no grep will remind you about. See
 `test/fixtures/README.md`.
 
-### `tickTask` returns its input unchanged for an already-ticked task — Task 13 (phase machine)
-Idempotent on purpose, so a retried run cannot disturb a finished file. **A caller that logs,
-commits, or reports "ticked" must compare `out !== src`** rather than assume a write happened.
-
-### `Task.line` is valid only for the string it came from — Task 6b (file I/O), Task 13
-`tickTask` re-resolves by ref on purpose. No caller may splice by a cached line number.
-
-### The mid-run-edit warning is unreachable unless you hold the parse-time bytes — Task 13
-`tickTaskInFile(file, ref)` returns `{ written, src, warning }`. `written: false` means the task
-was already ticked, with **no disk access**, so mtime is untouched too — compare `written`, never
-guess from bytes.
-
-But `warning` only catches edits made since the `readFeature` whose `FeatureFile` you pass. **Call
-`readFeature` immediately before ticking and the warning can never fire**, which is exactly what a
-resumed run does after a restart. So Task 13 must hold the run's parse-time `FeatureFile`, and the
-run log header carries `featureFileHash` so it survives a restart.
-
-Also: an error on an **unchanged** file passes straight through from `tickTask` without the file's
-path. Only the changed-file error names it, so Task 13 should add the path when it surfaces one.
-
 ### `TextDecoder` strips the BOM by default — anyone decoding a user's file
 `ignoreBOM` defaults to `false`, which **removes** the BOM rather than ignoring it. `featurefile.ts`
 passes `{ fatal: true, ignoreBOM: true }`; flipping it back made the BOM test fail, so the default
 would have silently deleted a BOM on the first tick. `fatal: true` also refuses a non-UTF-8 file
 rather than decoding a byte to U+FFFD and writing the replacement back.
 
-### `runTests` rejects for a misconfigured project, resolves for a failing one — Task 13
-A missing or non-directory `project.path` **rejects**, because that is a misconfigured project
-rather than a failing test, and feeding it to the agent as a failure would spend the budget
-fixing tests in a directory that does not exist. Everything else resolves, **including exit 127
-for a missing command**. So Task 13 needs one try/catch around it, and Task 12's repo pre-flight
-should normally catch that case first.
-
-`exitCode` is never 0 unless the command exited 0: a timeout is `124` (exported as
-`TIMEOUT_EXIT_CODE`), a signal death is `128 + signal`. Branch on `exitCode !== 0` alone and treat
-`timedOut` as presentation.
-
-### `reportPath` can be absent OR STALE after a timeout — Task 10, Task 13
-The timeout kill is SIGTERM then SIGKILL two seconds later, so a runner gets a flush window but no
-guarantee. A **leftover XML from the previous run parses fine and reports the wrong failures**,
-which is worse than an absent one. The stall signature must fall back to output when the XML is
-absent, empty, or stale.
-
-### The plan itself can smuggle in a tick instruction — Task 13
-`plan-success.jsonl`'s own final message records that the plan it wrote contained
-"**Checkbox:** tick T1 in `docs/features/slugger.md`". So a silent implement prompt is not enough:
-**the plan tells the implementer to tick**, and `tickTask`'s idempotence would then make the
-server's own tick a no-op that looks like success. Closed from both ends now — the plan prompt
-forbids including such a step, and the implement prompt forbids any edit to the feature file.
-Probed: the implement phase left the feature file untouched.
-
 ### `src/sentinel.ts` now exports `DONE` and `BLOCKED` — anyone emitting a sentinel
 `src/prompts.ts` builds its sentinel lines from those exports, so the emitting and parsing sides
 cannot drift. `BLOCKED_RE` stays a regex literal and its parsing logic is untouched; the
 `BLOCKED` ↔ `BLOCKED_RE` agreement is pinned from outside by `test/prompts.test.ts`, where a
 one-character drift fails three tests.
-
-### `TaskSpec.ref` is non-null on purpose — Task 13
-Deliberately narrower than `backlog.Task`, so a ref-less task **cannot reach a prompt**. That
-forces the open decision (assign refs, or refuse) rather than hiding it.
-
-### `feedbackPrompt` needs the `planPath` from the `phase` record — Task 13
-It resumes the plan session and re-dictates that path, so handing it a freshly derived path would
-point the agent at a file the gate is not rendering.
 
 ### Register routes in `ROUTES`, never in `Bun.serve` — Tasks 17 and 18
 `Bun.serve({ routes })` matches **before** the `fetch` fallback, so a route registered there never
@@ -363,7 +270,9 @@ strings, and answers **201** `{"ok":true,"runId"}`. `POST /api/runs/:id/approve`
 - Feedback text is forwarded **byte for byte**. Emptiness is judged on a trimmed copy; nothing
   trimmed is ever sent on.
 - **503** on every action from a server launched without a phase machine, which is what
-  `bun run src/server.ts` is until Task 13 wires one in `import.meta.main`.
+  `bun run src/server.ts` still is: `createRunner()` in `src/run.ts` is the implementation of
+  `Runner`, and **nothing constructs one yet**. Wiring it is a two-line change in
+  `import.meta.main` (`runner: createRunner()`), left to whoever owns that file.
 
 ### Four security claims are spec-level, not observed — whoever tests with a real browser
 No real browser was involved in Task 16's suite. These are taken from the spec: browsers always
@@ -371,49 +280,18 @@ send `Origin` on non-GET/HEAD; browsers lowercase the host; `SameSite=Strict` se
 `EventSource` cannot send custom headers. **If any is wrong, the GET/HEAD Origin exemption is the
 row that bites.** Worth one real-browser check during Task 25 or 26.
 
-### Call the git guards in `src/git.ts`'s documented order, and release in `finally` — Task 13
-The module header gives the call order. **A refusal at steps 3 to 5 otherwise leaves a lock
-holding a live pid that nothing reclaims until restart.** That ordering is documented but *not*
-tested, deliberately, because building an orchestrator inside Task 12 would have been
-over-building. So it is your responsibility, not the module's.
-
-**Resume must NOT call `recordBaseBranch`.** The branch and base come from the run header.
-Re-deriving them is both wrong — HEAD is on `orch/*`, which that function refuses — and is the
-branch-stacking bug the base discipline exists to prevent.
-
-`taskBranchName` needs `{ feature (repo-relative), ref }`. A ref-less task **throws**, so the open
-ref-less decision is still yours.
-
-### `isMergedIntoBase` reports ancestry, not intent — Task 7b, Task 13
-So a **squash merge** and a merge made only on the remote both read as **unmerged**. A task
-legitimately finished via squash will keep reporting `done, unmerged` and stay unstartable. Decide
-whether that is acceptable or needs an override.
-
-### A SIGKILLed server can leave a `claude` child still writing — Task 8 or 13
+### A SIGKILLed server can leave a `claude` child still writing — whoever adds supervision
 The run lock judges only the server process, so reclaiming a stale lock can admit a second run
 into a tree where an orphaned child is still writing files. Task 11's process-group kill covers
-the test command; the agent child is not covered.
-
-### A clean `git status` does not mean a clean repo — Task 13
-Probed: a merge resolved back to HEAD's own content leaves `git status --porcelain` **completely
-empty** while `MERGE_HEAD` is still set, and the agent's next commit then silently becomes a merge
-commit carrying the user's second parent. `src/git.ts` checks `MERGE_HEAD`, `CHERRY_PICK_HEAD`,
-`REVERT_HEAD`, `rebase-merge`, `rebase-apply` and `BISECT_LOG` separately for this reason. Do not
-add a second porcelain-only check anywhere and treat it as sufficient.
-
-Also probed: **repo config can blind a porcelain check.** `status.showUntrackedFiles=no` hides
-untracked files and `diff.ignoreSubmodules=all` hides submodules, so every flag is passed
-explicitly. A guard whose blindness is configurable by the repo it guards is not a guard.
+the test command; the agent child is not covered. `src/run.ts` SIGTERMs its own child on every
+path where it gives up, which covers a crash *inside* the machine - but nothing inside a process
+can clean up after `kill -9` of that process.
 
 ### Two readers of `permission_denials` now exist — Task 24, whoever logs
 `src/stream.ts` passes the field through as a raw `unknown[]`. `src/permissions.ts` exports
 `permissionDenials(event)` and `describeDenials(...)`, which name the refused tool. **Call those
 rather than re-reading the array**, or the "named, not swallowed" guarantee lives only in Task 8b's
 tests and the UI shows a generic failure for what is actually a one-line config fix.
-
-### A stale comment in `src/runlog.ts` mentions `resumePlanSession` — cleanup
-Around line 109. The field is gone; the comment explains why a session id is recorded per phase,
-and that reason still stands without it. Left alone because Task 7b was editing that file.
 
 ### Bun cuts an idle SSE stream at 10s — settled by Task 18, keep the number in sight
 Task 17's open question is answered. Probed (`bun 1.4.3`): `Bun.serve` defaults to
@@ -438,27 +316,18 @@ a floor as an exact figure.
 indistinguishable from a missing `end` record — both fold to `interrupted`, and `resumeFrom` is the
 last **complete** `phase` record, which may be one step behind what the server was doing.
 
-### The merge predicate is the cost, not the reading — Task 12 or 13 owns caching
+### The merge predicate is the cost, not the reading — whoever passes one
 Measured over 500 logs: `indexRuns` reads **4.6% of 718 MiB in 89-180ms**. Adding a 5ms-per-row
 merge predicate (roughly a warm `git merge-base --is-ancestor`) takes it to **2733ms**, awaited one
 row at a time. `runindex` deliberately does not cache that: only the caller knows when a branch can
 have moved, and a stale cache would feed wrong merge state to the guard whose job is refusing a
 second run against finished work.
 
-### A run has TWO session ids and using the wrong one fails silently — Task 13
-`runId` names the run. `planSessionId` and `implementSessionId` are separate conversations, and
-`--session-id` takes a UUID so neither can be derived from `runId`. Gate feedback resumes the
-**plan** session; effort escalation resumes the **implement** session.
-
-Resuming the wrong one runs the implement prompt against the planning conversation and still
-exits `success`. **There is no error to catch**, so the phase machine must carry which session
-each phase belongs to rather than reconstructing it. `implementSessionId` is minted at gate
-approval, so a run abandoned at the gate never has one. Design §3.1 has the table.
-
-### Ref-less tasks cannot be ticked at all — Task 13 must decide
-`tickTask(src, ref)` addresses by ref, so a `- [ ] just text` line is unreachable. Either assign
-refs on ingestion (Task 26b's drafter is the natural place) or refuse ref-less tasks with a clear
-message. Silently skipping them is the one option that is not acceptable.
+`src/run.ts` passes **no** merge predicate and never calls `isMergedIntoBase`: its only guard
+against re-running a finished task is `createTaskBranch` refusing a branch that already exists, so
+it pays none of this cost. The caching question therefore belongs to whoever renders the tree.
+`liveRunIds()` in `src/run.ts` is the other half of that call - without it every active run folds
+to `interrupted`.
 
 ### Fenced code blocks are not parsed — deliberately deferred
 Inside the task-list region, a `#` comment in a fence ends the region and hides every task after
@@ -474,6 +343,104 @@ the exact spot where two heuristics already regressed, so the gap was chosen ove
 A real `rate_limit_event` holds the capturing account's window utilization, reset timestamps and
 overage status. **No name-based grep will find it, because it contains no names.** Task 4 has the
 replacement snippet; do not skip it. This repo is open source.
+
+### The phase machine is `src/run.ts`, and `createRunner()` is its port — whoever launches the server
+
+`Runner` in `src/server.ts` is satisfied by `createRunner({ projectsFile, runsDir })`, which is a
+**structural** match rather than an import: the machine does not import the server, so the port's
+types and the machine's stay independent and a drift shows up as an assignability error at the one
+line that wires them.
+
+Three things to know before wiring it:
+
+- **The port has no `answer`.** A run that ends a turn in prose, or with `ORCH: blocked <reason>`,
+  parks as `waiting(question)` / `waiting(blocked)`, and **no HTTP route can move it**: approve and
+  feedback both refuse (`wrong-state`), and stop/resume only re-park it. `createRunner` exposes
+  `answer(runId, text)` already, so the gap is a route and a `Runner` method, not machine work.
+- **Two refusal codes collapse.** The machine refuses with nine codes (`RefusalCode`); the HTTP
+  vocabulary has seven. `no-base` (a detached HEAD, or a checkout an earlier run left on `orch/*`)
+  and `branch-exists` (the task has run before) both arrive as `wrong-state`, because `dirty` would
+  be a lie and the UI hangs `git stash` advice off it. **The vocabulary is missing a "the repo is
+  not in a state a run can start from" code**; the messages carry the explanation meanwhile.
+- **Every action resolves at the transition, never at the rest point.** `ActionOptions.accepted` is
+  the hook: it fires once the run is registered, its branch taken and its child spawned, and a
+  refusal rejects before it ever fires. `createRunner` races the two. A caller that awaited the
+  returned promise instead would hold the request open for the length of a phase.
+
+### `featureFileHash` is SHA-256, hex, over the file's raw bytes — anyone comparing one
+
+The field was specified with no algorithm and no stated input, and `tickTaskInFile` takes a
+`FeatureFile` rather than a hash, so the comparison it exists for lives in `src/run.ts`:
+`featureFileHash(file.src)`, compared on rehydration against `header.featureFileHash`.
+
+It is computed from the **decoded string**, and that is the raw bytes: `readFeature` decodes with
+`{ fatal: true, ignoreBOM: true }`, so every file it accepts is valid UTF-8 decoded without
+substitution or BOM stripping, and re-encoding valid UTF-8 reproduces the input byte for byte. One
+read, and a hash that provably describes the bytes the run parsed rather than bytes read a moment
+later. A hash over a *normalised* form would have been the bug worth avoiding: `featurefile.ts`
+keeps a BOM and whatever line endings the file had, which are exactly the differences that prove a
+human edited it.
+
+### The run log gained three optional fields, each for a reader that had nothing — anyone reading a log
+
+| Field | Why it had to exist |
+|---|---|
+| `RunHeader.baseBranch` | a resumed run has nothing to `returnToBase` to otherwise. The branch can be recomputed from `featureFile` + `taskRef`; the base cannot be recomputed from anything, and `recordBaseBranch` both refuses on an `orch/` checkout and is the stacking bug |
+| `PhaseRecord.detail` | nothing else holds *why* a run is waiting. A `question` has the agent's text in the `cli` records before it, but a `blocked` the orchestrator decided (an exhausted budget) and a `stalled` one have no agent text at all, so a restarted server rendered the previous turn's prose as the reason |
+| `EndRecord.warnings` | a `done` run can still have things a human must see - a feature file edited mid-run, a task already ticked, a checkout that could not return to base. `why` is documented as why a run *failed*, and the log is the only place such a note survives the server that wrote it |
+
+All three are optional, per the absence policy: they are younger than the logs already on disk, and
+a field that did not exist cannot have been recorded. A log without `baseBranch` finishes on its
+task branch and says so rather than guessing.
+
+### Nothing records the effort a run escalated to — anyone touching the stall rule
+
+`PhaseRecord` has no effort field and the header holds only the starting value, so a resumed run
+recovers the current level by **replaying the escalation rule over the logged test signatures**.
+`stepLadder` in `src/run.ts` is that rule and is called from both places for exactly this reason: a
+second implementation would disagree silently, drop a resumed run back to `medium`, pay a cold
+cache getting back up, and report the wrong level in the UI. If you add a field for it, delete the
+replay in the same change - two sources will drift.
+
+### Five things Task 13 left undone deliberately — their owners are named
+
+- **Nothing checks that the plan file exists at the gate.** An agent that answers `ORCH: done`
+  without writing one parks the run at a gate rendering nothing. Untestable against
+  `test/fake-claude.ts`, which cannot create files, so the check was left rather than written
+  blind - **the gate UI task** will see the empty render first.
+- **A plan phase killed mid-first-turn cannot be resumed.** The session never completed a turn, so
+  `--resume` meets `No conversation found` and the run fails with that message. Recovering means
+  `git branch -D orch/<task>` and starting over. The same kill *after* the first turn resumes fine.
+- **A stop during a test run waits for the suite.** `runTests` has no cancel, only its timeout, so
+  `stopRun` kills the agent child at once and the test command runs to its end; the run then parks
+  interrupted without ticking or committing. Bounded by `DEFAULT_TIMEOUT_MS`, which is ten minutes.
+- **The budget park promises a raise nothing implements.** An exhausted ceiling parks
+  `waiting(blocked)` with "raise the ceiling and the run continues", and **Task 14** owns the
+  action that raises it. Until then the only way on is a new run.
+- **`turn()` takes the first result event of a turn**, not the last. Within a turn the double emits
+  exactly one, and `result_index` is replayed as captured so nothing may key on it; if a real CLI
+  ever emits several per turn, the cost arithmetic (which uses the last result of the *process*) is
+  already right and only the per-turn outcome needs revisiting.
+
+### Task 13's three open decisions, as made
+
+- **Ref-less tasks are refused, not assigned refs.** The message quotes the line and shows the
+  shape to type. Assigning one would mean writing to the user's backlog at run start, when the
+  server's only write to a feature file is a tick *after* the test command passed - and the ref it
+  invented would become the identity every future branch name keys on. `src/draft.ts` writes refs
+  when it drafts a file; that is where authoring belongs.
+- **`isMergedIntoBase` reporting ancestry is accepted.** `src/run.ts` does not consult it at all:
+  its only guard against re-running a finished task is `createTaskBranch` refusing an existing
+  branch, whose message already names `git branch -D <branch>` as the way out. So a squash-merged
+  task is one explicit command from being startable again, and that command is the human saying
+  "that work is integrated" - which ancestry cannot tell them. Note that the **tree** still reads
+  "done, unmerged" from `src/runindex.ts` until the branch is gone, because a throwing predicate
+  folds to `merged: false`.
+- **A `waiting(question)` run is answered on the session that asked.** It parks with no live child,
+  like the gate, and the reply goes in as the next turn on the conversation named by the phase
+  record - plan session for a plan question, implement session for an implement one. `answerPrompt`
+  carries the human's words verbatim and the phase's own "what to do next" clause, so an answer
+  into the plan session cannot start the implementation.
 
 ---
 

@@ -75,6 +75,25 @@ export interface RunHeader {
    * that cannot tell would have to treat "no hash" as "unchanged".
    */
   featureFileHash: string
+  /**
+   * The branch the run recorded as its base, so `returnToBase` works after a
+   * restart.
+   *
+   * Without it a resumed run has nothing to return to on `done`: the branch can
+   * be recomputed from `featureFile` and `taskRef`, but the base cannot be
+   * recomputed from anything. Re-deriving it with `recordBaseBranch` is both
+   * refused - HEAD is on the task's own `orch/` branch by then - and the
+   * branch-stacking bug the base discipline exists to prevent.
+   *
+   * Optional, unlike `profile` and `featureFileHash`, because it is younger
+   * than the logs already on disk and the absence policy from
+   * docs/HANDOFF.md applies: a field that did not exist when a log was written
+   * cannot have been recorded, so there is nothing to lose by defaulting. The
+   * default is the restrictive direction - a resumed run with no recorded base
+   * finishes on its task branch and says so, rather than guessing at a base and
+   * moving the user's checkout.
+   */
+  baseBranch?: string
   /** The ceiling this run was given. */
   budgetUsd: number
   /** Absolute, ISO 8601. */
@@ -105,12 +124,30 @@ export interface PhaseRecord {
   /** On the plan phase's record: the file the gate renders, so the gate shows
    * the path the prompt dictated instead of re-deriving it by convention. */
   planPath?: string
-  /** The session this phase runs in. Recorded on every phase that spawns a
-   * process, not just the first: with `resumePlanSession` the implement phase
-   * runs in `planSessionId`, so a reader that reconstructed the id from the
-   * phase name would resume the wrong conversation - and that failure is
-   * silent, because the wrong session still exits `success`. */
+  /**
+   * The session this phase runs in, present **exactly when this phase record
+   * spawned a process**.
+   *
+   * Recorded rather than reconstructed because resuming the wrong conversation
+   * is silent: the implement prompt runs inside the planning session and still
+   * exits `success`. `implementSessionId` has no other home - the header is
+   * written before the gate mints it.
+   *
+   * The "exactly when it spawned" half is load-bearing too: a refine turn on
+   * the live process carries no id, and that is what lets a reader split the
+   * log into per-process windows to sum cost, which resets per process.
+   */
   sessionId?: string
+  /**
+   * Why the run is waiting, in prose, on a `waiting` record.
+   *
+   * Nothing else in the log holds it. A `question` has the agent's own text in
+   * the `cli` records before it, but a `blocked` the orchestrator itself
+   * decided - an exhausted budget - and a `stalled` one have no agent text
+   * behind them at all, so a reader that fell back to the last result would
+   * render the previous turn's prose as the reason the run stopped.
+   */
+  detail?: string
 }
 
 export interface TestRecord {
@@ -131,6 +168,16 @@ export interface EndRecord {
   state: "done" | "failed"
   /** Why it failed. */
   why?: string
+  /**
+   * Things a human should see that are not the state: a feature file edited
+   * mid-run, a task that was already ticked, a checkout that could not return
+   * to base.
+   *
+   * Separate from `why`, which is about a failure: a run can be `done` and
+   * still have something worth saying, and the log is the only place such a
+   * note survives the server that produced it.
+   */
+  warnings?: string[]
   /** The run's total, summed by the caller: cost resets per process, so this
    * is the sum of the last result of each process, not of every result. */
   costUsd: number

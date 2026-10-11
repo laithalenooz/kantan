@@ -251,3 +251,140 @@ and do not run \`superpowers:finishing-a-development-branch\`.
 ${HEADLESS_CONTRACT}
 `
 }
+
+/**
+ * A refine turn: the server ran the tests and they failed.
+ *
+ * Task 13's seam. The loop in design §3 has a `refine` phase and nothing was
+ * written to speak to it, and it cannot be assembled by the caller either:
+ * every turn needs `HEADLESS_CONTRACT`, which is module-private here precisely
+ * so the sentinel the parser accepts and the sentinel a prompt dictates cannot
+ * drift. So the string lives beside the other three.
+ *
+ * It reports the **exit code** rather than an interpretation, because the exit
+ * code is the whole of design §3.3: the server never tells the agent the tests
+ * passed, and never accepts the agent's word that they did. It also does not
+ * say how many attempts have been made - an attempt count invites the agent to
+ * take a different kind of swing at a problem it is making progress on, and
+ * progress is measured here by the failure signature, not by counting.
+ *
+ * `output` is already bounded by the caller: `runTests` keeps up to 1 MiB per
+ * stream and the whole of it, twice, on every refine turn is real money.
+ */
+export function refinePrompt({
+  task,
+  planPath,
+  exitCode,
+  output,
+  timedOut,
+}: {
+  task: TaskSpec
+  planPath: string
+  exitCode: number
+  output: string
+  timedOut: boolean
+}): string {
+  return `The test command just ran and it did not pass. Fix it and finish the work.
+
+## What the suite did
+
+It exited ${exitCode}${timedOut ? ", after kantan killed it for exceeding the time limit" : ""}. Here is the tail of what it printed, stdout and stderr together:
+
+<test-output>
+${output}
+</test-output>
+
+kantan runs that command itself and reads the exit code, so this is not a report you can
+talk me out of and not something to work around: a passing suite by exit code is the only
+way this task finishes.${timedOut ? " A run that never finishes counts as a failure, so look for a test that hangs or waits for input." : ""}
+
+## What to do now
+
+- Diagnose the actual failure before changing anything. Do not delete, skip, or weaken a
+  test to make the suite green, and do not change the test command.
+- Keep following the plan at ${planPath}. This is still ${task.ref}.
+- Make the change, run the suite yourself to check it, and commit on the branch that is
+  already checked out, naming the files you changed as a pathspec.
+- Leave ${task.featurePath} exactly as it is.
+
+${HEADLESS_CONTRACT}
+`
+}
+
+/**
+ * The human's reply to a question the agent asked.
+ *
+ * Task 13's seam, like `refinePrompt`. A question is not the gate: the gate has
+ * approve and feedback, and `feedbackPrompt` says a human read the plan and did
+ * not approve it, which is the wrong thing to tell an agent that asked
+ * something and is waiting for the answer.
+ *
+ * Both phases can ask, and the two replies cannot be one string: an answer sent
+ * into the planning conversation must not start the implementation, and an
+ * answer sent into the implement conversation must not re-open planning. So the
+ * surrounding text is shared and the single differing clause is named here,
+ * rather than being assembled by the caller - which would put the sentinel
+ * contract outside this module.
+ *
+ * The answer is interpolated verbatim. It arrives on the child's stdin inside a
+ * stream-json user message, so `JSON.stringify` escapes every byte of it and
+ * there is no shell and no argv length to respect.
+ */
+export function answerPrompt({
+  answer,
+  phase,
+}: {
+  answer: string
+  phase: "plan" | "implement"
+}): string {
+  const next =
+    phase === "plan"
+      ? `Carry on with the plan at that same path, and nothing else: still no implementation, no
+tests, no branch of your own, and no edit to the backlog file.`
+      : `Carry on with the work from where you stopped. Do not start the plan over and do not
+re-run the parts you already finished; continue, run the suite yourself to check, and commit
+on the branch that is already checked out.`
+
+  return `You asked a question and nobody could answer it at the time, because this conversation runs
+headless. A human has now read it and replied. Their answer, verbatim:
+
+${answer}
+
+${next}
+
+If the answer does not settle it, decide the rest yourself and say what you decided, or end the
+turn blocked with the one thing still in the way. Do not ask again: the same thing would happen.
+
+${HEADLESS_CONTRACT}
+`
+}
+
+/**
+ * Picking up a phase that was interrupted mid-work.
+ *
+ * Task 13's seam. A killed run resumes its session with `--resume`, which
+ * restores the conversation but still needs a turn to answer, and re-sending
+ * `implementPrompt` is the wrong turn: it re-invokes the execution skill inside
+ * a conversation that is already partway through the plan, which is how a
+ * resumed run re-does work it had already committed.
+ *
+ * It deliberately does not say what interrupted the run. A crash, a stop button
+ * and a laptop closing look identical from here, and an agent told "you
+ * crashed" tends to go looking for the damage.
+ */
+export function resumePrompt({ task, planPath }: { task: TaskSpec; planPath: string }): string {
+  return `This conversation was interrupted and has just been resumed. Everything you did before is
+still in context, and the files you wrote and the commits you made are still there.
+
+Pick up ${task.ref} from where you stopped, following the plan at ${planPath}.
+
+- Work out what is already done before changing anything: read the files you were editing and
+  check \`git log\` and \`git status\` on the branch that is already checked out.
+- Do not start the plan over, and do not redo a step you had finished.
+- Finish the remaining steps, run the suite yourself to check your work, and commit as you go,
+  naming the files you changed as a pathspec.
+- Leave ${task.featurePath} exactly as it is.
+
+${HEADLESS_CONTRACT}
+`
+}
