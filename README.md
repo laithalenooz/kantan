@@ -6,7 +6,7 @@ A local web UI that drives the real `claude` CLI through one coding task at a ti
 plan, you approve, then implement and test until the tests pass.
 
 > **Status: early.** The design is finished and evidence-backed. The implementation is
-> two tasks of twenty-nine. If you came for working software, come back later. If you came
+> three tasks of twenty-nine, at 96 tests. If you came for working software, come back later. If you came
 > for the hard-won facts about `claude -p`, those are in [`docs/probes/`](docs/probes/) and
 > they are the best part of this repo today.
 

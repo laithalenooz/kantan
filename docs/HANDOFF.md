@@ -22,6 +22,33 @@ Also: `test/version.test.ts`'s first test calls the real binary and asserts an `
 a later task installs the fake CLI suite-wide (preload, `bunfig`, env), **the fake must answer
 `--version` with a version string** or that test breaks for a confusing reason.
 
+### Adding a field to `Project` is a three-file change — every later task
+`src/projects.ts` **rejects unknown fields**, on load and in `defaults()`. Any task adding a field
+must extend `Project`, `FIELDS` and `validateProject` **together**, or every load throws on the
+tool's own writes. Per-project permission settings are the likely first case.
+
+The strictness is deliberate: a misspelled *optional* key (`configdir`) reads as absent and is
+dropped on the next write, which a missing-field check cannot catch because the field is optional.
+Verified: it throws naming the file, record index, bad key and the full allowed set.
+
+### `defaults()` throws on unknown keys — Task 18 (HTTP actions)
+It will receive parsed request bodies. The HTTP layer must turn that throw into a **4xx, not a
+500**: it is the caller's typo, not a server fault.
+
+### `projects.json` has no cross-process lock — nobody, unless kantan grows a second process
+Writes are serialised in-process only, which is sound for one local server. A second process can
+still lose an update, though `rename` means the file is never left truncated. Also: no directory
+`fsync` after the rename, so a power loss can lose the newest write but never corrupt the file.
+Crash-left `.tmp` files are ignored on read and never cleaned up.
+
+### `project.path` is only lexically normalised — Task 12 (git guards)
+`/repo/` and `/repo` collapse to one record, but **two symlinked spellings of one repo remain two
+records**, and nothing checks that the path exists or is a git repository. Task 12 owns the "is
+this a usable git repo" question, and should expect to be handed a path that is neither.
+
+`reportPath` may contain `..`; refusing it would mean guessing at monorepo layouts, so the code
+that joins it owns that check.
+
 ### `claudeVersion()` ignores the exit code — whoever hardens spawning
 It reads stdout and never awaits exit. A missing or failing binary degrades to
 `cannot parse version from:` with an empty tail: no stderr, no status. Deliberate under "no
