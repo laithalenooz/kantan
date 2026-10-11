@@ -54,10 +54,33 @@ Its Haiku calls are a positional prompt with text or JSON output. The double ref
 design, so use the real CLI (Haiku is cheap and both jobs are off the critical path) or a separate
 stub. Do not widen the double to a second invocation shape.
 
-### A process can emit more than one `result` event — Task 14 (budget)
-The error event carries `result_index` and `queued_turn_count`. Cost accounting must take the
-**last** result of each process, which is what the existing cost note already implies but did not
-explain.
+### A run's ceiling lives in its log, and nothing over HTTP can raise it yet — the UI, whoever routes
+
+Task 14's answer to "how does a raise reach a parked run": a `human` record,
+`{"kind":"human","action":"raise","budgetUsd":<new ceiling in full>}`. Each raise carries the whole
+new ceiling rather than a delta, so `foldForResume` takes the **last** usable one and falls back to
+the header's figure when there is none — and ignores a figure that is not finite and positive,
+leaving the previous ceiling standing. That is what makes a raise survive the restart the park
+exists to outlive. Three consequences nobody can see from the types:
+
+- **`project.budgetUsd` is the *next* run's default, not a live control.** A run can be started
+  with a per-run ceiling (design §3.4 allows one), so a resumed run that re-read the store would
+  hand the next process a remainder nobody granted — and one edit to the store would raise every
+  unfinished run of that project at once. The park's prose now says "raise **this run's** ceiling"
+  for exactly this reason. So `src/ui/Sidebar.tsx`'s `ceilingUsd={project.budgetUsd}` and
+  `src/runindex.ts`'s `header.budgetUsd` are both **stale after a raise**: the ceiling a run is
+  actually spending against is the folded one.
+- **`createRunner` exposes `raise(runId, budgetUsd)`; the server's port and routes do not.** The
+  figure is the only action argument that is a number, so a route owns the 400 for a missing or
+  non-numeric one. The machine refuses a figure that is not finite, or not above **both** the
+  ceiling and the spend, as `wrong-state` — a raise that lands at or under either one would
+  re-park the run on arrival or lower the ceiling while claiming to raise it.
+- **Feedback and an answer are refused while the ceiling is spent**, with `wrong-state`, *before*
+  the text is taken. A raise resumes a run by re-sending the phase's own prompt, which cannot
+  carry a sentence somebody typed an hour ago, so recording it would put words in the log that no
+  agent ever reads. The UI must therefore **keep the draft in the box on that refusal** rather
+  than clearing it. Approve is deliberately *not* refused: it carries no text, and
+  "approve → told the ceiling is short → raise → the implement phase starts" is the designed path.
 
 ### Adding a field to `Project` is a FOUR-place change — every later task
 `src/projects.ts` **rejects unknown fields**, on load and in `defaults()`. A new field must extend
@@ -423,9 +446,6 @@ replay in the same change - two sources will drift.
 - **A stop during a test run waits for the suite.** `runTests` has no cancel, only its timeout, so
   `stopRun` kills the agent child at once and the test command runs to its end; the run then parks
   interrupted without ticking or committing. Bounded by `DEFAULT_TIMEOUT_MS`, which is ten minutes.
-- **The budget park promises a raise nothing implements.** An exhausted ceiling parks
-  `waiting(blocked)` with "raise the ceiling and the run continues", and **Task 14** owns the
-  action that raises it. Until then the only way on is a new run.
 - **`turn()` takes the first result event of a turn**, not the last. Within a turn the double emits
   exactly one, and `result_index` is replayed as captured so nothing may key on it; if a real CLI
   ever emits several per turn, the cost arithmetic (which uses the last result of the *process*) is

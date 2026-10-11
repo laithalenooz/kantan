@@ -174,9 +174,27 @@ export interface TestRecord {
   attempt: number
 }
 
+/**
+ * A decision the human made at a rest point.
+ *
+ * `raise` carries the run's **new ceiling in full**, not a delta, and it is
+ * recorded here rather than being read back off the project record for three
+ * reasons. The ceiling is a per-run fact: design §3.4 makes it configurable per
+ * project *and* per run, so a run started with an override cannot have its
+ * ceiling re-derived from `projects.json` without discarding it. Editing the
+ * store would also raise every unfinished run of that project at once, which is
+ * a different decision from "let this one finish". And the header cannot be
+ * rewritten - the log is append-only, and changing line one would shift every
+ * byte offset a tailing reader has already passed, which is the same reason
+ * `implementSessionId` lives on a `phase` record.
+ *
+ * So a reader folds the ceiling as the header's figure plus every `raise` after
+ * it, and the raise survives a server restart because the log does.
+ */
 export type HumanRecord =
   | { kind: "human"; action: "approve" }
   | { kind: "human"; action: "feedback"; text: string }
+  | { kind: "human"; action: "raise"; budgetUsd: number }
 
 export interface EndRecord {
   kind: "end"

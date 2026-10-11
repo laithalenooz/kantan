@@ -50,7 +50,7 @@ const outPath = Bun.argv[3]
 if (jobPath === undefined || outPath === undefined) throw new Error("usage: driver <job> <out>")
 
 type Call = { m: string; projectPath?: string; featureFile?: string; taskRef?: string; text?: string }
-type Step = { action: string; text?: string; calls?: Call[] }
+type Step = { action: string; text?: string; usd?: number; calls?: Call[] }
 const job = JSON.parse(await Bun.file(jobPath).text()) as {
   project: Record<string, unknown>
   featureFile: string
@@ -192,6 +192,14 @@ for (const step of job.steps) {
       results.push(await run.sendFeedback({ ...options, feedback: step.text ?? "" }))
     } else if (step.action === "answer") {
       results.push(await run.answerQuestion({ ...options, answer: step.text ?? "" }))
+    } else if (step.action === "raise") {
+      // Caught here rather than by the loop's own handler, which stops: a case
+      // needs to refuse one figure and then send a usable one.
+      try {
+        results.push(await run.raiseBudget({ ...options, budgetUsd: step.usd ?? 0 }))
+      } catch (e) {
+        results.push({ error: (e as Error).message, code: (e as { code?: unknown }).code })
+      }
     } else if (step.action === "stop-absent") {
       // A stop on a run this process never drove, which is what the server
       // does after a restart.
@@ -419,6 +427,8 @@ interface Job {
   steps: {
     action: string
     text?: string
+    /** For the `raise` step: the new ceiling, in full. */
+    usd?: number
     /** For the `runner` step: the port calls to make, in order. */
     calls?: {
       m: string
@@ -568,6 +578,23 @@ function header(records: Record_[]): Record_ {
 
 function phases(records: Record_[]): Record_[] {
   return records.filter((r) => r["kind"] === "phase")
+}
+
+/**
+ * Every `total_cost_usd` the log holds, in order - which is **not** the run's
+ * spend.
+ *
+ * Within one process the figure is cumulative, so summing these double-counts
+ * every turn but the last of each process. The helper exists so a case can
+ * assert the wrong number as well as the right one: a suite that only asserts
+ * the right one cannot show that it would notice the wrong one.
+ */
+function resultCosts(records: Record_[]): number[] {
+  return records
+    .filter((r) => r["kind"] === "cli")
+    .map((r) => (r["event"] as Record_ | undefined) ?? {})
+    .filter((e) => e["type"] === "result")
+    .map((e) => Number(e["total_cost_usd"]))
 }
 
 /** Writes the project store the runner looks a start request up in. */
@@ -1013,6 +1040,49 @@ test("each process is given ceiling minus spent, summing the last result per pro
   expect(Number(out.results[1]?.["costUsd"])).toBeCloseTo(0.65, 6)
 }, 240_000)
 
+test("the total is the last result of each process, and this fixture can tell that from the naive sum", async () => {
+  const ws = await workspace("budget-naive")
+  const done = await fixture(ws, "done", "ORCH: done")
+  await script(ws, [
+    { fixture: PLAN_FIXTURE, cost: 0.25 },
+    // Two turns in ONE process - the implement turn and the refine turn after a
+    // failing suite, which reuses the live child. Within a process
+    // `total_cost_usd` is cumulative, so the double reports 0.10 and then 0.20.
+    { fixture: done, cost: 0.1 },
+    { fixture: done, cost: 0.1 },
+  ])
+  const testCmd = await testScript(
+    ws,
+    ['if [ "$n" -ge 2 ]; then echo ok; exit 0; fi', 'echo "FAIL once"', "exit 1"].join("\n"),
+  )
+
+  const out = await drive(ws, {
+    project: project(ws, { testCmd }),
+    budgetUsd: 1,
+    steps: [{ action: "start" }, { action: "approve" }],
+  })
+  expect(out.results[1]).toMatchObject({ state: { kind: "done" } })
+
+  // Two processes, which is what makes the two readings differ: the plan phase,
+  // then one implement child that took both agent turns.
+  expect((await spawns(ws)).length).toBe(2)
+  const records = await runLog(ws, out.runId)
+  expect(resultCosts(records)).toEqual([0.25, 0.1, 0.2])
+
+  // The number a naive fold produces, asserted so the case fails if the two
+  // ever agree - at which point it would be proving nothing.
+  const naive = resultCosts(records).reduce((a, b) => a + b, 0)
+  expect(naive).toBeCloseTo(0.55, 6)
+  // The number the machine reports: 0.25 for the plan process plus the implement
+  // process's **last** figure, 0.20.
+  expect(Number(out.results[1]?.["costUsd"])).toBeCloseTo(0.45, 6)
+  expect(Number(records.at(-1)?.["costUsd"])).toBeCloseTo(0.45, 6)
+  expect(naive).not.toBeCloseTo(0.45, 6)
+  // And the implement process was given the remainder after the plan process,
+  // not after every logged figure.
+  expect(Number(flag(await spawnAt(ws, 1), "--max-budget-usd"))).toBeCloseTo(0.75, 6)
+}, 240_000)
+
 test("an exhausted ceiling refuses to spawn at all, rather than paying for one more turn", async () => {
   const ws = await workspace("budget-exhausted")
   const done = await fixture(ws, "done", "ORCH: done")
@@ -1049,6 +1119,133 @@ test("the CLI's own error_max_budget_usd is a raisable stop, not a crash", async
   const records = await runLog(ws, out.runId)
   expect(records.some((r) => r["kind"] === "end")).toBe(false)
 }, 120_000)
+
+test("a raise continues the run, and starts the implement conversation the park never began", async () => {
+  const ws = await workspace("budget-raise")
+  const done = await fixture(ws, "done", "ORCH: done")
+  await script(ws, [{ fixture: PLAN_FIXTURE, cost: 0.3 }, { fixture: done, cost: 0.2 }])
+
+  const out = await drive(ws, {
+    budgetUsd: 0.3,
+    steps: [
+      { action: "start" },
+      { action: "approve" },
+      // Not a raise: at or below the ceiling it already has.
+      { action: "raise", usd: 0.2 },
+      { action: "raise", usd: 1 },
+    ],
+  })
+  // Approval is deliberately unguarded, so this is the designed sequence:
+  // approve, be told the ceiling is short, raise it, and the phase begins.
+  expect(out.results[1]).toMatchObject({ state: { kind: "waiting", reason: "blocked" } })
+  expect(String(out.results[2]?.["error"])).toContain("not a usable ceiling")
+  expect(out.results[2]?.["code"]).toBe("wrong-state")
+  expect(out.results[3]).toMatchObject({ state: { kind: "done" } })
+
+  // The refused raise spawned nothing; the accepted one spawned exactly once.
+  const all = await spawns(ws)
+  expect(all.length).toBe(2)
+
+  const records = await runLog(ws, out.runId)
+  // In full rather than as a delta, so a reader needs no arithmetic and no
+  // ordering to know the ceiling.
+  expect(records.filter((r) => r["kind"] === "human" && r["action"] === "raise")).toMatchObject([
+    { budgetUsd: 1 },
+  ])
+  const implementSession = String(
+    phases(records).find((r) => r["phase"] === "implement" && r["state"] === "running")?.[
+      "sessionId"
+    ],
+  )
+  expect(implementSession).toMatch(UUID)
+
+  const argv = argvOf(all[1] ?? {})
+  // `--session-id`, never `--resume`: approval minted this id and the budget
+  // refusal declined the spawn, so the CLI has never seen the conversation and
+  // `--resume` would meet `No conversation found`.
+  expect(flag(argv, "--session-id")).toBe(implementSession)
+  expect(argv).not.toContain("--resume")
+  expect(Number(flag(argv, "--max-budget-usd"))).toBeCloseTo(0.7, 6)
+  // And it is the implement prompt, which carries the task and the plan - not
+  // the resume prompt, which tells the agent its own work is still in context.
+  const prompt = promptOf((await turns(ws))[1] ?? {})
+  expect(prompt).toContain("superpowers:executing-plans")
+  expect(prompt).not.toContain("was interrupted")
+  expect(Number(records.at(-1)?.["costUsd"])).toBeCloseTo(0.5, 6)
+}, 240_000)
+
+test("a raised ceiling survives a restart, folded from the log rather than the header", async () => {
+  const ws = await workspace("budget-raise-restart")
+  const asks = await fixture(ws, "asks", "Should the slug keep accented characters?")
+  const done = await fixture(ws, "done", "ORCH: done")
+  await script(ws, [
+    { fixture: PLAN_FIXTURE, cost: 0.3 },
+    { fixture: asks, cost: 0.1 },
+    { fixture: done, cost: 0.1 },
+  ])
+
+  const first = await drive(ws, {
+    budgetUsd: 0.3,
+    steps: [{ action: "start" }, { action: "approve" }],
+  })
+  expect(first.results[1]).toMatchObject({ state: { kind: "waiting", reason: "blocked" } })
+  const runId = first.runId
+
+  // A second process, with an empty registry. `budgetUsd` is **not** passed
+  // again, so the only ceilings available are the header's 0.30, the project
+  // record's 50, and the raise - and the remainder says which was used: 0.00
+  // (no spawn at all), 49.70, or 0.70.
+  const second = await drive(ws, { runId, steps: [{ action: "raise", usd: 1 }] })
+  expect(second.results[0]).toMatchObject({ state: { kind: "waiting", reason: "question" } })
+  expect(Number(flag(await spawnAt(ws, 1), "--max-budget-usd"))).toBeCloseTo(0.7, 6)
+
+  // A third process answers the question the raised run asked. 1.00 minus 0.30
+  // for the plan process and 0.10 for the implement one: on the header's
+  // ceiling this remainder would be negative and nothing would spawn.
+  const third = await drive(ws, { runId, steps: [{ action: "answer", text: "transliterate them" }] })
+  expect(third.results[0]).toMatchObject({ state: { kind: "done" } })
+  const argv = await spawnAt(ws, 2)
+  expect(Number(flag(argv, "--max-budget-usd"))).toBeCloseTo(0.6, 6)
+
+  const records = await runLog(ws, runId)
+  const implementSession = String(
+    phases(records).find((r) => r["phase"] === "implement" && r["state"] === "running")?.[
+      "sessionId"
+    ],
+  )
+  // The conversation the raise started is the one the answer resumed.
+  expect(flag(argv, "--resume")).toBe(implementSession)
+  expect(Number(records.at(-1)?.["costUsd"])).toBeCloseTo(0.5, 6)
+  expect(await lockExists(ws)).toBe(false)
+}, 240_000)
+
+test("an exhausted run refuses feedback and an answer, rather than recording words no agent reads", async () => {
+  const ws = await workspace("budget-text")
+  await script(ws, [{ fixture: PLAN_FIXTURE, cost: 0.3 }])
+
+  const out = await drive(ws, {
+    budgetUsd: 0.3,
+    steps: [
+      { action: "start" },
+      // At the gate, with the ceiling already gone. `continueFrom` re-sends the
+      // phase's own prompt and cannot re-send a sentence from an hour ago, so
+      // taking the text would record words no agent would ever read.
+      { action: "feedback", text: "use a slug table instead" },
+    ],
+  })
+  expect(out.results[0]).toMatchObject({ state: { kind: "waiting", reason: "gate" } })
+  const why = String(out.results[1]?.["error"])
+  expect(why).toContain("cannot take feedback")
+  expect(why).toContain("Nothing has been recorded")
+  // The ceiling is named as this run's, not as the project's: editing
+  // projects.json would leave the human watching a run that never moves.
+  expect(why).toContain("next run's default")
+
+  const records = await runLog(ws, out.runId)
+  expect(records.some((r) => r["kind"] === "human")).toBe(false)
+  // One process: the plan phase. The refusal came before anything spawned.
+  expect((await spawns(ws)).length).toBe(1)
+}, 180_000)
 
 // ---------------------------------------------------------------------------
 // The lock, on every exit path
@@ -1690,7 +1887,9 @@ test("a dirty repo reaches the caller as `dirty` with git's own words", async ()
 
 test("the runner drives a whole run: start, feedback, approve, done", async () => {
   const ws = await workspace("runner-whole")
-  await projectsFile(ws, [project(ws)])
+  // A ceiling no default produces: `projects.json`'s own default is 50, so a
+  // run that fell back to it would still look right at that figure.
+  await projectsFile(ws, [project(ws, { budgetUsd: 7 })])
   const done = await fixture(ws, "done", "ORCH: done")
   await script(ws, [{ fixture: PLAN_FIXTURE }, { fixture: PLAN_FIXTURE }, { fixture: done }])
 
@@ -1717,6 +1916,10 @@ test("the runner drives a whole run: start, feedback, approve, done", async () =
   // store - the route only ever hands it a run id.
   const branch = String(header(records)["taskRef"])
   expect(branch).toBe("T1")
+  // The ceiling came from `projects.json`: a start request names a project, a
+  // feature file and a task, and nothing in it mentions money.
+  expect(Number(flag(await spawnAt(ws, 0), "--max-budget-usd"))).toBe(7)
+  expect(Number(header(records)["budgetUsd"])).toBe(7)
   expect(await git(ws.repo, ["show", `main:${ws.featurePath}`])).toContain("- [ ] T1")
   expect(await lockExists(ws)).toBe(false)
 }, 240_000)

@@ -250,6 +250,20 @@ interface ActiveRun {
   planSessionId: string
   /** Minted at gate approval, so a run abandoned at the gate never has one. */
   implementSessionId: string | null
+  /**
+   * Whether a process has ever **run** in the implement conversation.
+   *
+   * Not the same question as `implementSessionId !== null`: approval mints the
+   * id, and the budget refusal in `agentTurn` can then park the run before the
+   * first process starts. `--resume` on an id the CLI has never seen meets
+   * `No conversation found`, so a continuation that read the id alone would
+   * turn a raisable park into a failed run (see `continueFrom`).
+   *
+   * Folded from the log as "some `phase` record carried the implement session
+   * id", which is the same fact: a record carries one **exactly when it
+   * spawned**.
+   */
+  implementStarted: boolean
   budgetUsd: number
   /** The sum of the last result of each **finished** process. */
   spent: number
@@ -711,6 +725,7 @@ export async function startRun(options: StartRunOptions): Promise<RunResult> {
       taskSpec: task,
       planSessionId,
       implementSessionId: null,
+      implementStarted: false,
       budgetUsd,
       spent: 0,
       effort: project.implementEffort,
@@ -891,9 +906,10 @@ async function drive(run: ActiveRun, work: () => Promise<RunResult>): Promise<Ru
       // A refusal is passed through rather than recorded as a failure, and is
       // **unreachable from inside a drive today**: every `new RunRefusal` in
       // this file is in `refusing`, `repoRelative`, `requireRef`,
-      // `taskSpecFor`, `requireRest`, `rehydrate`, `resumeRun`, `stopRun`,
-      // `stopAbsent`, `projectForRun`, `projectAt` or this guard itself, all of
-      // which run before `work()` is called. If a refusal ever does come from
+      // `taskSpecFor`, `requireRest`, `requireFunds`, `requireRaise`,
+      // `rehydrate`, `resumeRun`, `stopRun`, `stopAbsent`, `projectForRun`,
+      // `projectAt` or this guard itself, all of which run before `work()` is
+      // called - the two money guards through `held`'s `check`. If a refusal ever does come from
       // inside, this branch has to retire the run first - otherwise it leaves
       // the lock and the registry entry behind with nothing driving them.
       if (e instanceof RunRefusal) throw e
@@ -1050,11 +1066,125 @@ function remaining(run: ActiveRun): number {
  */
 async function refuseIfSpent(run: ActiveRun, phase: RunPhase): Promise<RunResult | null> {
   if (remaining(run) > 0) return null
-  return await park(
-    run,
-    phase,
-    "blocked",
-    `this run has spent $${run.spent.toFixed(4)} of its $${run.budgetUsd.toFixed(2)} ceiling, so kantan will not start another process: the CLI checks a budget after the turn, not before, so spawning would cost another turn and stop anyway. Raise the ceiling to continue.`,
+  return await park(run, phase, "blocked", exhausted(run))
+}
+
+/**
+ * What an exhausted run says to the human, including how to act on it.
+ *
+ * It names **raising this run's ceiling** rather than "the budget", because the
+ * obvious reading of the shorter sentence is to edit `projects.json` - and that
+ * figure is the next run's default. A parked run's ceiling is folded from its
+ * own log (see `Folded.budgetUsd`), so an edit to the store would leave the
+ * human watching a run that does not move.
+ */
+function exhausted(run: ActiveRun): string {
+  return (
+    `this run has spent $${run.spent.toFixed(4)} of its $${run.budgetUsd.toFixed(2)} ceiling, so kantan will not start another process: the CLI checks a budget after the turn, not before, so spawning would cost another turn and stop anyway. ` +
+    `Raise this run's ceiling and it continues from here - editing the project's budget changes the next run's default, not this one.`
+  )
+}
+
+/**
+ * Refuses an action that would spend money the run does not have, **before** it
+ * takes the human's words.
+ *
+ * Feedback and an answer both carry text, and the run log is where that text
+ * goes - but `continueFrom`, which is what a raise resumes with, re-sends the
+ * phase's own prompt and has no way to re-send a sentence somebody typed an
+ * hour ago. Accepting the text and parking on the budget would therefore record
+ * words no agent ever reads, and the human would see their revision vanish into
+ * a log. Refusing leaves it in the box they typed it in.
+ *
+ * Approval is deliberately **not** guarded: it carries no text, and the park it
+ * produces is the designed one - "approve, be told the ceiling is short, raise
+ * it, and the implement phase starts". That park is also the only way to be
+ * waiting with an implement conversation that never started, which is why
+ * guarding these two is what keeps `agentTurn`'s first-turn guard unreachable.
+ */
+function requireFunds(run: ActiveRun, what: string): void {
+  if (remaining(run) > 0) return
+  const rest = run.rest
+  // What a raise will do next differs by park, and both sentences have to be
+  // true: a `blocked` run is **driven** by the raise and never sees this text,
+  // while a `gate` or `question` run stays put and will take it on the next
+  // attempt. `raiseBudget` cannot tell a budget stop from an agent-decided
+  // block, and neither can this - but it does not have to, because the raise
+  // does the same thing to both.
+  const driven = rest !== null && rest.kind === "waiting" && rest.reason === "blocked"
+  const next = driven
+    ? "Raising the ceiling resumes the phase on its own and does not carry this text with it; send it again if the run comes back asking."
+    : "Nothing has been recorded, so nothing is lost: raise the ceiling and send it again."
+  throw new RunRefusal("wrong-state", `run ${run.runId} cannot ${what}: ${exhausted(run)} ${next}`)
+}
+
+/**
+ * Raises the ceiling of a run parked at a human, and continues it if money was
+ * what stopped it.
+ *
+ * **The raise is recorded on the run's log, not read back off the project.**
+ * Design §3.4 makes the ceiling configurable per project *and* per run, so a
+ * run started with an override has no ceiling to re-derive; `projects.json`
+ * holds the next run's default, and editing it would raise every unfinished run
+ * of that project at once - one human decision expressed as a different one.
+ * The header cannot be rewritten either, because the log is append-only. So the
+ * new ceiling goes in as a `human` record and `foldForResume` reads it back,
+ * which is what makes a raise survive the restart the park is designed to
+ * outlive.
+ *
+ * Accepted at **every** wait, and it drives only from `blocked`:
+ *
+ * - `blocked` is the only park money can cause, so it is the only one with
+ *   somewhere to continue to. A `blocked` park the *agent* decided continues
+ *   too, because telling the two apart would mean reading the detail prose, and
+ *   this codebase switches on codes rather than sentences. Continuing one costs
+ *   a turn that re-states the phase, which is what a resume does anyway.
+ * - `gate`, `question` and `stalled` take the raise and stay put: the decision
+ *   they are waiting for is still outstanding. A gate whose ceiling was short
+ *   can then be approved or revised, which is the whole reason the raise is
+ *   accepted there at all - `requireFunds` refuses feedback until it is.
+ */
+export async function raiseBudget(
+  options: ActionOptions & { budgetUsd: number },
+): Promise<RunResult> {
+  const raised = options.budgetUsd
+  const run = await held(
+    options,
+    ["gate", "question", "blocked", "stalled"],
+    "take a raised ceiling",
+    (r) => requireRaise(r, raised),
+  )
+  const rest = run.rest
+  return await drive(run, async () => {
+    await run.log.append({ kind: "human", action: "raise", budgetUsd: raised })
+    run.budgetUsd = raised
+    if (rest !== null && rest.kind === "waiting" && rest.reason !== "blocked") {
+      // Nothing to drive: the human's own decision is still the next step.
+      return result(run, rest)
+    }
+    return await continueFrom(run)
+  })
+}
+
+/**
+ * Refuses a raise that cannot fund anything, or that is not a raise.
+ *
+ * The dimension is the figure, and it takes four kinds of value: above both the
+ * ceiling and the spend, which is the only one that funds a process; at or
+ * below the ceiling, which is a *lowering* however it was labelled; at or below
+ * the spend, which parks the run again on arrival; and non-finite, which would
+ * make every later remainder non-finite too - `src/spawn.ts` throws on that
+ * rather than flooring it, precisely so a broken total cannot be hidden.
+ *
+ * Refusing costs one retyped number, visibly. Accepting costs a run that takes
+ * the raise and stops anyway, or one whose next process gets `NaN`.
+ */
+function requireRaise(run: ActiveRun, raised: number): void {
+  const floor = Math.max(run.budgetUsd, run.spent)
+  if (Number.isFinite(raised) && raised > floor) return
+  throw new RunRefusal(
+    "wrong-state",
+    `$${String(raised)} is not a usable ceiling for run ${run.runId}: it has a $${run.budgetUsd.toFixed(2)} ceiling and has spent $${run.spent.toFixed(4)}, so a raise has to be a finite figure above both - anything else either lowers the ceiling or stops the run again on arrival.`,
   )
 }
 
@@ -1105,7 +1235,7 @@ async function endedInError(
     run,
     phase,
     "blocked",
-    `the ${phase} phase stopped on its budget: the process was given $${given.toFixed(4)} of this run's $${run.budgetUsd.toFixed(2)} ceiling and the CLI ended the turn with ${subtype}. The run has spent $${run.spent.toFixed(4)}. Raise the ceiling and it continues from where it stopped.`,
+    `the ${phase} phase stopped on its budget: the process was given $${given.toFixed(4)} of this run's $${run.budgetUsd.toFixed(2)} ceiling and the CLI ended the turn with ${subtype}. The run has spent $${run.spent.toFixed(4)}. Raise this run's ceiling and it continues from where it stopped - editing the project's budget changes the next run's default, not this one.`,
   )
 }
 
@@ -1144,16 +1274,28 @@ async function held(
   options: ActionOptions,
   reasons: WaitReason[],
   what: string,
+  /**
+   * A second refusal, for an action whose own precondition needs the run: the
+   * funds a turn would spend, or the figure a raise was given.
+   *
+   * It runs **inside** the same guard as `requireRest` on purpose. A refusal
+   * raised after this function returns would leave a run this call had just
+   * rehydrated registered and holding the project's lock with nothing driving
+   * it, which is the case the `catch` below exists for.
+   */
+  check?: (run: ActiveRun) => void,
 ): Promise<ActiveRun> {
   const live = active.get(options.runId)
   if (live !== undefined) {
     requireRest(live, reasons, what)
+    check?.(live)
     live.accepted = options.accepted ?? null
     return live
   }
   const run = await rehydrate(options)
   try {
     requireRest(run, reasons, what)
+    check?.(run)
   } catch (e) {
     // Rehydrating took the lock and switched the branch. A run left registered
     // here would hold the project with nothing driving it, and `resumeRun`
@@ -1223,7 +1365,9 @@ export async function approveGate(options: ActionOptions): Promise<RunResult> {
 export async function sendFeedback(
   options: ActionOptions & { feedback: string },
 ): Promise<RunResult> {
-  const run = await held(options, ["gate"], "take feedback")
+  const run = await held(options, ["gate"], "take feedback", (r) =>
+    requireFunds(r, "take feedback"),
+  )
   return await drive(run, async () => {
     await run.log.append({ kind: "human", action: "feedback", text: options.feedback })
     return await planTurn(
@@ -1296,8 +1440,21 @@ async function implementLoop(run: ActiveRun, first: ImplementTurn | null): Promi
  * `implementSessionId`, and `sessionId` is written on the `phase` record
  * **exactly when this record spawned a process**, which is what lets a resumed
  * run split the log into per-process cost windows.
+ *
+ * Which flag carries that id is decided by `run.implementStarted` and not by
+ * `turn.spawn` alone. A run that parked on its budget at the implement boundary
+ * has an id and no conversation: approval minted one and `refuseIfSpent`
+ * declined the spawn, so nothing in the log carries it. `--resume` would then
+ * meet `No conversation found` and a raisable park would end as a failed run.
  */
 async function agentTurn(run: ActiveRun, turn: ImplementTurn): Promise<RunResult | null> {
+  // Minted here only for a conversation that never started - which a run
+  // rehydrated from such a park is, because the id was never written down.
+  // Minting one for a *started* conversation would silently abandon its
+  // context, so the `implementStarted` half is the load-bearing one.
+  if (run.implementSessionId === null && !run.implementStarted) {
+    run.implementSessionId = randomUUID()
+  }
   const sessionId = run.implementSessionId
   if (sessionId === null) {
     throw new Error(
@@ -1307,17 +1464,41 @@ async function agentTurn(run: ActiveRun, turn: ImplementTurn): Promise<RunResult
 
   if (stopping(run)) return await interrupted(run, turn.phase)
   if (turn.spawn === "respawn") await closeSession(run)
+  // Read **after** `closeSession`, which banks the spend the refusal below
+  // judges: a respawn that ran the old total would see a ceiling it had
+  // already spent as still fundable, and spawn the turn §3.4 exists to decline.
   const spawning = run.session === null
   if (spawning) {
     const refused = await refuseIfSpent(run, turn.phase)
     if (refused !== null) return refused
+    // **A conversation that has not started cannot be sent a prompt that
+    // assumes it has.** `resumePrompt` opens with "everything you did before is
+    // still in context" and `answerPrompt` says "carry on from where you
+    // stopped"; neither carries the task or the plan path, because the
+    // implement prompt already did. Sending one into a fresh conversation would
+    // have the agent work with no task and exit `success`, with nothing to
+    // catch - strictly worse than the `No conversation found` this replaced.
+    //
+    // Both callers that could get here are built not to: `continueFrom` sends
+    // `implementPrompt` as a `fresh` turn, and `answerQuestion` refuses before
+    // it spends the human's words (see `requireFunds`). So this is a guard on
+    // their agreement, loud on purpose.
+    if (!run.implementStarted && turn.spawn !== "fresh") {
+      throw new Error(
+        `run ${run.runId} would send a ${turn.phase} turn into an implement conversation that has never run a process, so the prompt would assume context that does not exist; a first turn must be a "fresh" spawn carrying the implement prompt`,
+      )
+    }
     run.session = PhaseSession.start(
       {
         project: run.project,
         sessionId,
-        // `fresh` is the only invocation that may pass `--session-id`: anything
-        // else would start a second conversation under the same id.
-        resume: turn.spawn !== "fresh",
+        // **The fact, not the intent.** `--session-id` is for a conversation
+        // that does not exist yet and `--resume` for one that does, and only
+        // `implementStarted` knows which this is: a `respawn` after a budget
+        // park at the implement boundary has an id the CLI has never seen. A
+        // `fresh` turn comes from the gate, where this is false anyway, so this
+        // subsumes `turn.spawn !== "fresh"` rather than contradicting it.
+        resume: run.implementStarted,
         model: run.project.implementModel,
         effort: run.effort,
         remainingUsd: remaining(run),
@@ -1327,7 +1508,12 @@ async function agentTurn(run: ActiveRun, turn: ImplementTurn): Promise<RunResult
   }
   const session = run.session
   if (session === null) throw new Error("unreachable: the session was just started")
-  if (spawning) accept(run)
+  if (spawning) {
+    // The conversation now exists for the CLI, which is what makes `--resume`
+    // legal for every later turn on it.
+    run.implementStarted = true
+    accept(run)
+  }
 
   run.phase = turn.phase
   await run.log.append({
@@ -1775,10 +1961,29 @@ interface Folded {
    * already has the context. */
   lastPhase: PhaseRecord | null
   planPath: string | null
+  /**
+   * The implement conversation, or `null` when no process ever ran in one.
+   *
+   * In a log those two are the same fact, because a `phase` record carries a
+   * session id **exactly when it spawned**. In memory they are not: approval
+   * mints the id before anything spawns, which is why `ActiveRun` carries
+   * `implementStarted` separately.
+   */
   implementSessionId: string | null
   /** The sum of the last result of **each process**. Cost resets per process,
    * so the windows are split on the phase records that spawned one. */
   spent: number
+  /**
+   * The run's ceiling: the header's figure, plus every `human` `raise` recorded
+   * after it.
+   *
+   * Read from the log rather than from `project.budgetUsd` because a raise is a
+   * decision about **this run** - design §3.4 allows a per-run ceiling, and
+   * `projects.json` holds the next run's default (see `HumanRecord`). A resumed
+   * run that re-read the store would hand the next process a remainder the
+   * human never granted, in either direction.
+   */
+  budgetUsd: number
   attempt: number
   /** Every failing attempt's signature, in order. */
   signatures: string[]
@@ -1795,6 +2000,8 @@ async function foldForResume(path: string): Promise<Folded> {
   let spent = 0
   let attempt = 0
   let lastText = ""
+  /** Overwritten by every usable `raise`, so the newest one wins. */
+  let budgetUsd: number | null = null
   const signatures: string[] = []
   /** The newest result figure inside the process window still open. */
   let windowCost: number | null = null
@@ -1831,6 +2038,18 @@ async function foldForResume(path: string): Promise<Folded> {
         attempt = typeof record.attempt === "number" ? record.attempt : attempt + 1
         if (typeof record.signature === "string") signatures.push(record.signature)
         break
+      case "human": {
+        // The raise. Validated rather than trusted: this is a file another
+        // process wrote, and a ceiling of `NaN` would make every later
+        // remainder non-finite - which `src/spawn.ts` throws on, by design,
+        // because flooring it would hide a broken total for the rest of the
+        // run. A figure this reader cannot use leaves the previous ceiling
+        // standing, which is the restrictive direction.
+        if (record.action !== "raise") break
+        const figure: unknown = record.budgetUsd
+        if (typeof figure === "number" && Number.isFinite(figure) && figure > 0) budgetUsd = figure
+        break
+      }
       case "end":
         ended = { state: record.state, ...(record.why === undefined ? {} : { why: record.why }) }
         break
@@ -1857,6 +2076,7 @@ async function foldForResume(path: string): Promise<Folded> {
     attempt,
     signatures,
     lastText,
+    budgetUsd: budgetUsd ?? header.budgetUsd,
   }
 }
 
@@ -1908,6 +2128,17 @@ async function rehydrate(options: ActionOptions): Promise<ActiveRun> {
       `run ${runId} belongs to the project at ${header.projectPath}, not to ${project.path}. The run log's path is the project record's identity, so these are two different projects even if they are two spellings of one directory.`,
     )
   }
+  // Refused by name rather than carried: a ceiling that is not a positive
+  // finite number makes every remainder non-finite, which `src/spawn.ts` throws
+  // on by design - and that throw would arrive from inside a drive, where it
+  // reads as the run having faulted rather than as a log kantan cannot
+  // interpret. The log is a file another process wrote, so this is input.
+  if (!Number.isFinite(folded.budgetUsd) || folded.budgetUsd <= 0) {
+    throw new RunRefusal(
+      "wrong-state",
+      `run ${runId}'s log gives its budget ceiling as ${JSON.stringify(folded.budgetUsd)}, which is not a positive number of dollars, so kantan cannot work out what \`--max-budget-usd\` to give the next process. Start the task again.`,
+    )
+  }
   const ref = (header.taskRef ?? "").trim()
   const featureRel = header.featureFile
   if (ref === "" || featureRel === undefined || featureRel === "") {
@@ -1952,7 +2183,14 @@ async function rehydrate(options: ActionOptions): Promise<ActiveRun> {
       taskSpec: taskSpecFor(feature, ref, featureRel, { requireOpen: false }),
       planSessionId: header.planSessionId,
       implementSessionId: folded.implementSessionId,
-      budgetUsd: header.budgetUsd,
+      // In a log the id is present exactly when a process ran in that
+      // conversation, so this is that fact rather than a second source of it.
+      implementStarted: folded.implementSessionId !== null,
+      // The folded ceiling, never `header.budgetUsd`: a run whose ceiling the
+      // human raised must come back with the raise, or the resumed run hands
+      // the next process a remainder nobody granted and parks again on the
+      // figure that had already been overruled.
+      budgetUsd: folded.budgetUsd,
       spent: folded.spent,
       effort: ladder.effort,
       signatures: ladder.signatures,
@@ -2015,7 +2253,9 @@ function restFrom(folded: Folded): RunState | null {
 export async function answerQuestion(
   options: ActionOptions & { answer: string },
 ): Promise<RunResult> {
-  const run = await held(options, ["question", "blocked"], "take an answer")
+  const run = await held(options, ["question", "blocked"], "take an answer", (r) =>
+    requireFunds(r, "take an answer"),
+  )
   const phase = run.phase
   return await drive(run, async () => {
     if (phase === "plan") {
@@ -2172,6 +2412,21 @@ async function continueFrom(run: ActiveRun): Promise<RunResult> {
       return await implementLoop(run, null)
     case "implement":
     case "refine":
+      // **A conversation that never started gets the implement prompt**, not a
+      // resume of nothing. This is the budget park at the implement boundary:
+      // approval minted the session id and `refuseIfSpent` declined the spawn,
+      // so the CLI has never seen it and nothing in the log carries it.
+      // `resumePrompt` opens with "everything you did before is still in
+      // context" and names neither the task nor the plan, so sending it into a
+      // fresh conversation would have the agent work from nothing and exit
+      // `success` - and `--resume` would meet `No conversation found` first.
+      if (!run.implementStarted) {
+        return await implementLoop(run, {
+          phase: "implement",
+          prompt: implementPrompt({ task: run.taskSpec, planPath: run.planPath }),
+          spawn: "fresh",
+        })
+      }
       return await implementLoop(run, {
         phase: run.phase,
         prompt: resumePrompt({ task: run.taskSpec, planPath: run.planPath }),
@@ -2268,6 +2523,15 @@ export interface Runner {
   feedback(runId: string, text: string): Promise<Acted>
   /** The reply to a `waiting(question)` or `waiting(blocked)` run. */
   answer(runId: string, text: string): Promise<Acted>
+  /**
+   * The new ceiling for a run parked at a human, in full rather than as a
+   * delta, and a run that stopped **on** its budget continues from it.
+   *
+   * Like `answer`, this is kept here while the server's own port has no
+   * counterpart: without it an exhausted run is unreachable, because every
+   * other action either refuses for want of funds or re-parks it.
+   */
+  raise(runId: string, budgetUsd: number): Promise<Acted>
   stop(runId: string): Promise<Acted>
 }
 
@@ -2433,6 +2697,20 @@ export function createRunner(options: RunnerOptions = {}): Runner {
             runId,
             project: await projectForRun(runId),
             answer: text,
+            accepted,
+            ...(runsDir === undefined ? {} : { runsDir }),
+          }),
+        () => ({ ok: true as const }),
+      )
+    },
+
+    async raise(runId, budgetUsd) {
+      return await act(
+        async (accepted) =>
+          await raiseBudget({
+            runId,
+            project: await projectForRun(runId),
+            budgetUsd,
             accepted,
             ...(runsDir === undefined ? {} : { runsDir }),
           }),
