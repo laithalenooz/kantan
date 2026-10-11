@@ -1,0 +1,111 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<style>
+@font-face{font-family:'Public Sans';src:url('../../src/ui/fonts/public-sans-latin-wght-normal.woff2')format('woff2-variations');font-weight:100 900;font-display:swap}
+@font-face{font-family:'Commit Mono';src:url('../../src/ui/fonts/commit-mono-latin-400-normal.woff2')format('woff2');font-weight:400;font-display:swap}
+@font-face{font-family:'Commit Mono';src:url('../../src/ui/fonts/commit-mono-latin-700-normal.woff2')format('woff2');font-weight:700;font-display:swap}
+:root{--paper:#F4F4F1;--ink:#17191C;--rule:#C9C9C3;--muted:#5C6066;
+--action:#0057B8;--safe:#046A38;--danger:#C8102E;--warn:#FFC72C;
+--work:0.875rem;--lead:1.25rem;--mono:'Commit Mono',monospace;--sans:'Public Sans',sans-serif}
+*{margin:0;padding:0;box-sizing:border-box;min-inline-size:0}
+body{background:var(--paper);color:var(--ink);font:var(--work)/var(--lead) var(--sans);-webkit-font-smoothing:antialiased}
+.shell{display:grid;grid-template-columns:18rem 1fr 14rem;height:100vh}
+.col{overflow:hidden;display:flex;flex-direction:column}
+.col+.col{border-left:1px solid var(--rule)}
+.hd{display:flex;justify-content:space-between;align-items:baseline;padding:8px 12px;border-bottom:1px solid var(--rule)}
+.lbl{font-size:.6875rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.m{font-family:var(--mono)}
+.row{display:grid;grid-template-columns:1.1rem 1fr auto;gap:8px;padding:4px 12px;align-items:baseline}
+.row+.row{border-top:1px solid var(--rule)}
+.proj{padding:8px 12px 4px;border-top:1px solid var(--rule);display:flex;justify-content:space-between;align-items:baseline}
+.proj b{font-weight:600}
+.feat{padding:4px 12px;color:var(--muted);font-size:.8125rem}
+.ref{font-family:var(--mono);color:var(--muted);font-size:.8125rem}
+.st{font-family:var(--mono);font-size:.6875rem;letter-spacing:.04em;text-transform:uppercase}
+.done{color:var(--safe)}.fail{color:var(--danger)}.open{color:var(--muted)}
+.unm{color:var(--muted);font-style:italic}
+.plate{background:var(--action);color:#fff;padding:16px 16px 12px}
+.plate .lbl{color:#cfe0f5}
+.mon{font-size:2.75rem;line-height:1;letter-spacing:-.02em;font-weight:600;margin:4px 0 8px}
+.btn{display:inline-block;background:var(--paper);color:var(--ink);font-weight:600;font-size:.8125rem;padding:6px 14px;border:0;letter-spacing:.02em}
+.meta{font-family:var(--mono);font-size:.75rem;color:#cfe0f5}
+.stream{flex:1;overflow:auto;padding:0}
+.ev{display:grid;grid-template-columns:5.5rem 1fr;gap:12px;padding:3px 12px;font-family:var(--mono);font-size:.8125rem}
+.ev+.ev{border-top:1px solid var(--rule)}
+.k{color:var(--muted);text-transform:uppercase;font-size:.6875rem;letter-spacing:.04em;padding-top:2px}
+.path{overflow-wrap:anywhere;color:var(--muted)}
+.plan{padding:12px;max-width:66ch;border-top:1px solid var(--rule)}
+.plan h3{font-size:var(--work);font-weight:700;margin-bottom:4px}
+.plan p{color:var(--muted);margin-bottom:8px}
+.sb{padding:8px 12px}
+.sb .r{display:flex;justify-content:space-between;padding:3px 0;font-family:var(--mono);font-size:.8125rem}
+.sb .r+.r{border-top:1px solid var(--rule)}
+.bar{display:flex;gap:2px;margin-top:6px}
+.seg{height:6px;flex:1;background:var(--rule)}
+.seg.on{background:var(--ink)}
+.warnplate{background:var(--warn);color:var(--ink);border-top:1px solid var(--ink);border-bottom:1px solid var(--ink);padding:6px 12px;font-size:.8125rem}
+</style></head><body><div class="shell">
+
+<div class="col">
+  <div class="hd"><span style="font-weight:700;letter-spacing:.04em">KANTAN</span><span class="lbl">3 projects</span></div>
+  <div class="proj"><b>your-app</b><span class="lbl m">personal</span></div>
+  <div class="feat">docs/features/importer.md</div>
+  <div class="row"><span class="ref">T1</span><span>Parse the manifest</span><span class="st done">done</span></div>
+  <div class="row"><span class="ref">T2</span><span>Map records to rows</span><span class="st" style="color:var(--action);font-weight:700">needs you</span></div>
+  <div class="row"><span class="ref">T3</span><span>Runtime shim (v1.2)</span><span class="st open">open</span></div>
+  <div class="proj"><b>other-repo</b><span class="lbl m">work</span></div>
+  <div class="feat">docs/features/billing.md</div>
+  <div class="row"><span class="ref">T1</span><span>Ledger reconciliation</span><span class="st unm">unmerged</span></div>
+  <div class="row"><span class="ref">T2</span><span>Refund path</span><span class="st fail">failed</span></div>
+  <div class="proj"><b>phone-app</b><span class="lbl m">personal</span></div>
+  <div class="feat">docs/features/offline.md</div>
+  <div class="row"><span class="ref">T1</span><span>Queue writes while offline</span><span class="st open">open</span></div>
+</div>
+
+<div class="col">
+  <div class="hd"><span><b>your-app</b> <span class="m" style="color:var(--muted)">· importer/T2</span></span><span class="lbl m">plan · 8s · $0.42</span></div>
+  <div class="plate">
+    <div class="lbl">Approval required</div>
+    <div class="mon">Is this plan right?</div>
+    <div class="meta">docs/plans/2026-10-11-t2-map-records.md · 4 steps · 2 files</div>
+    <div style="margin-top:12px"><button class="btn">APPROVE</button>
+    <span class="meta" style="margin-left:10px">or send it back with a note</span></div>
+  </div>
+  <div class="plan">
+    <h3>T2 Map records to rows</h3>
+    <p>Add a <span class="m">mapRecord()</span> that takes one parsed manifest entry and returns a row. Unknown fields are dropped rather than passed through, because the writer refuses unknown keys.</p>
+    <p><b>Step 1</b> — failing test for a record with an unknown field.<br><b>Step 2</b> — run it, watch it fail.<br><b>Step 3</b> — implement the mapping.<br><b>Step 4</b> — run the suite, commit.</p>
+  </div>
+  <div class="stream">
+    <div class="ev"><span class="k">bash</span><span>git log --oneline -1</span></div>
+    <div class="ev"><span class="k">read</span><span class="path">/home/you/code/your-app/src/importer/manifest.ts</span></div>
+    <div class="ev"><span class="k">edit</span><span>src/importer/map.ts <span style="color:var(--safe)">+18</span> <span style="color:var(--danger)">−2</span></span></div>
+    <div class="ev"><span class="k">bash</span><span>npm test</span></div>
+    <div class="ev"><span class="k">result</span><span>9 passing, 1 failing · <span style="color:var(--danger)">exit 1</span></span></div>
+    <div class="ev"><span class="k">edit</span><span>src/importer/map.ts <span style="color:var(--safe)">+3</span></span></div>
+    <div class="ev"><span class="k">bash</span><span>npm test</span></div>
+    <div class="ev"><span class="k">result</span><span>10 passing · <span style="color:var(--safe)">exit 0</span></span></div>
+  </div>
+</div>
+
+<div class="col">
+  <div class="hd"><span class="lbl">Run</span><span class="lbl m">attempt 2</span></div>
+  <div class="sb">
+    <div class="r"><span>plan</span><span>8s</span></div>
+    <div class="r"><span>gate</span><span style="color:var(--action);font-weight:700">waiting</span></div>
+    <div class="r"><span>implement</span><span style="color:var(--muted)">—</span></div>
+    <div class="r"><span>test</span><span style="color:var(--muted)">—</span></div>
+  </div>
+  <div class="sb" style="border-top:1px solid var(--rule)">
+    <div class="lbl">Cost</div>
+    <div class="r" style="border:0"><span>this run</span><span>$0.42</span></div>
+    <div class="r"><span>ceiling</span><span>$50.00</span></div>
+  </div>
+  <div class="sb" style="border-top:1px solid var(--rule)">
+    <div class="lbl">5h window · personal</div>
+    <div class="bar"><span class="seg on"></span><span class="seg on"></span><span class="seg on"></span><span class="seg on"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span></div>
+    <div class="r" style="border:0"><span style="color:var(--muted)">41%</span><span style="color:var(--muted)">resets 18:40</span></div>
+  </div>
+  <div class="warnplate"><b>Grinding</b> — 5 attempts, $0.42 so far</div>
+</div>
+
+</div></body></html>
