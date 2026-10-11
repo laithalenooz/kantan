@@ -18,10 +18,16 @@
  *                  colour commits at region scale and never as an accent.
  *   p-7, p-11      the spacing scale is finite and named. See "density".
  *
- * Escape hatches that remain, recorded honestly: Tailwind still accepts
- * arbitrary values (`rounded-[6px]`, `text-[17px]`, `bg-[#333]`) and keeps a
- * few static utilities (`rounded-full`, `shadow-none`). Those are visible in
- * review. Nothing here can stop them.
+ * Escape hatches that remain, recorded honestly rather than claimed shut:
+ *   - arbitrary values: `rounded-[6px]`, `text-[17px]`, `bg-[#333]`, and
+ *     `bg-[var(--plate-action)]`, which would defeat the plates-only rule.
+ *   - static utilities Tailwind defines without a theme key: `rounded-full`,
+ *     `shadow-none`.
+ *   - `p-row` and `gap-row` resolve to 24px, above the stated 16px ceiling.
+ *     The key exists for `h-row`; using it as padding is out of world.
+ *   - preflight leaves `<small>` at 80% and `sub`/`sup` at 75%, so a second
+ *     type size is still reachable through an element rather than a class.
+ * All of these are visible in review. Nothing here can stop them.
  */
 
 @import "tailwindcss";
@@ -36,9 +42,20 @@
  * Both are SIL OFL 1.1 and self-hosted; the licences sit beside the woff2 in
  * `fonts/`. No Google Fonts <link> anywhere, in dev or production.
  *
- * Public Sans is a variable wght face, so 400/500/700 are all real instances.
- * Commit Mono ships static cuts and only 400 and 700 are bundled — do not ask
- * for `font-medium` on a machine value; the browser would synthesise it.
+ * Public Sans is a variable wght face, so 400/500/700 are all real instances,
+ * roman and italic. Commit Mono ships static cuts and only 400 and 700 are
+ * bundled — do not ask for `font-medium` on a machine value; the browser would
+ * synthesise it.
+ *
+ * Subsetting, stated because every gap here shows up as a mismatched glyph
+ * rather than as an error:
+ *   - Public Sans roman: latin and latin-ext.
+ *   - Public Sans italic: latin only, so accented text inside `<em>` falls
+ *     back to the system sans.
+ *   - Commit Mono: latin only, because that is all upstream publishes as a
+ *     subset. A path with accented or non-latin characters falls back per
+ *     glyph to `ui-monospace`, a visible seam in an otherwise uniform column.
+ * Add the missing subsets if real content starts needing them.
  * ------------------------------------------------------------------------- */
 
 @font-face {
@@ -62,6 +79,20 @@
     U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F,
     U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
     U+A720-A7FF;
+}
+
+/* A real italic, because the gate renders plan markdown and `<em>` would
+ * otherwise be synthesised by slanting the roman — which is exactly the
+ * softened, dishonest rendering the brief refuses. Latin only; see above. */
+@font-face {
+  font-family: "Public Sans";
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("./fonts/public-sans-latin-wght-italic.woff2") format("woff2-variations");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191,
+    U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
 @font-face {
@@ -271,10 +302,15 @@
    * that secondary text on a coloured surface is tinted from that hue and never
    * grey is therefore structural, not a habit.
    *
-   * The one case this cannot reach: an element that reverses the ground AGAIN,
-   * such as a paper-coloured button sitting inside the blue plate. It inherits
-   * `--ring: var(--color-paper)`, which would be invisible on itself, so it must
-   * re-declare `--ring`. See the gate preview in App.tsx for the pattern. */
+   * `--ring` belongs to the GROUND THE RING IS DRAWN ON, which is the parent's,
+   * because `outline-offset` is positive and the ring therefore lands outside
+   * the element's own edge. A paper-coloured button inside the blue plate
+   * inherits `--ring: var(--color-paper)` and that is correct — 6.24:1 against
+   * the blue it actually sits on. Overriding it to ink there, on the reasoning
+   * that the button is paper, would be 2.56:1 and fail the 3:1 non-text floor.
+   * So: do not re-declare `--ring` when reversing the ground again. The only
+   * element that needs to is one using a zero or negative `outline-offset`,
+   * where the ring is drawn on the element itself. */
   --ink-muted: #5c6066;
   --ring: var(--color-ink);
 
@@ -384,9 +420,12 @@
     color: var(--color-paper);
   }
 
+  /* The offset is positive, so the ring sits on the parent's ground — which is
+   * what `--ring` is coloured for. 2px gives the gap enough room to read as a
+   * gap rather than a thick border. */
   :focus-visible {
     outline: 2px solid var(--ring);
-    outline-offset: 1px;
+    outline-offset: 2px;
   }
 
   a {

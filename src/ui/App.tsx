@@ -102,12 +102,14 @@ export function App() {
             your-app · importer/T2 · plan · 8s · $0.42 ·
             /home/you/projects/your-app/docs/features/importer.md
           </p>
-          {/* Reverses the ground again, so it re-declares --ring: the inherited
-              paper-coloured ring would be invisible on a paper button. This is
-              the pattern Task 23 needs for the gate's primary action. */}
+          {/* No --ring override, deliberately. The ring is drawn outside the
+              button's edge, so it lands on the PLATE, not on the button: the
+              inherited paper ring is 6.24:1 against blue, where an ink one
+              would be 2.56:1 and fail. The rule is that --ring belongs to the
+              ground the ring sits on, which is the parent's. */}
           <button
             type="button"
-            className="[--ring:var(--color-ink)] mt-block bg-paper px-field py-tight font-bold uppercase tracking-label text-ink"
+            className="mt-block bg-paper px-field py-tight font-bold uppercase tracking-label text-ink"
           >
             Approve
           </button>
