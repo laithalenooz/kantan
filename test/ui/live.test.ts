@@ -403,3 +403,42 @@ describe("startRun", () => {
     }
   })
 })
+
+describe("a park the run has moved past", () => {
+  // Found by folding a real run log: the rail read
+  // `plan:done gate:waiting implement:done test:done` on a run that had
+  // finished, because nothing resolved the gate once the human approved it.
+  // The human record does not name a phase, and `answer` is not even a record
+  // kind, so the signal is the run moving on - not the decision itself.
+  test("a later phase resolves the phase that was waiting", () => {
+    const view = fold([
+      header(),
+      { kind: "phase", phase: "plan", state: "running", sessionId: "s" } as RunRecord,
+      { kind: "phase", phase: "plan", state: "waiting", reason: "gate" } as RunRecord,
+      { kind: "human", action: "approve" } as RunRecord,
+      { kind: "phase", phase: "implement", state: "running", sessionId: "s2" } as RunRecord,
+      { kind: "end", state: "done", costUsd: 0.5 } as RunRecord,
+    ])
+    expect(view.phases.map((p) => `${p.phase}:${p.state}`)).toEqual(["plan:done", "gate:done", "implement:done"])
+    expect(view.waiting).toBeNull()
+  })
+
+  test("a question that resumes in the same phase is not resolved twice", () => {
+    const view = fold([
+      header(),
+      { kind: "phase", phase: "implement", state: "running", sessionId: "s" } as RunRecord,
+      { kind: "phase", phase: "implement", state: "waiting", reason: "question", detail: "which table?" } as RunRecord,
+      { kind: "phase", phase: "implement", state: "running" } as RunRecord,
+    ])
+    expect(view.phases.map((p) => `${p.phase}:${p.state}`)).toEqual(["implement:running"])
+  })
+
+  test("an ended run has no phase left waiting", () => {
+    const view = fold([
+      header(),
+      { kind: "phase", phase: "refine", state: "waiting", reason: "stalled", detail: "three times" } as RunRecord,
+      { kind: "end", state: "failed", why: "gave up", costUsd: 0.2 } as RunRecord,
+    ])
+    expect(view.phases.find((p) => p.state === "waiting")).toBeUndefined()
+  })
+})

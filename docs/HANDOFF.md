@@ -732,6 +732,48 @@ will read "not done" for every successful run. Read the branch
 (`git show <branch>:<path>`), or the run log. `taskBranchName` in `src/git.ts`
 derives the name from the feature path and the ref.
 
+### What a real run's stream actually contains (2026-10-11, `claude 2.1.296`)
+
+From the first passing live smoke run, 87 records, folded through
+`src/ui/live.ts`. Useful because every other test in this repo uses fixtures
+captured from an older version, and fixtures cannot tell you what the CLI
+started sending since.
+
+Event types seen, by count: `system/hook_started` 18, `system/hook_response`
+18, `assistant` 18, `user` 10, `system/hook_progress` 4,
+`system/thinking_tokens` 3, `system/init` 2, `rate_limit_event` 2,
+**`system/vcs_state_changed` 2**, `result/success` 2.
+
+**`system/vcs_state_changed` is not in the fixtures and `src/stream.ts` does
+not know it.** It carries `{kind:"commit", branch, cwd, uuid, session_id}` -
+the CLI reporting that the agent committed. It currently classifies as
+`unknown`, which is the designed failure direction (visible, not dropped), but
+it is a *useful* event being shown as a raw blob. Giving it an `Event` kind
+means a `Row.tsx` renderer too, so it is a task, not a patch.
+
+The other `unknown` is a `text` block inside a **`user`** message - skill
+content being injected. That one is deliberate: `contentBlock` reports
+user-side text as `unknown` on purpose, because the prompts contain the literal
+`ORCH: done` and reporting an echoed prompt as `text` would feed the sentinel
+parser its own instruction. Correct, but it means a multi-kilobyte skill dump
+renders as one unknown row. Worth collapsing in the UI; not worth
+reclassifying.
+
+To regenerate: `ORCH_LIVE=1 ORCH_KEEP=1 bun test test/live/smoke.test.ts`
+prints where it kept the repo and the runs directory. The log is **not**
+committed as a fixture: it carries absolute home paths, and this repo has
+already been burned once by committing machine-local strings.
+
+### A park must be resolved by the run moving on, not by the human's decision
+
+`gate:waiting` survived on a finished run, found by folding the real log above.
+
+A `human` record names no phase, and an answer to a question is not a `human`
+record at all - `HumanRecord` is approve, feedback and raise only. So a reader
+keying on the decision resolves nothing for a question and has to guess which
+phase an approve referred to. The unambiguous signals are a `phase` record
+naming a **different** phase, and `end`. `src/ui/live.ts` uses those.
+
 ## Settled: decisions with non-obvious reasons
 
 | Decision | Why it is not the obvious thing |

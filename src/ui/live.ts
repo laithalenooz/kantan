@@ -111,6 +111,17 @@ export function foldRun(runId: string, records: readonly RunRecord[]): RunView {
   let limit: RunView["limit"] = null
   /** The phase whose record last said `running`, so a later record can close it. */
   let openPhase: RunPhase | null = null
+  /**
+   * The phase currently drawn as `waiting`, so the run moving on can resolve it.
+   *
+   * The human's decision cannot be the signal. A `human` record names no phase,
+   * and an answer to a question is not a `human` record at all - `HumanRecord`
+   * is only approve, feedback and raise - so a reader keying on the decision
+   * would resolve nothing for a question and would have to guess which phase
+   * approve referred to. The run reaching a different phase, or ending, says it
+   * unambiguously.
+   */
+  let waitingPhase: RunPhase | null = null
 
   /** Appends to the process this record belongs to, opening one if none is. */
   const costOf = (event: ResultEvent): void => {
@@ -177,6 +188,11 @@ export function foldRun(runId: string, records: readonly RunRecord[]): RunView {
         if (record.planPath !== undefined) planPath = record.planPath
 
         if (openPhase !== null && openPhase !== record.phase) close(phases, openPhase)
+        // The run reached a different phase, so whatever it was parked at is
+        // settled - the gate was approved, the question answered, the ceiling
+        // raised. Without this the rail reads `gate:waiting` on a finished run,
+        // which is what a real log showed.
+        if (waitingPhase !== null && waitingPhase !== record.phase) close(phases, waitingPhase)
 
         if (record.state === "waiting") {
           const reason: WaitReason = record.reason ?? "gate"
@@ -202,11 +218,13 @@ export function foldRun(runId: string, records: readonly RunRecord[]): RunView {
           if (parked !== record.phase) close(phases, record.phase)
           phases.set(parked, { phase: parked, state: "waiting", note: reason })
           openPhase = null
+          waitingPhase = parked
         } else {
           waitId = null
           waiting = null
           phases.set(record.phase, { phase: record.phase, state: "running" })
           openPhase = record.phase
+          waitingPhase = null
         }
         return
       }
@@ -242,6 +260,13 @@ export function foldRun(runId: string, records: readonly RunRecord[]): RunView {
         ended = { state: record.state, warnings: record.warnings ?? [], costUsd: record.costUsd, ...(record.why === undefined ? {} : { why: record.why }) }
         waitId = null
         waiting = null
+        // A run that ended is waiting for nobody, so no phase may still say it
+        // is. A park is otherwise terminal until a human acts, so this only
+        // fires on a log that ended from one.
+        if (waitingPhase !== null) {
+          close(phases, waitingPhase)
+          waitingPhase = null
+        }
         if (openPhase !== null) {
           phases.set(openPhase, { phase: openPhase, state: record.state === "done" ? "done" : "flagged" })
           openPhase = null
