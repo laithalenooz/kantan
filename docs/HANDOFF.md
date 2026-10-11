@@ -496,6 +496,28 @@ time is stamped on write; and `TestRecord` carries no output or summary, so test
 expand unless the server ships `TestOutcome`'s stdout and stderr.
 
 
+### `waitId` is required on both gate shapes — whoever wires `App.tsx`
+`${runId}#${phaseRecordIndex}`. **Content alone cannot tell a re-asked question from a poll of the
+same one**, and without the id a re-asked question renders with no composer at all.
+
+Gate handlers may return a promise, and **rejecting is how a refusal is reported**: the card
+restores its controls, keeps the human's draft, and shows the message in `role="alert"`. So a
+refusal that reaches the UI needs a message worth showing a person, not only a code.
+
+`blocked` and `stalled` waits are deliberately **not** gate shapes.
+
+### The gate uses a scoped stylesheet, unlike the other three components — worth knowing
+Colours, keyframes, the beam and the prose rules were forced there: the contrast proof needs
+computed colours, `@property` is not a utility, and `@tailwindcss/typography` would have to be
+registered in `tokens.css`, which that agent did not own. Putting layout there too was its choice,
+for one source of truth per region against the artboard. It reaches the token layer through
+`var(--color-*)` with the artboard's literal as a fallback.
+
+If this is unified later, the fallbacks are load-bearing: happy-dom resolves a bare
+`var(--color-x)` to nothing, which would make a ring on an orange plate measure as 19:1 and pass
+a contrast test it should fail.
+
+
 ## Settled: decisions with non-obvious reasons
 
 | Decision | Why it is not the obvious thing |

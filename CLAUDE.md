@@ -121,6 +121,20 @@ Related and separate: `<MotionConfig reducedMotion="user">` only switches **tran
 off. Opacity, filter and anything hand-rolled keep running, so a blur-fade or a number ticker must
 be gated explicitly.
 
+## Screenshot the thing before you call it done
+
+A headless-Chromium screenshot of the gate caught three defects that **no assertion had**:
+markdown list items rendering one character per line, a collapsed file list rendering in full
+because `display: flex` outranks `[hidden]`, and a missing code chip. Each was invisible to a DOM
+test that queried for the right nodes and found them.
+
+```bash
+google-chrome --headless --disable-gpu --no-sandbox --window-size=1440,900 \
+  --screenshot=/tmp/x.png --virtual-time-budget=4000 http://localhost:5173/
+```
+
+A passing suite says the nodes exist. It does not say they are laid out, visible, or legible.
+
 ## Scratch directories must be keyed on the pid
 
 Several agents run `bun run check` at once, so a test helper that does
