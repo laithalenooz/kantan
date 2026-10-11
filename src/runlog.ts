@@ -188,8 +188,13 @@ export interface TestRecord {
  * byte offset a tailing reader has already passed, which is the same reason
  * `implementSessionId` lives on a `phase` record.
  *
- * So a reader folds the ceiling as the header's figure plus every `raise` after
- * it, and the raise survives a server restart because the log does.
+ * So a reader folds the ceiling as the **newest usable `raise`, or the
+ * header's figure when there is none** - `budgetUsd` replaces, it does not add,
+ * and `foldForResume` in `src/run.ts` is the implementation of record. Usable
+ * means a finite number greater than zero: this is a file another process
+ * wrote, and a ceiling of `NaN` would make every later comparison false and
+ * silently unbound the run, so a figure a reader cannot use leaves the previous
+ * ceiling standing. The raise survives a server restart because the log does.
  */
 export type HumanRecord =
   | { kind: "human"; action: "approve" }
