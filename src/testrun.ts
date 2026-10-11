@@ -265,6 +265,12 @@ function cannotStart(project: Project, cause: unknown): Error {
  * Bytes, not characters, and decoded once at the end: decoding each chunk as it
  * arrives would mangle any multi-byte character that straddles a read boundary,
  * and a byte cap is the one that actually bounds memory.
+ *
+ * The drop boundary itself can still land inside a character. Its orphaned
+ * continuation bytes then decode as a replacement character each, putting the
+ * result a few bytes over the cap at the head of a stream that was already
+ * being truncated. Trimming to the next character boundary would be one more
+ * guess about input for no gain.
  */
 class Tail {
   private readonly chunks: Buffer[] = []

@@ -119,6 +119,7 @@ test(
         "# it running and holding that pipe open.\n" +
         "( trap '' TERM; while :; do echo tick >> ticks; sleep 0.1; done ) &\n" +
         "echo $! > grandchild.pid\n" +
+        "echo $$ > leader.pid\n" +
         "trap '' TERM\n" +
         "while :; do sleep 0.2; done\n",
     )
@@ -126,21 +127,36 @@ test(
     const r = await runTests(project, { timeoutMs: 600 })
     expect(r.timedOut).toBe(true)
 
-    const pid = Number((await readFile(join(dir, "grandchild.pid"), "utf8")).trim())
-    expect(pid).toBeGreaterThan(0)
+    // The pid runTests holds is not necessarily the pid running this script,
+    // because `sh -c` may fork, and the group is what covers the difference.
+    // Both pids below are ones runTests never saw.
+    let leader = 0
+    let grandchild = 0
     try {
-      expect(await goneWithin(pid, 8_000)).toBe(true)
+      leader = Number((await readFile(join(dir, "leader.pid"), "utf8")).trim())
+      grandchild = Number((await readFile(join(dir, "grandchild.pid"), "utf8")).trim())
+      expect(leader).toBeGreaterThan(0)
+      expect(grandchild).toBeGreaterThan(0)
+
+      expect(await goneWithin(leader, 8_000)).toBe(true)
+      expect(await goneWithin(grandchild, 8_000)).toBe(true)
       // A recycled pid could answer signal 0, so also check behaviour: the file
       // the grandchild appended to every 100ms must have stopped growing.
       const before = (await stat(join(dir, "ticks"))).size
       await Bun.sleep(400)
       expect((await stat(join(dir, "ticks"))).size).toBe(before)
     } finally {
-      // Never leak a 300-second sleeper out of a failing test.
-      try {
-        process.kill(pid, "SIGKILL")
-      } catch {
-        // Already gone, which is what the assertions above require.
+      // Never leak a spinning shell or an endlessly appending loop out of a
+      // failing test: that debris is the exact thing this test exists to
+      // prevent. Each kill stands alone, so an ESRCH on one cannot skip the
+      // other, and the reads above are inside the try for the same reason.
+      for (const p of [leader, grandchild]) {
+        if (p <= 0) continue
+        try {
+          process.kill(p, "SIGKILL")
+        } catch {
+          // Already gone, which is what the assertions above require.
+        }
       }
     }
   },
@@ -170,6 +186,11 @@ test(
     const [marker = "", ...body] = r.stdout.split("\n")
     expect(marker).toContain("stdout")
     expect(marker).toContain("truncated")
+    // The fixture is ASCII on purpose, so the kept tail is exactly the cap. On
+    // other input the drop boundary can land inside a multi-byte character,
+    // leaving orphaned continuation bytes at the head that each decode as their
+    // own replacement character - a few bytes over the cap, at the one spot in
+    // the output nothing reads.
     expect(Buffer.byteLength(body.join("\n"), "utf8")).toBe(MAX_OUTPUT_BYTES)
   },
   30_000,
