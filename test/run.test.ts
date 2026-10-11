@@ -1123,7 +1123,11 @@ test("the CLI's own error_max_budget_usd is a raisable stop, not a crash", async
 test("a raise continues the run, and starts the implement conversation the park never began", async () => {
   const ws = await workspace("budget-raise")
   const done = await fixture(ws, "done", "ORCH: done")
-  await script(ws, [{ fixture: PLAN_FIXTURE, cost: 0.3 }, { fixture: done, cost: 0.2 }])
+  // **The plan turn overshoots its ceiling**, which is the probed behaviour the
+  // whole design follows from: the CLI checks `--max-budget-usd` after the turn,
+  // not before, so `budget-exhausted.jsonl` was captured at 0.0001 having spent
+  // 0.0046. So `spent` can exceed the ceiling and the remainder can be negative.
+  await script(ws, [{ fixture: PLAN_FIXTURE, cost: 0.35 }, { fixture: done, cost: 0.2 }])
 
   const out = await drive(ws, {
     budgetUsd: 0.3,
@@ -1132,6 +1136,10 @@ test("a raise continues the run, and starts the implement conversation the park 
       { action: "approve" },
       // Not a raise: at or below the ceiling it already has.
       { action: "raise", usd: 0.2 },
+      // Above the ceiling, but **below what the overshoot already spent**, so it
+      // would be recorded and then park the run again on arrival. This is the
+      // case a floor of `ceiling` alone cannot see.
+      { action: "raise", usd: 0.32 },
       { action: "raise", usd: 1 },
     ],
   })
@@ -1140,9 +1148,13 @@ test("a raise continues the run, and starts the implement conversation the park 
   expect(out.results[1]).toMatchObject({ state: { kind: "waiting", reason: "blocked" } })
   expect(String(out.results[2]?.["error"])).toContain("not a usable ceiling")
   expect(out.results[2]?.["code"]).toBe("wrong-state")
-  expect(out.results[3]).toMatchObject({ state: { kind: "done" } })
+  // The overshoot case: a figure above the ceiling is still not a raise if the
+  // run has already spent past it. Its message names both figures.
+  expect(String(out.results[3]?.["error"])).toContain("has spent $0.3500")
+  expect(out.results[3]?.["code"]).toBe("wrong-state")
+  expect(out.results[4]).toMatchObject({ state: { kind: "done" } })
 
-  // The refused raise spawned nothing; the accepted one spawned exactly once.
+  // Neither refused raise spawned anything; the accepted one spawned once.
   const all = await spawns(ws)
   expect(all.length).toBe(2)
 
@@ -1165,13 +1177,15 @@ test("a raise continues the run, and starts the implement conversation the park 
   // `--resume` would meet `No conversation found`.
   expect(flag(argv, "--session-id")).toBe(implementSession)
   expect(argv).not.toContain("--resume")
-  expect(Number(flag(argv, "--max-budget-usd"))).toBeCloseTo(0.7, 6)
+  // 1.00 minus the 0.35 the plan process overshot to, not minus the 0.30
+  // ceiling it was given.
+  expect(Number(flag(argv, "--max-budget-usd"))).toBeCloseTo(0.65, 6)
   // And it is the implement prompt, which carries the task and the plan - not
   // the resume prompt, which tells the agent its own work is still in context.
   const prompt = promptOf((await turns(ws))[1] ?? {})
   expect(prompt).toContain("superpowers:executing-plans")
   expect(prompt).not.toContain("was interrupted")
-  expect(Number(records.at(-1)?.["costUsd"])).toBeCloseTo(0.5, 6)
+  expect(Number(records.at(-1)?.["costUsd"])).toBeCloseTo(0.55, 6)
 }, 240_000)
 
 test("a raised ceiling survives a restart, folded from the log rather than the header", async () => {
@@ -1221,7 +1235,7 @@ test("a raised ceiling survives a restart, folded from the log rather than the h
 
 test("an exhausted run refuses feedback and an answer, rather than recording words no agent reads", async () => {
   const ws = await workspace("budget-text")
-  await script(ws, [{ fixture: PLAN_FIXTURE, cost: 0.3 }])
+  await script(ws, [{ fixture: PLAN_FIXTURE, cost: 0.3 }, { fixture: PLAN_FIXTURE }])
 
   const out = await drive(ws, {
     budgetUsd: 0.3,
@@ -1241,11 +1255,40 @@ test("an exhausted run refuses feedback and an answer, rather than recording wor
   // projects.json would leave the human watching a run that never moves.
   expect(why).toContain("next run's default")
 
-  const records = await runLog(ws, out.runId)
-  expect(records.some((r) => r["kind"] === "human")).toBe(false)
+  // Nothing of the human's reached the log, which is the point of refusing
+  // before taking it.
+  expect((await runLog(ws, out.runId)).some((r) => r["kind"] === "human")).toBe(false)
   // One process: the plan phase. The refusal came before anything spawned.
   expect((await spawns(ws)).length).toBe(1)
-}, 180_000)
+
+  // A raise at the **gate** takes the money and stays put: the decision the run
+  // is waiting for is still the human's. A fresh process, so this is also a
+  // rehydrate at the gate followed by a raise.
+  const second = await drive(ws, {
+    runId: out.runId,
+    steps: [
+      { action: "raise", usd: 1 },
+      { action: "feedback", text: "use a slug table instead" },
+    ],
+  })
+  expect(second.results[0]).toMatchObject({ state: { kind: "waiting", reason: "gate" } })
+  // The feedback the ceiling had refused now runs, and lands back at the gate.
+  expect(second.results[1]).toMatchObject({ state: { kind: "waiting", reason: "gate" } })
+
+  const records = await runLog(ws, out.runId)
+  // The raise spawned nothing of its own; the feedback turn is the second
+  // process, on the plan session, with the raised remainder.
+  const all = await spawns(ws)
+  expect(all.length).toBe(2)
+  const argv = argvOf(all[1] ?? {})
+  expect(flag(argv, "--resume")).toBe(String(header(records)["planSessionId"]))
+  expect(Number(flag(argv, "--max-budget-usd"))).toBeCloseTo(0.7, 6)
+  expect(
+    records
+      .filter((r) => r["kind"] === "human")
+      .map((r) => `${String(r["action"])}:${String(r["budgetUsd"] ?? "")}`),
+  ).toEqual(["raise:1", "feedback:"])
+}, 240_000)
 
 // ---------------------------------------------------------------------------
 // The lock, on every exit path
