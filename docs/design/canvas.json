@@ -1,0 +1,24 @@
+{
+  "v": 3,
+  "createdOnFiles": {"v": 1, "at": "2026-10-11T17:12:00Z"},
+  "title": "kantan — redesign",
+  "launch": {"view": "canvas"},
+  "pages": [],
+  "boards": {
+    "Main.dc.html": {"x": 0, "y": 0, "w": 1440, "h": 1780, "title": "Gate — reading the plan", "expand": "fill", "is_interactive": true},
+    "Return.dc.html": {"x": 1520, "y": 0, "w": 1440, "h": 1640, "title": "Coming back — still running", "expand": "fill", "is_interactive": true},
+    "Question.dc.html": {"x": 3040, "y": 0, "w": 1440, "h": 1280, "title": "Coming back — it asked a question", "expand": "fill", "is_interactive": true},
+    "Empty.dc.html": {"x": 0, "y": 1980, "w": 1440, "h": 980, "title": "Empty — first screen", "expand": "fill"},
+    "States.dc.html": {"x": 1520, "y": 1980, "w": 1280, "h": 1360, "title": "Nine readings — state system"}
+  },
+  "order": ["Main.dc.html", "Return.dc.html", "Question.dc.html", "Empty.dc.html", "States.dc.html"],
+  "notes": {
+    "title": {"x": 0, "y": -300, "text": "kantan — one task, one decision", "kind": "title1", "maxW": 4480},
+    "cGate": {"x": 4560, "y": 0, "w": 440, "maxH": 620, "fill": "orange", "text": "GATE VIEW — components\n\nShell: three columns, each a shadcn ScrollArea.\nTop band: Motion (AnimatePresence, slides down when a run needs you). Also set document.title + favicon dot so it shows from another tab.\nTree: Magic UI File Tree (project → feature file → task). Glyph + label from one <StateGlyph/> component.\nAccount chip: shadcn Badge, one variant per account.\nGate card: Magic UI Magic Card (cursor spotlight) inside Border Beam. Eyebrow: Animated Shiny Text. Enters with Blur Fade.\nPlan: react-markdown + Tailwind typography, max-w-[68ch].\nFiles touched: shadcn Collapsible.\nReply: shadcn Textarea + outline Button. Approve: shadcn Button, rounded-full, size lg, with a ⌘↵ hint.\nRun record: Magic UI Terminal frame; rows from TanStack Virtual (useVirtualizer + measureElement for expanded rows); only new rows animate in, like Animated List.\nRight rail: phases = custom stepper; cost = Number Ticker; windows = Animated Circular Progress Bar ×2; Stop = Button + Tooltip."},
+    "cReturn": {"x": 4560, "y": 680, "w": 440, "maxH": 520, "fill": "blue", "text": "COMING BACK — components\n\nBand: same slot as the needs-you band, but calm indigo with \"Nothing needs you\".\nDigest: Blur Fade card; the timeline is Magic UI Animated List (staggered).\nExit-code chips: shadcn Badge + ShieldCheck icon. They always print the code, never \"looks good\".\nEdit row expanded: Magic UI Code Comparison.\nCost: Number Ticker, live.\nGrinding notice: shadcn Alert in amber, slides in with Motion. A notice, never a modal; \"Let it run\" dismisses it."},
+    "cQuestion": {"x": 4560, "y": 1260, "w": 440, "maxH": 480, "fill": "purple", "text": "QUESTION ≠ GATE\n\nNo Border Beam, no Approve, no check icon, no black button.\nThe question is a speech bubble from the agent. The composer is a shadcn Textarea with Magic UI Shine Border while focused, and an indigo \"Send answer\" button with a send icon.\nThe copy says plainly that there is nothing to approve yet.\nIn the tree it is still \"needs you\" (orange). Only the centre changes shape."},
+    "cEmpty": {"x": 2880, "y": 1980, "w": 440, "maxH": 420, "fill": "green", "text": "EMPTY — components\n\nBackground: Magic UI Dot Pattern with a radial mask.\nIllustration: three small cards (repo → task file → task), floating with Motion, drawn in the app's own UI so it teaches the real model.\nSteps: Blur Fade with a stagger.\nOne action: shadcn Button → Dialog (repo path, Claude account, test command, task file)."},
+    "cStates": {"x": 2880, "y": 2460, "w": 440, "maxH": 360, "fill": "gray", "text": "STATE SYSTEM\n\nOne <StateGlyph state=… /> plus <StateLabel/>. The shape carries the meaning and colour backs it up. The greyscale row on the sheet is the test.\nOnly needs-you pulses. Only running spins."}
+  },
+  "designSystems": []
+}

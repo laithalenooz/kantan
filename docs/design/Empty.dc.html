@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>kantan — first run</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#F4F4F6}
+.m{font-family:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,monospace}
+.ic{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}
+button{font:inherit;cursor:pointer}
+@keyframes kfade{from{opacity:0;transform:translateY(12px);filter:blur(8px)}to{opacity:1;transform:none;filter:blur(0)}}
+@keyframes kfloat{0%,100%{translate:0 0}50%{translate:0 -7px}}
+@keyframes kpulse{0%{box-shadow:0 0 0 0 rgba(255,106,26,.55)}70%{box-shadow:0 0 0 8px rgba(255,106,26,0)}100%{box-shadow:0 0 0 0 rgba(255,106,26,0)}}
+@keyframes kdash{to{stroke-dashoffset:-24}}
+.bf{animation:kfade .8s cubic-bezier(.2,.7,.2,1) both}
+.d1{animation-delay:.08s}.d2{animation-delay:.16s}.d3{animation-delay:.24s}.d4{animation-delay:.32s}.d5{animation-delay:.4s}.d6{animation-delay:.5s}.d7{animation-delay:.6s}
+.fl{animation:kfloat 6s ease-in-out infinite}
+.fl2{animation:kfloat 6s 1s ease-in-out infinite}
+.fl3{animation:kfloat 6s 2s ease-in-out infinite}
+.pulse{animation:kpulse 1.8s ease-out infinite}
+.flow{animation:kdash 1.6s linear infinite}
+.cta:hover{background:#2A2B31}
+.dots{background-image:radial-gradient(#CFD0D8 1px,transparent 1px);background-size:20px 20px;-webkit-mask-image:radial-gradient(ellipse 70% 70% at 70% 40%,#000 15%,transparent 70%);mask-image:radial-gradient(ellipse 70% 70% at 70% 40%,#000 15%,transparent 70%)}
+@media (prefers-reduced-motion:reduce){.kr *{animation:none!important}}
+a{color:#4B4BC8}a:hover{color:#3A3AA8}
+</style>
+</helmet>
+<div class="kr" style="min-height:100vh;display:flex;flex-direction:column;font-family:'Geist',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;color:#111216;background:#F4F4F6;-webkit-font-smoothing:antialiased">
+
+<header style="display:flex;align-items:center;gap:12px;height:56px;padding:0 20px;background:rgba(255,255,255,.86);border-bottom:1px solid #E7E7EB">
+  <span aria-hidden="true" style="width:26px;height:26px;border-radius:8px;background:linear-gradient(145deg,#2A2B31,#0E0F12);display:grid;place-items:center;box-shadow:inset 0 1px 0 rgba(255,255,255,.14),0 2px 6px -2px rgba(17,18,22,.5)"><span style="width:8px;height:8px;border-radius:50%;background:#FF6A1A"></span></span>
+  <span style="font-size:17px;font-weight:700;letter-spacing:-.025em">kantan</span>
+  <span class="m" style="font-size:12px;color:#6B7080;padding:3px 8px;border-radius:999px;background:#F1F1F4">localhost:4317</span>
+</header>
+
+<div style="flex:1;display:flex;flex-wrap:wrap;align-items:stretch">
+  <aside aria-label="Projects and tasks" style="flex:1 1 288px;background:#FAFAFB;border-right:1px solid #E7E7EB;padding:16px 18px 28px;box-sizing:border-box">
+    <span style="display:block;font-size:11.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#6B7080">Projects</span>
+    <div style="margin-top:14px;padding:18px 16px;border-radius:14px;border:1.5px dashed #D9DAE0;font-size:13.5px;line-height:1.55;color:#5F6370">No repositories yet. Your projects, their task files and every task's state will live here.</div>
+  </aside>
+
+  <main style="flex:999 1 560px;min-width:0;position:relative;overflow:hidden;padding:clamp(32px,6vw,80px) clamp(16px,4vw,64px) 64px;box-sizing:border-box">
+    <div class="dots" aria-hidden="true" style="position:absolute;inset:0;pointer-events:none"></div>
+    <div style="position:relative;max-width:1040px;margin:0 auto;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(400px,100%),1fr));gap:48px;align-items:center">
+
+      <div>
+        <div class="bf" style="display:inline-flex;align-items:center;gap:8px;padding:5px 12px 5px 6px;border-radius:999px;background:#fff;border:1px solid #E7E7EB;box-shadow:0 1px 2px rgba(17,18,22,.04);font-size:13px;color:#3A3D45">
+          <span lang="ja" style="padding:2px 7px;border-radius:999px;background:#111216;color:#fff;font-size:12px;font-weight:600">簡単</span>
+          kantan means “simple” in Japanese
+        </div>
+        <h1 class="bf d1" style="margin:22px 0 0;font-size:clamp(38px,5vw,58px);line-height:1.02;font-weight:650;letter-spacing:-.045em;text-wrap:balance">Start with a repository.</h1>
+        <p class="bf d2" style="margin:18px 0 0;max-width:46ch;font-size:17px;line-height:1.6;color:#4A4E59;text-wrap:pretty">kantan works through the tasks in a markdown file in your repo, one at a time. It writes a plan, waits for your OK, then implements it and runs your tests until the exit code says they pass.</p>
+
+        <ol style="list-style:none;margin:30px 0 0;padding:0;display:flex;flex-direction:column;gap:14px">
+          <li class="bf d3" style="display:grid;grid-template-columns:32px minmax(0,1fr);gap:14px;align-items:start">
+            <span style="width:32px;height:32px;border-radius:10px;background:#fff;border:1px solid #E2E2E7;box-shadow:0 1px 2px rgba(17,18,22,.05);display:grid;place-items:center;font-size:14px;font-weight:650">1</span>
+            <span style="font-size:15px;line-height:1.5;padding-top:5px"><strong style="font-weight:620">Add a repository</strong> <span style="color:#4A4E59">and choose the Claude account it runs under: personal or work.</span></span>
+          </li>
+          <li class="bf d4" style="display:grid;grid-template-columns:32px minmax(0,1fr);gap:14px;align-items:start">
+            <span style="width:32px;height:32px;border-radius:10px;background:#fff;border:1px solid #E2E2E7;box-shadow:0 1px 2px rgba(17,18,22,.05);display:grid;place-items:center;font-size:14px;font-weight:650">2</span>
+            <span style="font-size:15px;line-height:1.5;padding-top:5px"><strong style="font-weight:620">Point at a task file</strong> <span style="color:#4A4E59">such as</span> <code class="m" style="font-size:13px;background:#fff;border:1px solid #E7E7EB;border-radius:6px;padding:1px 6px">docs/features/importer.md</code></span>
+          </li>
+          <li class="bf d5" style="display:grid;grid-template-columns:32px minmax(0,1fr);gap:14px;align-items:start">
+            <span style="width:32px;height:32px;border-radius:10px;background:#FF6A1A;display:grid;place-items:center;font-size:14px;font-weight:700;color:#1A0B02">3</span>
+            <span style="font-size:15px;line-height:1.5;padding-top:5px"><strong style="font-weight:620">Start a task.</strong> <span style="color:#4A4E59">kantan plans it, then stops and waits for you.</span></span>
+          </li>
+        </ol>
+
+        <div class="bf d6" style="margin-top:34px">
+          <button class="cta" style="height:56px;padding:0 26px 0 20px;border-radius:999px;border:0;background:#111216;color:#fff;font-size:16px;font-weight:620;display:inline-flex;align-items:center;gap:10px;box-shadow:0 12px 30px -12px rgba(17,18,22,.65),inset 0 1px 0 rgba(255,255,255,.16)">
+            <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:18px;height:18px;stroke-width:2.4"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>
+            Add a repository
+          </button>
+        </div>
+      </div>
+
+      <div class="bf d3" aria-hidden="true" style="position:relative;width:100%;max-width:460px;height:420px;justify-self:center">
+        <svg viewBox="0 0 460 420" style="position:absolute;inset:0;width:100%;height:100%;overflow:visible">
+          <path class="flow" d="M150 110 C 150 160, 230 150, 250 170" fill="none" stroke="#B9BAC6" stroke-width="1.6" stroke-dasharray="4 8" stroke-linecap="round"></path>
+          <path class="flow" d="M300 300 C 300 330, 220 320, 200 330" fill="none" stroke="#FFB27F" stroke-width="1.6" stroke-dasharray="4 8" stroke-linecap="round"></path>
+        </svg>
+
+        <div class="fl" style="position:absolute;left:0;top:8px;width:250px;padding:14px 16px;border-radius:16px;background:#fff;border:1px solid #E7E7EB;box-shadow:0 1px 2px rgba(17,18,22,.04),0 16px 36px -18px rgba(17,18,22,.28);rotate:-2deg">
+          <div style="display:flex;align-items:center;gap:8px">
+            <svg class="ic" viewBox="0 0 24 24" style="color:#6B7080"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg>
+            <span style="font-size:14.5px;font-weight:620">your-app</span>
+            <span style="margin-left:auto;display:inline-flex;align-items:center;gap:4px;padding:2px 7px 2px 5px;border-radius:6px;background:#E0F2FE;color:#075985;font-size:11.5px;font-weight:550"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>personal</span>
+          </div>
+          <div class="m" style="margin:8px 0 0 24px;font-size:12px;color:#6B7080">$ npm test</div>
+        </div>
+
+        <div class="fl2" style="position:absolute;right:0;top:130px;width:280px;border-radius:16px;background:#fff;border:1px solid #E7E7EB;box-shadow:0 1px 2px rgba(17,18,22,.04),0 16px 36px -18px rgba(17,18,22,.28);overflow:hidden;rotate:1.5deg">
+          <div class="m" style="display:flex;align-items:center;gap:6px;padding:9px 14px;border-bottom:1px solid #EEEEF1;background:#FAFAFB;font-size:11.5px;color:#5F6370"><svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path></svg>docs/features/importer.md</div>
+          <div class="m" style="padding:12px 14px 14px;font-size:12px;line-height:1.85;color:#3A3D45">
+            <div style="color:#111216;font-weight:600"># Importer</div>
+            <div>- [ ] T1 Parse the manifest</div>
+            <div style="background:#FFF1E8;margin:0 -6px;padding:0 6px;border-radius:6px;color:#9A3B06">- [ ] T2 Map records to rows</div>
+            <div>- [ ] T3 Runtime shim (v1.2)</div>
+          </div>
+        </div>
+
+        <div class="fl3" style="position:absolute;left:12px;bottom:0;width:270px;padding:1.5px;border-radius:18px;background:linear-gradient(135deg,#FFD2B3,#FF6A1A 55%,#FFE3D0);box-shadow:0 24px 50px -24px rgba(255,106,26,.55);rotate:-1deg">
+          <div style="border-radius:16.5px;background:#fff;padding:14px 16px 16px">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span class="pulse" style="width:10px;height:10px;border-radius:50%;background:#FF6A1A"></span>
+              <span style="font-size:12px;font-weight:620;color:#9A3B06">Plan ready · T2</span>
+            </div>
+            <div style="margin-top:8px;font-size:20px;line-height:1.15;font-weight:650;letter-spacing:-.03em">Is this plan right?</div>
+            <div style="display:flex;gap:6px;margin-top:6px">
+              <span style="height:6px;width:92px;border-radius:999px;background:#EDEDF0"></span><span style="height:6px;width:56px;border-radius:999px;background:#EDEDF0"></span>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;margin-top:14px">
+              <span style="display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 13px 0 11px;border-radius:999px;background:#111216;color:#fff;font-size:12.5px;font-weight:600"><svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px;stroke-width:2.6"><path d="M20 6 9 17l-5-5"></path></svg>Approve</span>
+              <span style="height:32px;padding:0 12px;border-radius:999px;border:1px solid #DCDCE2;display:inline-flex;align-items:center;font-size:12.5px;font-weight:550;color:#3A3D45">Send back</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":980}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

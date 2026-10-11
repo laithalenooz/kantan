@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>kantan — coming back</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#F4F4F6}
+.m{font-family:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,monospace}
+.ic{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}
+button{font:inherit;cursor:pointer}
+@keyframes kfade{from{opacity:0;transform:translateY(10px);filter:blur(6px)}to{opacity:1;transform:none;filter:blur(0)}}
+@keyframes kpulsei{0%{box-shadow:0 0 0 0 rgba(91,91,214,.45)}70%{box-shadow:0 0 0 8px rgba(91,91,214,0)}100%{box-shadow:0 0 0 0 rgba(91,91,214,0)}}
+@keyframes kspin{to{transform:rotate(360deg)}}
+@keyframes kring{from{stroke-dashoffset:157.08}}
+@keyframes kband{from{transform:translateY(-100%);opacity:0}to{transform:none;opacity:1}}
+@keyframes kslide{from{opacity:0;transform:translateX(16px)}to{opacity:1;transform:none}}
+@keyframes ktick{from{opacity:.35;transform:translateY(-3px)}to{opacity:1;transform:none}}
+.bf{animation:kfade .7s cubic-bezier(.2,.7,.2,1) both}
+.d1{animation-delay:.05s}.d2{animation-delay:.1s}.d3{animation-delay:.15s}.d4{animation-delay:.2s}.d5{animation-delay:.25s}.d6{animation-delay:.3s}.d7{animation-delay:.35s}.d8{animation-delay:.4s}.d9{animation-delay:.45s}.d10{animation-delay:.5s}
+.band{animation:kband .5s cubic-bezier(.2,.7,.2,1) both}
+.slide{animation:kslide .6s .3s cubic-bezier(.2,.7,.2,1) both}
+.pulsei{animation:kpulsei 1.8s ease-out infinite}
+.spin{animation:kspin .9s linear infinite;transform-origin:50% 50%}
+.ring{animation:kring 1.4s cubic-bezier(.2,.7,.2,1) both}
+.tick{animation:ktick .35s ease-out}
+.trow:hover{background:#EFEFF2}
+.lr:hover{background:#FAFAFB}
+.ghost:hover{background:#F6F6F8}
+.dots{background-image:radial-gradient(#D3D4DB 1px,transparent 1px);background-size:20px 20px;-webkit-mask-image:radial-gradient(ellipse 80% 60% at 50% 0%,#000 20%,transparent 75%);mask-image:radial-gradient(ellipse 80% 60% at 50% 0%,#000 20%,transparent 75%)}
+.still *{animation:none!important}
+@media (prefers-reduced-motion:reduce){.kr *{animation:none!important}}
+a{color:#4B4BC8}a:hover{color:#3A3AA8}
+</style>
+</helmet>
+<div class="kr {{rootClass}}" style="min-height:100vh;display:flex;flex-direction:column;font-family:'Geist',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;color:#111216;background:#F4F4F6;-webkit-font-smoothing:antialiased">
+
+<header style="display:flex;align-items:center;gap:12px;height:56px;padding:0 20px;background:rgba(255,255,255,.86);border-bottom:1px solid #E7E7EB">
+  <span aria-hidden="true" style="width:26px;height:26px;border-radius:8px;background:linear-gradient(145deg,#2A2B31,#0E0F12);display:grid;place-items:center;box-shadow:inset 0 1px 0 rgba(255,255,255,.14),0 2px 6px -2px rgba(17,18,22,.5)"><span style="width:8px;height:8px;border-radius:50%;background:#FF6A1A"></span></span>
+  <span style="font-size:17px;font-weight:700;letter-spacing:-.025em">kantan</span>
+  <span class="m" style="font-size:12px;color:#6B7080;padding:3px 8px;border-radius:999px;background:#F1F1F4">localhost:4317</span>
+</header>
+
+<div class="band" role="status" style="display:flex;flex-wrap:wrap;align-items:center;gap:10px 20px;padding:18px 24px;background:#E8E9FD;color:#20205E;border-bottom:1px solid #D6D7FA">
+  <svg class="spin" aria-hidden="true" viewBox="0 0 24 24" style="width:22px;height:22px;flex:none"><circle cx="12" cy="12" r="9" fill="none" stroke="#C9CAF5" stroke-width="3"></circle><path d="M21 12a9 9 0 0 0-9-9" fill="none" stroke="#4B4BC8" stroke-width="3" stroke-linecap="round"></path></svg>
+  <span style="font-size:28px;line-height:1;font-weight:700;letter-spacing:-.025em">Running</span>
+  <span style="font-size:16px;font-weight:500">your-app · T2 Map records to rows · attempt 6</span>
+  <span style="margin-left:auto;display:inline-flex;align-items:center;gap:8px;font-size:16px;font-weight:600"><svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:18px;height:18px;stroke-width:2.5"><path d="M20 6 9 17l-5-5"></path></svg>Nothing needs you</span>
+</div>
+
+<div style="flex:1;display:flex;flex-wrap:wrap;align-items:stretch">
+
+  <aside aria-label="Projects and tasks" style="flex:1 1 288px;background:#FAFAFB;border-right:1px solid #E7E7EB;padding:16px 10px 28px;box-sizing:border-box">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:0 8px 6px">
+      <span style="font-size:11.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#6B7080">Projects</span>
+      <button aria-label="Add a repository" class="ghost" style="width:30px;height:30px;border-radius:9px;border:1px solid #E2E2E7;background:#fff;display:grid;place-items:center;color:#3A3D45"><svg class="ic" viewBox="0 0 24 24" style="width:15px;height:15px"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg></button>
+    </div>
+
+    <div>
+      <div style="display:flex;align-items:center;gap:8px;padding:14px 10px 2px">
+        <svg class="ic" viewBox="0 0 24 24" style="color:#6B7080"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg>
+        <span style="font-size:14px;font-weight:620">your-app</span>
+        <span style="margin-left:auto;display:inline-flex;align-items:center;gap:4px;padding:2px 7px 2px 5px;border-radius:6px;background:#E0F2FE;color:#075985;font-size:11.5px;font-weight:550"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>personal</span>
+      </div>
+      <div class="m" style="padding:0 10px 6px 34px;font-size:12px;color:#6B7080">$ npm test</div>
+      <div class="m" style="display:flex;align-items:center;gap:6px;padding:6px 10px 4px 14px;font-size:12px;color:#5F6370"><svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="m6 9 6 6 6-6"></path></svg>docs/features/importer.md</div>
+      <button class="trow" style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;min-height:44px;text-align:left;padding:8px 10px 8px 14px;border:0;border-radius:10px;background:transparent;color:#1E2026;font-size:13.5px;line-height:1.35">
+        <span aria-hidden="true" style="width:16px;height:16px;border-radius:50%;background:#0F8A5F;display:grid;place-items:center;justify-self:center"><svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:none;stroke:#fff;stroke-width:4;stroke-linecap:round;stroke-linejoin:round"><path d="M20 6 9 17l-5-5"></path></svg></span>
+        <span class="m" style="font-size:11.5px;color:#6B7080">T1</span><span>Parse the manifest</span><span style="font-size:11.5px;font-weight:560;color:#0F7A54">Passed</span>
+      </button>
+      <button aria-current="true" style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;min-height:44px;text-align:left;padding:8px 10px 8px 14px;border:0;border-radius:10px;background:#fff;box-shadow:0 0 0 1px #CFD0F7,0 4px 14px -6px rgba(91,91,214,.4);color:#111216;font-size:13.5px;line-height:1.35;font-weight:560">
+        <svg class="spin" aria-hidden="true" viewBox="0 0 24 24" style="width:16px;height:16px;justify-self:center"><circle cx="12" cy="12" r="9" fill="none" stroke="#DCDCF6" stroke-width="3"></circle><path d="M21 12a9 9 0 0 0-9-9" fill="none" stroke="#5B5BD6" stroke-width="3" stroke-linecap="round"></path></svg>
+        <span class="m" style="font-size:11.5px;color:#6B7080;font-weight:400">T2</span><span>Map records to rows</span>
+        <span style="display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:999px;background:#FEF3C7;color:#8A4B0A;font-size:11.5px;font-weight:620"><svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:11px;height:11px;stroke-width:2.5"><path d="m17 2 4 4-4 4"></path><path d="M3 11v-1a4 4 0 0 1 4-4h14"></path><path d="m7 22-4-4 4-4"></path><path d="M21 13v1a4 4 0 0 1-4 4H3"></path></svg>×6</span>
+      </button>
+      <button class="trow" style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;min-height:44px;text-align:left;padding:8px 10px 8px 14px;border:0;border-radius:10px;background:transparent;color:#1E2026;font-size:13.5px;line-height:1.35">
+        <span aria-hidden="true" style="width:14px;height:14px;border-radius:50%;border:1.5px solid #A3A7B1;box-sizing:border-box;justify-self:center"></span>
+        <span class="m" style="font-size:11.5px;color:#6B7080">T3</span><span>Runtime shim (v1.2)</span><span></span>
+      </button>
+      <div class="m" style="display:flex;align-items:center;gap:6px;padding:10px 10px 4px 14px;font-size:12px;color:#5F6370"><svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="m6 9 6 6 6-6"></path></svg>docs/features/export.md</div>
+      <button class="trow" style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;min-height:44px;text-align:left;padding:8px 10px 8px 14px;border:0;border-radius:10px;background:transparent;color:#1E2026;font-size:13.5px;line-height:1.35">
+        <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="color:#64748B;justify-self:center"><path d="m19 5 3-3"></path><path d="m2 22 3-3"></path><path d="M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4Z"></path><path d="M7.5 13.5 10 11"></path><path d="M10.5 16.5 13 14"></path><path d="m12 6 6 6 2.3-2.3a2.4 2.4 0 0 0 0-3.4l-2.6-2.6a2.4 2.4 0 0 0-3.4 0Z"></path></svg>
+        <span class="m" style="font-size:11.5px;color:#6B7080">T1</span><span>Stream CSV export</span><span style="font-size:11.5px;font-weight:560;color:#556274">Interrupted</span>
+      </button>
+    </div>
+
+    <div style="margin-top:6px;border-top:1px solid #ECECEF">
+      <div style="display:flex;align-items:center;gap:8px;padding:14px 10px 2px">
+        <svg class="ic" viewBox="0 0 24 24" style="color:#6B7080"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg>
+        <span style="font-size:14px;font-weight:620">other-repo</span>
+        <span style="margin-left:auto;display:inline-flex;align-items:center;gap:4px;padding:2px 7px 2px 5px;border-radius:6px;background:#26272D;color:#F4F4F6;font-size:11.5px;font-weight:550"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M16 20V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path><rect width="20" height="14" x="2" y="6" rx="2"></rect></svg>work</span>
+      </div>
+      <div class="m" style="padding:0 10px 6px 34px;font-size:12px;color:#6B7080">$ vendor/bin/pest</div>
+      <div class="m" style="display:flex;align-items:center;gap:6px;padding:6px 10px 4px 14px;font-size:12px;color:#5F6370"><svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="m6 9 6 6 6-6"></path></svg>docs/features/billing.md</div>
+      <button class="trow" style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;min-height:44px;text-align:left;padding:8px 10px 8px 14px;border:0;border-radius:10px;background:transparent;color:#1E2026;font-size:13.5px;line-height:1.35">
+        <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="color:#0E7C86;justify-self:center"><line x1="6" x2="6" y1="3" y2="15"></line><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg>
+        <span class="m" style="font-size:11.5px;color:#6B7080">T1</span><span>Ledger reconciliation</span><span style="font-size:11.5px;font-weight:560;color:#0B6C75">Done · unmerged</span>
+      </button>
+      <button class="trow" style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;min-height:44px;text-align:left;padding:8px 10px 8px 14px;border:0;border-radius:10px;background:transparent;color:#1E2026;font-size:13.5px;line-height:1.35">
+        <span aria-hidden="true" style="width:16px;height:16px;border-radius:50%;background:#D92D3A;display:grid;place-items:center;justify-self:center"><svg viewBox="0 0 24 24" style="width:9px;height:9px;fill:none;stroke:#fff;stroke-width:4;stroke-linecap:round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></span>
+        <span class="m" style="font-size:11.5px;color:#6B7080">T2</span><span>Refund path</span><span style="font-size:11.5px;font-weight:560;color:#C4232F">Failed</span>
+      </button>
+      <button class="trow" style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:start;gap:8px;width:100%;min-height:44px;text-align:left;padding:10px 10px 10px 14px;border:0;border-radius:10px;background:transparent;color:#1E2026;font-size:13.5px;line-height:1.35">
+        <span aria-hidden="true" style="width:16px;height:16px;border-radius:50%;border:1.5px dashed #A23B87;box-sizing:border-box;display:grid;place-items:center;justify-self:center;margin-top:1px"><svg viewBox="0 0 24 24" style="width:8px;height:8px;fill:#A23B87"><rect x="5" y="3" width="5" height="18" rx="1.5"></rect><rect x="14" y="3" width="5" height="18" rx="1.5"></rect></svg></span>
+        <span class="m" style="font-size:11.5px;color:#6B7080;margin-top:1px">T3</span><span>Retry webhook deliveries with exponential backoff, and stop once the provider returns 410 Gone</span><span style="font-size:11.5px;font-weight:560;color:#93307A;margin-top:1px">Stalled</span>
+      </button>
+    </div>
+
+    <div style="margin-top:6px;border-top:1px solid #ECECEF">
+      <div style="display:flex;align-items:center;gap:8px;padding:14px 10px 2px">
+        <svg class="ic" viewBox="0 0 24 24" style="color:#6B7080"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg>
+        <span style="font-size:14px;font-weight:620">phone-app</span>
+        <span style="margin-left:auto;display:inline-flex;align-items:center;gap:4px;padding:2px 7px 2px 5px;border-radius:6px;background:#E0F2FE;color:#075985;font-size:11.5px;font-weight:550"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>personal</span>
+      </div>
+      <div class="m" style="padding:0 10px 6px 34px;font-size:12px;color:#6B7080">$ flutter test</div>
+      <div class="m" style="display:flex;align-items:center;gap:6px;padding:6px 10px 4px 14px;font-size:12px;color:#5F6370"><svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="m6 9 6 6 6-6"></path></svg>docs/features/offline.md</div>
+      <button class="trow" style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;min-height:44px;text-align:left;padding:8px 10px 8px 14px;border:0;border-radius:10px;background:transparent;color:#1E2026;font-size:13.5px;line-height:1.35">
+        <span aria-hidden="true" style="width:14px;height:14px;border-radius:50%;border:1.5px solid #A3A7B1;box-sizing:border-box;justify-self:center"></span>
+        <span class="m" style="font-size:11.5px;color:#6B7080">T1</span><span>Queue writes while offline</span><span></span>
+      </button>
+      <button class="trow" style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;min-height:44px;text-align:left;padding:8px 10px 8px 14px;border:0;border-radius:10px;background:transparent;color:#1E2026;font-size:13.5px;line-height:1.35">
+        <span aria-hidden="true" style="width:14px;height:14px;border-radius:50%;border:1.5px solid #A3A7B1;box-sizing:border-box;justify-self:center"></span>
+        <span class="m" style="font-size:11.5px;color:#6B7080">T2</span><span dir="auto" lang="ar">مزامنة البيانات عند عودة الاتصال</span><span></span>
+      </button>
+    </div>
+  </aside>
+
+  <main style="flex:999 1 560px;min-width:0;position:relative;padding:24px clamp(16px,3vw,44px) 40px;box-sizing:border-box">
+    <div class="dots" aria-hidden="true" style="position:absolute;inset:0;pointer-events:none"></div>
+    <div style="position:relative;max-width:920px;margin:0 auto">
+
+      <nav aria-label="Breadcrumb" style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:13.5px;color:#5F6370;margin-bottom:18px">
+        <span>your-app</span>
+        <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:14px;height:14px;color:#A3A7B1"><path d="m9 18 6-6-6-6"></path></svg>
+        <span class="m" style="font-size:12.5px">importer.md</span>
+        <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:14px;height:14px;color:#A3A7B1"><path d="m9 18 6-6-6-6"></path></svg>
+        <span style="color:#111216;font-weight:600">T2 · Map records to rows</span>
+        <span style="display:inline-flex;align-items:center;gap:4px;padding:2px 7px 2px 5px;border-radius:6px;background:#E0F2FE;color:#075985;font-size:11.5px;font-weight:550"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>runs as personal</span>
+      </nav>
+
+      <section aria-labelledby="away-h" class="bf" style="background:#fff;border:1px solid #E7E7EB;border-radius:24px;box-shadow:0 1px 2px rgba(17,18,22,.04),0 18px 50px -22px rgba(17,18,22,.2);overflow:clip">
+        <div style="padding:30px clamp(20px,4vw,44px) 24px;background:linear-gradient(180deg,#F5F5FF 0%,rgba(255,255,255,0) 100%)">
+          <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-bottom:14px;font-size:13px;color:#4A4E59">
+            <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:15px;height:15px;color:#4B4BC8"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+            <span style="font-weight:620;color:#2E2E8A">While you were away</span>
+            <span class="m" style="font-size:12px">33 min · approved 17:58 · now 18:31</span>
+          </div>
+          <h1 id="away-h" style="margin:0;font-size:clamp(30px,3.6vw,42px);line-height:1.08;font-weight:650;letter-spacing:-.035em">Still going. Nothing needs you.</h1>
+          <p style="margin:12px 0 0;max-width:62ch;font-size:15.5px;line-height:1.6;color:#4A4E59">Tests failed five times. After the third identical failure kantan raised the effort level to high. The failure changed after that, so it kept going. You can let it run, or look at the failure below.</p>
+        </div>
+
+        <ol style="list-style:none;margin:0;padding:6px clamp(20px,4vw,44px) 10px;position:relative">
+          <li class="bf d1" style="display:grid;grid-template-columns:48px 20px minmax(0,1fr) auto;gap:12px;align-items:center;padding:9px 0">
+            <span class="m" style="font-size:12px;color:#6B7080">17:58</span>
+            <span aria-hidden="true" style="width:18px;height:18px;border-radius:50%;background:#111216;display:grid;place-items:center"><svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:none;stroke:#fff;stroke-width:4;stroke-linecap:round;stroke-linejoin:round"><path d="M20 6 9 17l-5-5"></path></svg></span>
+            <span style="font-size:14.5px">You approved the plan</span><span></span>
+          </li>
+          <li class="bf d2" style="display:grid;grid-template-columns:48px 20px minmax(0,1fr) auto;gap:12px;align-items:center;padding:9px 0;border-top:1px solid #F0F0F3">
+            <span class="m" style="font-size:12px;color:#6B7080">17:59</span>
+            <span aria-hidden="true" style="width:18px;height:18px;border-radius:50%;background:#EEEEFD;display:grid;place-items:center;color:#4B4BC8"><svg class="ic" viewBox="0 0 24 24" style="width:10px;height:10px;stroke-width:2.5"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"></path></svg></span>
+            <span style="font-size:14.5px">Implemented the plan · 2 files</span>
+            <span class="m" style="font-size:12px"><span style="color:#0F7A54;font-weight:600">+21</span> <span style="color:#C4232F;font-weight:600">−2</span></span>
+          </li>
+          <li class="bf d3" style="display:grid;grid-template-columns:48px 20px minmax(0,1fr) auto;gap:12px;align-items:center;padding:9px 0;border-top:1px solid #F0F0F3">
+            <span class="m" style="font-size:12px;color:#6B7080">18:06</span>
+            <span aria-hidden="true" style="width:16px;height:16px;border-radius:50%;background:#D92D3A;display:grid;place-items:center;justify-self:center"><svg viewBox="0 0 24 24" style="width:9px;height:9px;fill:none;stroke:#fff;stroke-width:4;stroke-linecap:round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></span>
+            <span style="font-size:14.5px">Attempt 1 · 9 passing, 1 failing</span>
+            <span class="m" style="display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:999px;background:#FDECEE;color:#A61B27;font-size:12px;font-weight:600"><svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"></path></svg>exit 1</span>
+          </li>
+          <li class="bf d4" style="display:grid;grid-template-columns:48px 20px minmax(0,1fr) auto;gap:12px;align-items:center;padding:9px 0;border-top:1px solid #F0F0F3">
+            <span class="m" style="font-size:12px;color:#6B7080">18:09</span>
+            <span aria-hidden="true" style="width:16px;height:16px;border-radius:50%;background:#D92D3A;display:grid;place-items:center;justify-self:center"><svg viewBox="0 0 24 24" style="width:9px;height:9px;fill:none;stroke:#fff;stroke-width:4;stroke-linecap:round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></span>
+            <span style="font-size:14.5px">Attempt 2 · <span style="color:#5F6370">same failure</span></span>
+            <span class="m" style="display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:999px;background:#FDECEE;color:#A61B27;font-size:12px;font-weight:600"><svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"></path></svg>exit 1</span>
+          </li>
+          <li class="bf d5" style="display:grid;grid-template-columns:48px 20px minmax(0,1fr) auto;gap:12px;align-items:center;padding:9px 0;border-top:1px solid #F0F0F3">
+            <span class="m" style="font-size:12px;color:#6B7080">18:12</span>
+            <span aria-hidden="true" style="width:16px;height:16px;border-radius:50%;background:#D92D3A;display:grid;place-items:center;justify-self:center"><svg viewBox="0 0 24 24" style="width:9px;height:9px;fill:none;stroke:#fff;stroke-width:4;stroke-linecap:round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></span>
+            <span style="font-size:14.5px">Attempt 3 · <span style="color:#5F6370">same failure</span></span>
+            <span class="m" style="display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:999px;background:#FDECEE;color:#A61B27;font-size:12px;font-weight:600"><svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"></path></svg>exit 1</span>
+          </li>
+          <li class="bf d6" style="display:grid;grid-template-columns:48px 20px minmax(0,1fr) auto;gap:12px;align-items:center;padding:10px 12px;margin:2px -12px;border-radius:12px;background:#F3F3FE">
+            <span class="m" style="font-size:12px;color:#4B4BC8">18:12</span>
+            <span aria-hidden="true" style="width:18px;height:18px;border-radius:6px;background:#5B5BD6;display:grid;place-items:center;color:#fff"><svg class="ic" viewBox="0 0 24 24" style="width:11px;height:11px;stroke-width:3"><path d="m5 12 7-7 7 7"></path><path d="M12 19V5"></path></svg></span>
+            <span style="font-size:14.5px;color:#20205E;font-weight:560">Three identical failures, so effort was raised to high</span>
+            <span class="m" style="padding:3px 8px;border-radius:999px;background:#5B5BD6;color:#fff;font-size:12px;font-weight:600">effort: high</span>
+          </li>
+          <li class="bf d7" style="display:grid;grid-template-columns:48px 20px minmax(0,1fr) auto;gap:12px;align-items:center;padding:9px 0">
+            <span class="m" style="font-size:12px;color:#6B7080">18:19</span>
+            <span aria-hidden="true" style="width:16px;height:16px;border-radius:50%;background:#D92D3A;display:grid;place-items:center;justify-self:center"><svg viewBox="0 0 24 24" style="width:9px;height:9px;fill:none;stroke:#fff;stroke-width:4;stroke-linecap:round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></span>
+            <span style="font-size:14.5px">Attempt 4 · <span style="color:#5F6370">a different failure</span></span>
+            <span class="m" style="display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:999px;background:#FDECEE;color:#A61B27;font-size:12px;font-weight:600"><svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"></path></svg>exit 1</span>
+          </li>
+          <li class="bf d8" style="display:grid;grid-template-columns:48px 20px minmax(0,1fr) auto;gap:12px;align-items:center;padding:9px 0;border-top:1px solid #F0F0F3">
+            <span class="m" style="font-size:12px;color:#6B7080">18:26</span>
+            <span aria-hidden="true" style="width:16px;height:16px;border-radius:50%;background:#D92D3A;display:grid;place-items:center;justify-self:center"><svg viewBox="0 0 24 24" style="width:9px;height:9px;fill:none;stroke:#fff;stroke-width:4;stroke-linecap:round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></span>
+            <span style="font-size:14.5px;display:flex;flex-wrap:wrap;align-items:center;gap:8px">Attempt 5 · 10 passing, 1 failing <span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;background:#FEF3C7;color:#8A4B0A;font-size:12px;font-weight:620"><svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:11px;height:11px;stroke-width:2.5"><path d="m17 2 4 4-4 4"></path><path d="M3 11v-1a4 4 0 0 1 4-4h14"></path><path d="m7 22-4-4 4-4"></path><path d="M21 13v1a4 4 0 0 1-4 4H3"></path></svg>grinding</span></span>
+            <span class="m" style="display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:999px;background:#FDECEE;color:#A61B27;font-size:12px;font-weight:600"><svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"></path></svg>exit 1</span>
+          </li>
+          <li class="bf d9" style="display:grid;grid-template-columns:48px 20px minmax(0,1fr) auto;gap:12px;align-items:center;padding:9px 0;border-top:1px solid #F0F0F3">
+            <span class="m" style="font-size:12px;color:#4B4BC8;font-weight:600">now</span>
+            <svg class="spin" aria-hidden="true" viewBox="0 0 24 24" style="width:16px;height:16px;justify-self:center"><circle cx="12" cy="12" r="9" fill="none" stroke="#DCDCF6" stroke-width="3"></circle><path d="M21 12a9 9 0 0 0-9-9" fill="none" stroke="#5B5BD6" stroke-width="3" stroke-linecap="round"></path></svg>
+            <span style="font-size:14.5px;font-weight:560">Attempt 6 · running <span class="m" style="font-size:13px;font-weight:500">npm test</span></span>
+            <span class="m" style="font-size:12.5px;color:#4B4BC8;font-weight:600;font-variant-numeric:tabular-nums">{{elapsed}}</span>
+          </li>
+        </ol>
+        <div style="display:flex;align-items:flex-start;gap:10px;margin:0 clamp(20px,4vw,44px) 24px;padding:12px 14px;border-radius:14px;background:#F6F6F8;font-size:13.5px;line-height:1.5;color:#3A3D45">
+          <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="color:#0F7A54;margin-top:1px"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"></path><path d="m9 12 2 2 4-4"></path></svg>
+          <span>Each pass or fail above is the exit code of <span class="m" style="font-size:12.5px">npm test</span>, read by kantan itself. What the agent says about its own work is never used.</span>
+        </div>
+      </section>
+
+      <section id="fail" aria-labelledby="log-h" class="bf d3" style="margin-top:28px;background:#fff;border:1px solid #E7E7EB;border-radius:20px;box-shadow:0 1px 2px rgba(17,18,22,.04),0 12px 32px -20px rgba(17,18,22,.18);overflow:clip">
+        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid #EEEEF1">
+          <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="color:#3A3D45"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" x2="20" y1="19" y2="19"></line></svg>
+          <h2 id="log-h" style="margin:0;font-size:15px;font-weight:620">Run record</h2>
+          <span class="m" style="font-size:12px;color:#6B7080">2,184 events · newest at the bottom</span>
+          <button class="ghost" style="margin-left:auto;height:32px;padding:0 12px;border-radius:999px;border:1px solid #CFD0F7;background:#F3F3FE;font-size:12.5px;font-weight:600;color:#3A3AA8;display:inline-flex;align-items:center;gap:6px"><svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="M12 5v14"></path><path d="m19 12-7 7-7-7"></path></svg>Following</button>
+        </div>
+        <div style="max-height:640px;overflow:auto">
+          <div class="m" style="padding:10px 16px;font-size:12px;color:#6B7080;background:linear-gradient(180deg,#F7F7F9,#fff)">↑ 2,176 earlier events, rendered as you scroll</div>
+
+          <button onClick="{{tDiff}}" aria-expanded="{{oDiff}}" class="lr" style="display:grid;grid-template-columns:22px 58px minmax(0,1fr) auto;gap:10px;align-items:start;width:100%;text-align:left;padding:9px 16px;border:0;border-top:1px solid #F0F0F3;background:transparent;color:#1E2026;font-size:13px;line-height:1.5">
+            <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:15px;height:15px;color:#4B4BC8;margin-top:2px"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"></path><path d="m15 5 4 4"></path></svg>
+            <span class="m" style="font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:#6B7080;padding-top:2px">edit</span>
+            <span class="m" style="font-size:12.5px;overflow-wrap:anywhere">src/importer/map.ts <span style="color:#0F7A54;font-weight:600">+2</span> <span style="color:#C4232F;font-weight:600">−1</span> <span style="font-family:'Geist',sans-serif;color:#5F6370">· {{diffHint}}</span></span>
+            <span class="m" style="font-size:11.5px;color:#6B7080">18:27:58</span>
+          </button>
+          <sc-if value="{{oDiff}}" hint-placeholder-val="{{ true }}">
+            <div class="bf" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr));gap:10px;padding:4px 16px 14px 106px">
+              <div style="border:1px solid #EEEEF1;border-radius:12px;overflow:hidden;background:#FCFCFD">
+                <div style="padding:7px 12px;font-size:11.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:#6B7080;border-bottom:1px solid #EEEEF1">Before</div>
+                <pre class="m" style="margin:0;padding:8px 0;font-size:12px;line-height:1.7;overflow-x:auto;color:#3A3D45"><span style="display:block;padding:0 12px">  for (const key of Object.keys(rest))</span><span style="display:block;padding:0 12px">    warn(`ignored field: ${key}`);</span><span style="display:block;padding:0 12px;background:#FDECEE;color:#8F1520">- return { id, name, createdAt: toIso(createdAt), tags };</span><span style="display:block;padding:0 12px">}</span></pre>
+              </div>
+              <div style="border:1px solid #EEEEF1;border-radius:12px;overflow:hidden;background:#FCFCFD">
+                <div style="padding:7px 12px;font-size:11.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:#6B7080;border-bottom:1px solid #EEEEF1">After</div>
+                <pre class="m" style="margin:0;padding:8px 0;font-size:12px;line-height:1.7;overflow-x:auto;color:#3A3D45"><span style="display:block;padding:0 12px">  for (const key of Object.keys(rest))</span><span style="display:block;padding:0 12px">    warn(`ignored field: ${key}`);</span><span style="display:block;padding:0 12px;background:#E3F5EC;color:#0B5A3E">+ const unique = [...new Set(tags)];</span><span style="display:block;padding:0 12px;background:#E3F5EC;color:#0B5A3E">+ return { id, name, createdAt: toIso(createdAt), tags: unique };</span><span style="display:block;padding:0 12px">}</span></pre>
+              </div>
+            </div>
+          </sc-if>
+
+          <div class="lr" style="display:grid;grid-template-columns:22px 58px minmax(0,1fr) auto;gap:10px;align-items:start;padding:9px 16px;border-top:1px solid #F0F0F3;font-size:13px;line-height:1.5">
+            <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:15px;height:15px;color:#111216;margin-top:2px"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" x2="20" y1="19" y2="19"></line></svg>
+            <span class="m" style="font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:#6B7080;padding-top:2px">shell</span>
+            <span class="m" style="font-size:12.5px">npm test</span>
+            <span class="m" style="font-size:11.5px;color:#6B7080">18:28:02</span>
+          </div>
+
+          <button onClick="{{tFail}}" aria-expanded="{{oFail}}" class="lr" style="display:grid;grid-template-columns:22px 58px minmax(0,1fr) auto;gap:10px;align-items:start;width:100%;text-align:left;padding:10px 16px;border:0;border-top:1px solid #F0F0F3;background:#FFFBFB;color:#1E2026;font-size:13.5px;line-height:1.5">
+            <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:15px;height:15px;color:#C4232F;margin-top:2px"><path d="M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2"></path><path d="M8.5 2h7"></path><path d="M7 16h10"></path></svg>
+            <span class="m" style="font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:#6B7080;padding-top:3px">tests</span>
+            <span style="display:flex;flex-direction:column;gap:8px;min-width:0">
+              <span style="display:flex;flex-wrap:wrap;align-items:center;gap:8px"><span style="font-weight:600">10 passing, 1 failing</span><span class="m" style="display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:999px;background:#D92D3A;color:#fff;font-size:12px;font-weight:600">exit 1</span><span style="font-size:12.5px;color:#5F6370">read by kantan</span></span>
+              <sc-if value="{{oFail}}" hint-placeholder-val="{{ true }}"><span class="m" style="display:block;padding:10px 12px;border-radius:10px;background:#fff;border:1px solid #F5D5D9;font-size:12px;line-height:1.6;color:#3A3D45;white-space:pre-wrap;overflow-wrap:anywhere">✕ map.test.ts › warns once per dropped field
+  expected onWarning to be called 3 times
+  received 2 calls
+  at test/importer/map.test.ts:41:28</span></sc-if>
+            </span>
+            <span class="m" style="font-size:11.5px;color:#6B7080">18:28:39</span>
+          </button>
+
+          <button onClick="{{tProse}}" aria-expanded="{{oProse}}" class="lr" style="display:grid;grid-template-columns:22px 58px minmax(0,1fr) auto;gap:10px;align-items:start;width:100%;text-align:left;padding:9px 16px;border:0;border-top:1px solid #F0F0F3;background:transparent;color:#1E2026;font-size:13.5px;line-height:1.5">
+            <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:15px;height:15px;color:#5B5BD6;margin-top:2px"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+            <span class="m" style="font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:#6B7080;padding-top:3px">agent</span>
+            <span style="{{cProse}}">The fixture repeats legacyRef twice, so destructuring collapses it to one key and only two warnings fire. I'll warn per occurrence in the raw entry instead of per key in rest, which keeps the plan's “once per dropped field” promise.</span>
+            <span class="m" style="font-size:11.5px;color:#6B7080">18:28:51</span>
+          </button>
+
+          <div class="lr" style="display:grid;grid-template-columns:22px 58px minmax(0,1fr) auto;gap:10px;align-items:start;padding:9px 16px;border-top:1px solid #F0F0F3;font-size:13px;line-height:1.5">
+            <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:15px;height:15px;color:#0369A1;margin-top:2px"><path d="m12 14 4-4"></path><path d="M3.34 19a10 10 0 1 1 17.32 0"></path></svg>
+            <span class="m" style="font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:#6B7080;padding-top:2px">limit</span>
+            <span style="color:#3A3D45"><span style="font-weight:560;color:#075985">personal</span> · 58% of the 5-hour window used · resets 18:40</span>
+            <span class="m" style="font-size:11.5px;color:#6B7080">18:29:30</span>
+          </div>
+
+          <div class="lr" style="display:grid;grid-template-columns:22px 58px minmax(0,1fr) auto;gap:10px;align-items:start;padding:9px 16px;border-top:1px solid #F0F0F3;font-size:13px;line-height:1.5">
+            <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:15px;height:15px;color:#5F6370;margin-top:2px"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path></svg>
+            <span class="m" style="font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:#6B7080;padding-top:2px">read</span>
+            <span class="m" style="font-size:12.5px;color:#3A3D45;overflow-wrap:anywhere">/home/you/code/your-app/packages/importer/src/adapters/legacy/manifest-v1/__fixtures__/2024-q3-export-with-unknown-fields-and-mixed-epoch-and-iso-timestamps.json</span>
+            <span class="m" style="font-size:11.5px;color:#6B7080">18:29:44</span>
+          </div>
+
+          <div class="lr" style="display:grid;grid-template-columns:22px 58px minmax(0,1fr) auto;gap:10px;align-items:start;padding:9px 16px;border-top:1px solid #F0F0F3;font-size:13px;line-height:1.5">
+            <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:15px;height:15px;color:#4B4BC8;margin-top:2px"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"></path><path d="m15 5 4 4"></path></svg>
+            <span class="m" style="font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:#6B7080;padding-top:2px">edit</span>
+            <span class="m" style="font-size:12.5px;overflow-wrap:anywhere">src/importer/map.ts <span style="color:#0F7A54;font-weight:600">+4</span> <span style="color:#C4232F;font-weight:600">−2</span></span>
+            <span class="m" style="font-size:11.5px;color:#6B7080">18:30:12</span>
+          </div>
+
+          <div class="lr" style="display:grid;grid-template-columns:22px 58px minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 16px;border-top:1px solid #F0F0F3;font-size:13px;line-height:1.5;background:#F8F8FE">
+            <svg class="spin" aria-hidden="true" viewBox="0 0 24 24" style="width:15px;height:15px"><circle cx="12" cy="12" r="9" fill="none" stroke="#DCDCF6" stroke-width="3"></circle><path d="M21 12a9 9 0 0 0-9-9" fill="none" stroke="#5B5BD6" stroke-width="3" stroke-linecap="round"></path></svg>
+            <span class="m" style="font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:#4B4BC8;font-weight:600">shell</span>
+            <span class="m" style="font-size:12.5px;color:#20205E">npm test <span style="font-family:'Geist',sans-serif;color:#4A4E59">· running, attempt 6</span></span>
+            <span class="m" style="font-size:11.5px;color:#4B4BC8;font-weight:600;font-variant-numeric:tabular-nums">{{elapsed}}</span>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <aside aria-label="Run details" style="flex:1 1 260px;border-left:1px solid #E7E7EB;background:#FAFAFB;padding:20px 16px 28px;box-sizing:border-box;display:flex;flex-direction:column;gap:14px">
+    <section style="background:#fff;border:1px solid #E7E7EB;border-radius:16px;padding:12px;box-shadow:0 1px 2px rgba(17,18,22,.04)">
+      <h2 style="margin:2px 6px 8px;font-size:11.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#6B7080">Phases</h2>
+      <ol style="list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px">
+        <li style="display:grid;grid-template-columns:18px 1fr auto;align-items:center;gap:10px;padding:9px 8px;font-size:14px">
+          <span aria-hidden="true" style="width:16px;height:16px;border-radius:50%;background:#0F8A5F;display:grid;place-items:center"><svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:none;stroke:#fff;stroke-width:4;stroke-linecap:round;stroke-linejoin:round"><path d="M20 6 9 17l-5-5"></path></svg></span>
+          <span>Plan</span><span class="m" style="font-size:12.5px;color:#5F6370">8s</span>
+        </li>
+        <li style="display:grid;grid-template-columns:18px 1fr auto;align-items:center;gap:10px;padding:9px 8px;font-size:14px">
+          <span aria-hidden="true" style="width:16px;height:16px;border-radius:50%;background:#0F8A5F;display:grid;place-items:center"><svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:none;stroke:#fff;stroke-width:4;stroke-linecap:round;stroke-linejoin:round"><path d="M20 6 9 17l-5-5"></path></svg></span>
+          <span>Gate <span style="color:#5F6370">· approved</span></span><span class="m" style="font-size:12.5px;color:#5F6370">2m 14s</span>
+        </li>
+        <li style="display:grid;grid-template-columns:18px 1fr auto;align-items:center;gap:10px;padding:9px 8px;font-size:14px">
+          <span aria-hidden="true" style="width:16px;height:16px;border-radius:50%;background:#0F8A5F;display:grid;place-items:center"><svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:none;stroke:#fff;stroke-width:4;stroke-linecap:round;stroke-linejoin:round"><path d="M20 6 9 17l-5-5"></path></svg></span>
+          <span>Implement</span><span class="m" style="font-size:12.5px;color:#5F6370">6m 40s</span>
+        </li>
+        <li style="display:grid;grid-template-columns:18px 1fr auto;align-items:center;gap:10px;padding:10px 8px;border-radius:10px;font-size:14px;background:#F3F3FE;box-shadow:inset 0 0 0 1px #D6D7FA">
+          <svg class="spin" aria-hidden="true" viewBox="0 0 24 24" style="width:16px;height:16px"><circle cx="12" cy="12" r="9" fill="none" stroke="#DCDCF6" stroke-width="3"></circle><path d="M21 12a9 9 0 0 0-9-9" fill="none" stroke="#5B5BD6" stroke-width="3" stroke-linecap="round"></path></svg>
+          <span style="font-weight:650">Test <span style="font-weight:500;color:#3A3AA8">· attempt 6</span></span><span class="m" style="font-size:12.5px;color:#3A3AA8;font-weight:600;font-variant-numeric:tabular-nums">{{elapsed}}</span>
+        </li>
+        <li style="display:grid;grid-template-columns:18px 1fr auto;align-items:center;gap:10px;padding:9px 8px;font-size:14px">
+          <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="color:#8A4B0A;justify-self:center"><path d="m17 2 4 4-4 4"></path><path d="M3 11v-1a4 4 0 0 1 4-4h14"></path><path d="m7 22-4-4 4-4"></path><path d="M21 13v1a4 4 0 0 1-4 4H3"></path></svg>
+          <span>Refine <span style="color:#5F6370">· 5 rounds</span></span><span class="m" style="font-size:12.5px;color:#5F6370">19m</span>
+        </li>
+      </ol>
+    </section>
+
+    <section style="background:#fff;border:1px solid #E7E7EB;border-radius:16px;padding:16px;box-shadow:0 1px 2px rgba(17,18,22,.04)">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <h2 style="margin:0;font-size:11.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#6B7080">Cost</h2>
+        <span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:560;color:#3A3AA8"><span class="pulsei" aria-hidden="true" style="width:7px;height:7px;border-radius:50%;background:#5B5BD6"></span>live</span>
+      </div>
+      <div aria-live="off" style="margin-top:8px;font-size:38px;line-height:1;font-weight:650;letter-spacing:-.035em;font-variant-numeric:tabular-nums"><span class="tick" key="{{cost}}">{{cost}}</span></div>
+      <div style="margin-top:6px;font-size:13px;color:#5F6370">of <span style="font-weight:600;color:#111216">$50.00</span> ceiling for this run</div>
+      <div style="height:6px;border-radius:999px;background:#EFEFF2;margin-top:12px;overflow:hidden"><div style="width:{{costPct}};min-width:6px;height:100%;border-radius:999px;background:#111216;transition:width .6s"></div></div>
+    </section>
+
+    <section style="background:#fff;border:1px solid #E7E7EB;border-radius:16px;padding:16px;box-shadow:0 1px 2px rgba(17,18,22,.04)">
+      <h2 style="margin:0 0 12px;font-size:11.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#6B7080">5-hour windows</h2>
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div style="display:grid;grid-template-columns:52px 1fr;gap:12px;align-items:center">
+          <div style="position:relative;width:52px;height:52px">
+            <svg viewBox="0 0 60 60" aria-hidden="true" style="width:52px;height:52px;transform:rotate(-90deg)"><circle cx="30" cy="30" r="25" fill="none" stroke="#E6F3FB" stroke-width="6"></circle><circle class="ring" cx="30" cy="30" r="25" fill="none" stroke="#0284C7" stroke-width="6" stroke-linecap="round" stroke-dasharray="157.08" stroke-dashoffset="65.97"></circle></svg>
+            <span style="position:absolute;inset:0;display:grid;place-items:center;font-size:12.5px;font-weight:650;font-variant-numeric:tabular-nums">58%</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:2px">
+            <span style="display:flex;align-items:center;gap:6px;font-size:14px;font-weight:600;color:#075985">personal <span style="padding:1px 6px;border-radius:999px;background:#111216;color:#fff;font-size:10.5px;font-weight:600">this run</span></span>
+            <span class="m" style="font-size:12px;color:#5F6370">resets 18:40</span>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:52px 1fr;gap:12px;align-items:center">
+          <div style="position:relative;width:52px;height:52px">
+            <svg viewBox="0 0 60 60" aria-hidden="true" style="width:52px;height:52px;transform:rotate(-90deg)"><circle cx="30" cy="30" r="25" fill="none" stroke="#EEEEF1" stroke-width="6"></circle><circle class="ring" cx="30" cy="30" r="25" fill="none" stroke="#26272D" stroke-width="6" stroke-linecap="round" stroke-dasharray="157.08" stroke-dashoffset="138.23"></circle></svg>
+            <span style="position:absolute;inset:0;display:grid;place-items:center;font-size:12.5px;font-weight:650;font-variant-numeric:tabular-nums">12%</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:2px">
+            <span style="font-size:14px;font-weight:600;color:#26272D">work</span>
+            <span class="m" style="font-size:12px;color:#5F6370">resets 20:05</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <sc-if value="{{showGrind}}" hint-placeholder-val="{{ true }}">
+      <section role="status" aria-labelledby="grind-h" class="slide" style="background:#FFFBEB;border:1px solid #F7D98B;border-radius:16px;padding:16px;box-shadow:0 8px 24px -16px rgba(180,83,9,.5)">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span aria-hidden="true" style="width:28px;height:28px;border-radius:9px;background:#FEF3C7;display:grid;place-items:center;color:#8A4B0A"><svg class="ic" viewBox="0 0 24 24" style="width:15px;height:15px;stroke-width:2.2"><path d="m17 2 4 4-4 4"></path><path d="M3 11v-1a4 4 0 0 1 4-4h14"></path><path d="m7 22-4-4 4-4"></path><path d="M21 13v1a4 4 0 0 1-4 4H3"></path></svg></span>
+          <h2 id="grind-h" style="margin:0;font-size:15px;font-weight:650;color:#5C3305">Grinding</h2>
+        </div>
+        <p style="margin:10px 0 14px;font-size:13.5px;line-height:1.55;color:#5C3305">6 attempts, <span style="font-weight:650;font-variant-numeric:tabular-nums">{{cost}}</span> so far. It is still running and nothing is blocked. Whether to step in is up to you.</p>
+        <div style="display:flex;flex-wrap:wrap;gap:8px">
+          <a href="#fail" style="height:36px;padding:0 14px;border-radius:999px;background:#5C3305;color:#FFFBEB;font-size:13px;font-weight:600;display:inline-flex;align-items:center;text-decoration:none">See the failure</a>
+          <button onClick="{{dismiss}}" style="height:36px;padding:0 14px;border-radius:999px;border:1px solid #E9C46A;background:transparent;color:#5C3305;font-size:13px;font-weight:600">Let it run</button>
+        </div>
+      </section>
+    </sc-if>
+
+    <div style="margin-top:auto;display:flex;flex-direction:column;gap:8px">
+      <button class="ghost" style="width:100%;height:44px;border-radius:999px;border:1px solid #DCDCE2;background:#fff;display:flex;align-items:center;justify-content:center;gap:8px;font-size:14px;font-weight:560;color:#1E2026"><svg aria-hidden="true" viewBox="0 0 24 24" style="width:12px;height:12px;fill:#1E2026"><rect width="18" height="18" x="3" y="3" rx="3"></rect></svg>Stop run</button>
+      <p style="margin:0;text-align:center;font-size:12.5px;color:#5F6370">Resumable. Stopping costs nothing.</p>
+    </div>
+  </aside>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"motion":{"editor":"boolean","default":true},"$preview":{"width":1440,"height":1640}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { cents: 318, secs: 42, grind: true, open: { diff: true, fail: true } };
+    this._t = 0;
+  }
+  componentDidMount() {
+    this._t = setInterval(() => {
+      this.setState((s) => ({ secs: s.secs + 1, cents: s.secs % 2 === 0 ? s.cents + 1 : s.cents }));
+    }, 1000);
+  }
+  componentWillUnmount() { if (this._t) clearInterval(this._t); }
+  renderVals() {
+    const s = this.state;
+    const o = s.open || {};
+    const tog = (k) => () => { const n = Object.assign({}, o); n[k] = !o[k]; this.setState({ open: n }); };
+    const mm = Math.floor(s.secs / 60), ss = s.secs % 60;
+    const cost = '$' + (s.cents / 100).toFixed(2);
+    return {
+      rootClass: (this.props.motion ?? true) ? '' : 'still',
+      elapsed: mm + ':' + (ss < 10 ? '0' : '') + ss,
+      cost: cost,
+      costPct: (s.cents / 5000 * 100).toFixed(2) + '%',
+      showGrind: s.grind,
+      dismiss: () => this.setState({ grind: false }),
+      oDiff: !!o.diff, tDiff: tog('diff'), diffHint: o.diff ? 'hide diff' : 'show diff',
+      oFail: !!o.fail, tFail: tog('fail'),
+      oProse: !!o.prose, tProse: tog('prose'),
+      cProse: o.prose ? 'display:block' : 'display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis'
+    };
+  }
+}
+</script>
+</body>
+</html>

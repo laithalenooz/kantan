@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>kantan — the agent asked a question</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#F4F4F6}
+.m{font-family:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,monospace}
+.ic{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}
+button{font:inherit;cursor:pointer}
+textarea{font:inherit}
+textarea::placeholder{color:#7A7F8C}
+@property --s{syntax:'<angle>';initial-value:0deg;inherits:false}
+@keyframes kshineb{to{--s:360deg}}
+@keyframes kfade{from{opacity:0;transform:translateY(10px);filter:blur(6px)}to{opacity:1;transform:none;filter:blur(0)}}
+@keyframes kpulse{0%{box-shadow:0 0 0 0 rgba(255,106,26,.55)}70%{box-shadow:0 0 0 9px rgba(255,106,26,0)}100%{box-shadow:0 0 0 0 rgba(255,106,26,0)}}
+@keyframes kpulsed{0%{box-shadow:0 0 0 0 rgba(26,11,2,.5)}70%{box-shadow:0 0 0 12px rgba(26,11,2,0)}100%{box-shadow:0 0 0 0 rgba(26,11,2,0)}}
+@keyframes kspin{to{transform:rotate(360deg)}}
+@keyframes kring{from{stroke-dashoffset:157.08}}
+@keyframes kband{from{transform:translateY(-100%);opacity:0}to{transform:none;opacity:1}}
+@keyframes kpop{from{opacity:0;transform:translateY(8px) scale(.98)}to{opacity:1;transform:none}}
+.bf{animation:kfade .7s cubic-bezier(.2,.7,.2,1) both}
+.d1{animation-delay:.05s}.d2{animation-delay:.1s}.d3{animation-delay:.15s}.d4{animation-delay:.2s}.d5{animation-delay:.25s}.d6{animation-delay:.3s}
+.band{animation:kband .5s cubic-bezier(.2,.7,.2,1) both}
+.pop{animation:kpop .5s cubic-bezier(.2,.7,.2,1) both}
+.pulse{animation:kpulse 1.8s ease-out infinite}
+.pulsed{animation:kpulsed 1.8s ease-out infinite}
+.spin{animation:kspin .9s linear infinite;transform-origin:50% 50%}
+.ring{animation:kring 1.4s cubic-bezier(.2,.7,.2,1) both}
+.shineb{background:conic-gradient(from var(--s),#C7C8F6,#5B5BD6,#38BDF8,#A5B4FC,#C7C8F6);animation:kshineb 6s linear infinite}
+.trow:hover{background:#EFEFF2}
+.lr:hover{background:#FAFAFB}
+.ghost:hover{background:#F6F6F8}
+.send:hover{background:#3F3FB8}
+.dots{background-image:radial-gradient(#D3D4DB 1px,transparent 1px);background-size:20px 20px;-webkit-mask-image:radial-gradient(ellipse 80% 60% at 50% 0%,#000 20%,transparent 75%);mask-image:radial-gradient(ellipse 80% 60% at 50% 0%,#000 20%,transparent 75%)}
+.still *{animation:none!important}
+@media (prefers-reduced-motion:reduce){.kr *{animation:none!important}}
+a{color:#4B4BC8}a:hover{color:#3A3AA8}
+</style>
+</helmet>
+<div class="kr {{rootClass}}" style="min-height:100vh;display:flex;flex-direction:column;font-family:'Geist',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;color:#111216;background:#F4F4F6;-webkit-font-smoothing:antialiased">
+
+<header style="display:flex;align-items:center;gap:12px;height:56px;padding:0 20px;background:rgba(255,255,255,.86);border-bottom:1px solid #E7E7EB">
+  <span aria-hidden="true" style="width:26px;height:26px;border-radius:8px;background:linear-gradient(145deg,#2A2B31,#0E0F12);display:grid;place-items:center;box-shadow:inset 0 1px 0 rgba(255,255,255,.14),0 2px 6px -2px rgba(17,18,22,.5)"><span style="width:8px;height:8px;border-radius:50%;background:#FF6A1A"></span></span>
+  <span style="font-size:17px;font-weight:700;letter-spacing:-.025em">kantan</span>
+  <span class="m" style="font-size:12px;color:#6B7080;padding:3px 8px;border-radius:999px;background:#F1F1F4">localhost:4317</span>
+</header>
+
+<sc-if value="{{waiting}}" hint-placeholder-val="{{ true }}">
+<div class="band" role="status" style="display:flex;flex-wrap:wrap;align-items:center;gap:10px 20px;padding:18px 24px;background:#FF6A1A;color:#1A0B02">
+  <span class="pulsed" aria-hidden="true" style="width:14px;height:14px;border-radius:50%;background:#1A0B02;flex:none"></span>
+  <span style="font-size:28px;line-height:1;font-weight:700;letter-spacing:-.025em">Needs you</span>
+  <span style="font-size:16px;font-weight:500">phone-app · T1 Queue writes while offline — the agent asked a question</span>
+  <span class="m" style="margin-left:auto;font-size:14px;font-weight:500">waiting 9m</span>
+</div>
+</sc-if>
+
+<div style="flex:1;display:flex;flex-wrap:wrap;align-items:stretch">
+
+  <aside aria-label="Projects and tasks" style="flex:1 1 288px;background:#FAFAFB;border-right:1px solid #E7E7EB;padding:16px 10px 28px;box-sizing:border-box">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:0 8px 6px">
+      <span style="font-size:11.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#6B7080">Projects</span>
+      <button aria-label="Add a repository" class="ghost" style="width:30px;height:30px;border-radius:9px;border:1px solid #E2E2E7;background:#fff;display:grid;place-items:center;color:#3A3D45"><svg class="ic" viewBox="0 0 24 24" style="width:15px;height:15px"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg></button>
+    </div>
+
+    <div>
+      <div style="display:flex;align-items:center;gap:8px;padding:14px 10px 2px">
+        <svg class="ic" viewBox="0 0 24 24" style="color:#6B7080"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg>
+        <span style="font-size:14px;font-weight:620">your-app</span>
+        <span style="margin-left:auto;display:inline-flex;align-items:center;gap:4px;padding:2px 7px 2px 5px;border-radius:6px;background:#E0F2FE;color:#075985;font-size:11.5px;font-weight:550"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>personal</span>
+      </div>
+      <div class="m" style="padding:0 10px 6px 34px;font-size:12px;color:#6B7080">$ npm test</div>
+      <div class="m" style="display:flex;align-items:center;gap:6px;padding:6px 10px 4px 14px;font-size:12px;color:#5F6370"><svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="m6 9 6 6 6-6"></path></svg>docs/features/importer.md</div>
+      <button class="trow" style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;min-height:44px;text-align:left;padding:8px 10px 8px 14px;border:0;border-radius:10px;background:transparent;color:#1E2026;font-size:13.5px;line-height:1.35">
+        <span aria-hidden="true" style="width:16px;height:16px;border-radius:50%;background:#0F8A5F;display:grid;place-items:center;justify-self:center"><svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:none;stroke:#fff;stroke-width:4;stroke-linecap:round;stroke-linejoin:round"><path d="M20 6 9 17l-5-5"></path></svg></span>
+        <span class="m" style="font-size:11.5px;color:#6B7080">T1</span><span>Parse the manifest</span><span style="font-size:11.5px;font-weight:560;color:#0F7A54">Passed</span>
+      </button>
+      <button class="trow" style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;min-height:44px;text-align:left;padding:8px 10px 8px 14px;border:0;border-radius:10px;background:transparent;color:#1E2026;font-size:13.5px;line-height:1.35">
+        <span aria-hidden="true" style="width:16px;height:16px;border-radius:50%;background:#0F8A5F;display:grid;place-items:center;justify-self:center"><svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:none;stroke:#fff;stroke-width:4;stroke-linecap:round;stroke-linejoin:round"><path d="M20 6 9 17l-5-5"></path></svg></span>
+        <span class="m" style="font-size:11.5px;color:#6B7080">T2</span><span>Map records to rows</span><span style="font-size:11.5px;font-weight:560;color:#0F7A54">Passed</span>
+      </button>
+      <button class="trow" style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;min-height:44px;text-align:left;padding:8px 10px 8px 14px;border:0;border-radius:10px;background:transparent;color:#1E2026;font-size:13.5px;line-height:1.35">
+        <span aria-hidden="true" style="width:14px;height:14px;border-radius:50%;border:1.5px solid #A3A7B1;box-sizing:border-box;justify-self:center"></span>
+        <span class="m" style="font-size:11.5px;color:#6B7080">T3</span><span>Runtime shim (v1.2)</span><span></span>
+      </button>
+      <div class="m" style="display:flex;align-items:center;gap:6px;padding:10px 10px 4px 14px;font-size:12px;color:#5F6370"><svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="m6 9 6 6 6-6"></path></svg>docs/features/export.md</div>
+      <button class="trow" style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;min-height:44px;text-align:left;padding:8px 10px 8px 14px;border:0;border-radius:10px;background:transparent;color:#1E2026;font-size:13.5px;line-height:1.35">
+        <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="color:#64748B;justify-self:center"><path d="m19 5 3-3"></path><path d="m2 22 3-3"></path><path d="M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4Z"></path><path d="M7.5 13.5 10 11"></path><path d="M10.5 16.5 13 14"></path><path d="m12 6 6 6 2.3-2.3a2.4 2.4 0 0 0 0-3.4l-2.6-2.6a2.4 2.4 0 0 0-3.4 0Z"></path></svg>
+        <span class="m" style="font-size:11.5px;color:#6B7080">T1</span><span>Stream CSV export</span><span style="font-size:11.5px;font-weight:560;color:#556274">Interrupted</span>
+      </button>
+    </div>
+
+    <div style="margin-top:6px;border-top:1px solid #ECECEF">
+      <div style="display:flex;align-items:center;gap:8px;padding:14px 10px 2px">
+        <svg class="ic" viewBox="0 0 24 24" style="color:#6B7080"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg>
+        <span style="font-size:14px;font-weight:620">other-repo</span>
+        <span style="margin-left:auto;display:inline-flex;align-items:center;gap:4px;padding:2px 7px 2px 5px;border-radius:6px;background:#26272D;color:#F4F4F6;font-size:11.5px;font-weight:550"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M16 20V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path><rect width="20" height="14" x="2" y="6" rx="2"></rect></svg>work</span>
+      </div>
+      <div class="m" style="padding:0 10px 6px 34px;font-size:12px;color:#6B7080">$ vendor/bin/pest</div>
+      <div class="m" style="display:flex;align-items:center;gap:6px;padding:6px 10px 4px 14px;font-size:12px;color:#5F6370"><svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="m6 9 6 6 6-6"></path></svg>docs/features/billing.md</div>
+      <button class="trow" style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;min-height:44px;text-align:left;padding:8px 10px 8px 14px;border:0;border-radius:10px;background:transparent;color:#1E2026;font-size:13.5px;line-height:1.35">
+        <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="color:#0E7C86;justify-self:center"><line x1="6" x2="6" y1="3" y2="15"></line><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg>
+        <span class="m" style="font-size:11.5px;color:#6B7080">T1</span><span>Ledger reconciliation</span><span style="font-size:11.5px;font-weight:560;color:#0B6C75">Done · unmerged</span>
+      </button>
+      <button class="trow" style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;min-height:44px;text-align:left;padding:8px 10px 8px 14px;border:0;border-radius:10px;background:transparent;color:#1E2026;font-size:13.5px;line-height:1.35">
+        <span aria-hidden="true" style="width:16px;height:16px;border-radius:50%;background:#D92D3A;display:grid;place-items:center;justify-self:center"><svg viewBox="0 0 24 24" style="width:9px;height:9px;fill:none;stroke:#fff;stroke-width:4;stroke-linecap:round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></span>
+        <span class="m" style="font-size:11.5px;color:#6B7080">T2</span><span>Refund path</span><span style="font-size:11.5px;font-weight:560;color:#C4232F">Failed</span>
+      </button>
+      <button class="trow" style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:start;gap:8px;width:100%;min-height:44px;text-align:left;padding:10px 10px 10px 14px;border:0;border-radius:10px;background:transparent;color:#1E2026;font-size:13.5px;line-height:1.35">
+        <span aria-hidden="true" style="width:16px;height:16px;border-radius:50%;border:1.5px dashed #A23B87;box-sizing:border-box;display:grid;place-items:center;justify-self:center;margin-top:1px"><svg viewBox="0 0 24 24" style="width:8px;height:8px;fill:#A23B87"><rect x="5" y="3" width="5" height="18" rx="1.5"></rect><rect x="14" y="3" width="5" height="18" rx="1.5"></rect></svg></span>
+        <span class="m" style="font-size:11.5px;color:#6B7080;margin-top:1px">T3</span><span>Retry webhook deliveries with exponential backoff, and stop once the provider returns 410 Gone</span><span style="font-size:11.5px;font-weight:560;color:#93307A;margin-top:1px">Stalled</span>
+      </button>
+    </div>
+
+    <div style="margin-top:6px;border-top:1px solid #ECECEF">
+      <div style="display:flex;align-items:center;gap:8px;padding:14px 10px 2px">
+        <svg class="ic" viewBox="0 0 24 24" style="color:#6B7080"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg>
+        <span style="font-size:14px;font-weight:620">phone-app</span>
+        <span style="margin-left:auto;display:inline-flex;align-items:center;gap:4px;padding:2px 7px 2px 5px;border-radius:6px;background:#E0F2FE;color:#075985;font-size:11.5px;font-weight:550"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>personal</span>
+      </div>
+      <div class="m" style="padding:0 10px 6px 34px;font-size:12px;color:#6B7080">$ flutter test</div>
+      <div class="m" style="display:flex;align-items:center;gap:6px;padding:6px 10px 4px 14px;font-size:12px;color:#5F6370"><svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="m6 9 6 6 6-6"></path></svg>docs/features/offline.md</div>
+      <button aria-current="true" style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;min-height:44px;text-align:left;padding:8px 10px 8px 14px;border:0;border-radius:10px;background:#fff;box-shadow:0 0 0 1px #FFCFB0,0 4px 14px -6px rgba(255,106,26,.45);color:#111216;font-size:13.5px;line-height:1.35;font-weight:560">
+        <span class="pulse" aria-hidden="true" style="width:14px;height:14px;border-radius:50%;background:#FF6A1A;justify-self:center"></span>
+        <span class="m" style="font-size:11.5px;color:#6B7080;font-weight:400">T1</span><span>Queue writes while offline</span><span style="padding:3px 8px;border-radius:999px;background:#FF6A1A;color:#1A0B02;font-size:11.5px;font-weight:650">Needs you</span>
+      </button>
+      <button class="trow" style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;min-height:44px;text-align:left;padding:8px 10px 8px 14px;border:0;border-radius:10px;background:transparent;color:#1E2026;font-size:13.5px;line-height:1.35">
+        <span aria-hidden="true" style="width:14px;height:14px;border-radius:50%;border:1.5px solid #A3A7B1;box-sizing:border-box;justify-self:center"></span>
+        <span class="m" style="font-size:11.5px;color:#6B7080">T2</span><span dir="auto" lang="ar">مزامنة البيانات عند عودة الاتصال</span><span></span>
+      </button>
+    </div>
+  </aside>
+
+  <main style="flex:999 1 560px;min-width:0;position:relative;padding:24px clamp(16px,3vw,44px) 40px;box-sizing:border-box">
+    <div class="dots" aria-hidden="true" style="position:absolute;inset:0;pointer-events:none"></div>
+    <div style="position:relative;max-width:820px;margin:0 auto">
+
+      <nav aria-label="Breadcrumb" style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:13.5px;color:#5F6370;margin-bottom:18px">
+        <span>phone-app</span>
+        <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:14px;height:14px;color:#A3A7B1"><path d="m9 18 6-6-6-6"></path></svg>
+        <span class="m" style="font-size:12.5px">offline.md</span>
+        <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:14px;height:14px;color:#A3A7B1"><path d="m9 18 6-6-6-6"></path></svg>
+        <span style="color:#111216;font-weight:600">T1 · Queue writes while offline</span>
+        <span style="display:inline-flex;align-items:center;gap:4px;padding:2px 7px 2px 5px;border-radius:6px;background:#E0F2FE;color:#075985;font-size:11.5px;font-weight:550"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>runs as personal</span>
+      </nav>
+
+      <section aria-labelledby="ask-h" class="bf" style="background:#fff;border:1px solid #E7E7EB;border-radius:24px;padding:28px clamp(20px,4vw,40px) 30px;box-shadow:0 1px 2px rgba(17,18,22,.04),0 18px 50px -22px rgba(17,18,22,.2)">
+        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px 12px">
+          <span aria-hidden="true" style="width:34px;height:34px;border-radius:11px;background:linear-gradient(145deg,#2A2B31,#0E0F12);display:grid;place-items:center"><span style="width:9px;height:9px;border-radius:50%;background:#FF6A1A"></span></span>
+          <span style="display:flex;flex-direction:column">
+            <span style="font-size:14.5px;font-weight:620">Planning agent</span>
+            <span class="m" style="font-size:12px;color:#6B7080">asked at 18:22 · 9 min ago</span>
+          </span>
+          <span style="margin-left:auto;display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:999px;border:1px solid #CFD0F7;color:#3A3AA8;font-size:12.5px;font-weight:600"><svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"></path><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><path d="M12 17h.01"></path></svg>A question, not a plan</span>
+        </div>
+
+        <div class="pop" style="margin:16px 0 0 0;max-width:640px;padding:22px 26px 20px;border-radius:6px 22px 22px 22px;background:#F3F3FE;border:1px solid #E2E3FB">
+          <h1 id="ask-h" style="margin:0;font-size:clamp(22px,2.6vw,28px);line-height:1.2;font-weight:640;letter-spacing:-.025em;color:#17174A">Should writes queued while offline survive an app restart?</h1>
+          <p style="margin:12px 0 10px;font-size:15px;line-height:1.65;color:#2F3140">Right now <code class="m" style="font-size:13px;background:#fff;border:1px solid #E2E3FB;border-radius:6px;padding:1px 5px">lib/sync/queue.dart</code> keeps the queue in memory. I see two ways to go:</p>
+          <ul style="margin:0 0 12px;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px;font-size:15px;line-height:1.6;color:#2F3140">
+            <li style="display:grid;grid-template-columns:18px minmax(0,1fr);gap:8px"><span aria-hidden="true" style="width:6px;height:6px;border-radius:50%;background:#5B5BD6;margin-top:10px"></span><span><strong style="font-weight:620;color:#17174A">Keep it in memory.</strong> A smaller change, but a force-quit loses anything not yet sent.</span></li>
+            <li style="display:grid;grid-template-columns:18px minmax(0,1fr);gap:8px"><span aria-hidden="true" style="width:6px;height:6px;border-radius:50%;background:#5B5BD6;margin-top:10px"></span><span><strong style="font-weight:620;color:#17174A">Persist it with sqflite.</strong> Survives restarts, but adds a dependency and a schema migration to this task.</span></li>
+          </ul>
+          <p style="margin:0;font-size:15px;line-height:1.65;color:#2F3140">Which do you want? I'll write the plan around your answer.</p>
+        </div>
+
+        <sc-if value="{{waiting}}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;align-items:flex-start;gap:10px;margin:20px 0 14px;font-size:13.5px;line-height:1.5;color:#4A4E59">
+            <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="color:#5F6370;margin-top:1px"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg>
+            <span>There is no plan yet, so there is nothing to approve. Your answer goes back into the same planning conversation and planning continues.</span>
+          </div>
+          <div style="margin-left:auto;max-width:640px">
+            <label for="answer" style="display:block;margin:0 0 8px 4px;font-size:13px;font-weight:600;color:#2A2C33">Your answer</label>
+            <div class="shineb" style="padding:1.5px;border-radius:18px">
+              <div style="border-radius:16.5px;background:#fff;padding:4px">
+                <textarea id="answer" rows="3" value="{{answer}}" onChange="{{onAnswer}}" placeholder="Answer in your own words, e.g. Persist it. Losing a queued write is worse than a migration." style="display:block;width:100%;box-sizing:border-box;min-height:96px;resize:vertical;padding:12px 14px;border:0;border-radius:13px;background:#F7F7F9;font-size:15px;line-height:1.55;color:#111216;outline:none"></textarea>
+                <div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:10px 8px 6px 10px">
+                  <span style="font-size:12.5px;color:#5F6370">Resumes planning. No code is written until you approve a plan.</span>
+                  <button onClick="{{send}}" class="send" style="margin-left:auto;height:44px;padding:0 18px 0 16px;border-radius:999px;border:0;background:#4B4BC8;color:#fff;font-size:14.5px;font-weight:600;display:inline-flex;align-items:center;gap:8px;box-shadow:0 8px 20px -10px rgba(75,75,200,.8)"><svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:15px;height:15px"><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"></path><path d="m21.854 2.147-10.94 10.939"></path></svg>Send answer</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{sent}}" hint-placeholder-val="{{ false }}">
+          <div class="pop" style="margin:18px 0 0 auto;max-width:560px;padding:16px 20px;border-radius:22px 6px 22px 22px;background:#111216;color:#F4F4F6;font-size:15px;line-height:1.6;white-space:pre-wrap">{{answerShown}}</div>
+          <div class="pop" role="status" style="display:flex;align-items:center;gap:10px;margin-top:16px;font-size:14px;font-weight:560;color:#20205E">
+            <svg class="spin" aria-hidden="true" viewBox="0 0 24 24" style="width:16px;height:16px"><circle cx="12" cy="12" r="9" fill="none" stroke="#DCDCF6" stroke-width="3"></circle><path d="M21 12a9 9 0 0 0-9-9" fill="none" stroke="#5B5BD6" stroke-width="3" stroke-linecap="round"></path></svg>
+            Planning resumed. You'll be asked to approve the plan when it's ready.
+          </div>
+        </sc-if>
+      </section>
+
+      <section aria-labelledby="log-h" class="bf d3" style="margin-top:28px;background:#fff;border:1px solid #E7E7EB;border-radius:20px;box-shadow:0 1px 2px rgba(17,18,22,.04),0 12px 32px -20px rgba(17,18,22,.18);overflow:clip">
+        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid #EEEEF1">
+          <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="color:#3A3D45"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" x2="20" y1="19" y2="19"></line></svg>
+          <h2 id="log-h" style="margin:0;font-size:15px;font-weight:620">Run record</h2>
+          <span class="m" style="font-size:12px;color:#6B7080">96 events · newest at the bottom</span>
+        </div>
+        <div class="m" style="padding:10px 16px;font-size:12px;color:#6B7080;background:linear-gradient(180deg,#F7F7F9,#fff)">↑ 92 earlier events, rendered as you scroll</div>
+        <div class="lr" style="display:grid;grid-template-columns:22px 58px minmax(0,1fr) auto;gap:10px;align-items:start;padding:9px 16px;border-top:1px solid #F0F0F3;font-size:13px;line-height:1.5">
+          <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:15px;height:15px;color:#5F6370;margin-top:2px"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path></svg>
+          <span class="m" style="font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:#6B7080;padding-top:2px">read</span>
+          <span class="m" style="font-size:12.5px;color:#3A3D45;overflow-wrap:anywhere">/home/you/code/phone-app/lib/sync/queue.dart</span>
+          <span class="m" style="font-size:11.5px;color:#6B7080">18:21:40</span>
+        </div>
+        <div class="lr" style="display:grid;grid-template-columns:22px 58px minmax(0,1fr) auto;gap:10px;align-items:start;padding:9px 16px;border-top:1px solid #F0F0F3;font-size:13px;line-height:1.5">
+          <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:15px;height:15px;color:#5F6370;margin-top:2px"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path></svg>
+          <span class="m" style="font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:#6B7080;padding-top:2px">read</span>
+          <span class="m" style="font-size:12.5px;color:#3A3D45;overflow-wrap:anywhere">/home/you/code/phone-app/pubspec.yaml</span>
+          <span class="m" style="font-size:11.5px;color:#6B7080">18:21:41</span>
+        </div>
+        <div class="lr" style="display:grid;grid-template-columns:22px 58px minmax(0,1fr) auto;gap:10px;align-items:start;padding:9px 16px;border-top:1px solid #F0F0F3;font-size:13px;line-height:1.5">
+          <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:15px;height:15px;color:#5B5BD6;margin-top:2px"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+          <span class="m" style="font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:#6B7080;padding-top:2px">agent</span>
+          <span style="display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:13.5px">The task file doesn't say whether the queue must outlive the process, and the two answers lead to different plans.</span>
+          <span class="m" style="font-size:11.5px;color:#6B7080">18:22:03</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;padding:14px 16px;border-top:1px solid #F0F0F3">
+          <span style="flex:1;height:1px;background:linear-gradient(90deg,transparent,#FFC9A3)"></span>
+          <span style="display:inline-flex;align-items:center;gap:8px;padding:5px 12px;border-radius:999px;background:#FFF1E8;border:1px solid #FFD3B8;font-size:12.5px;font-weight:600;color:#9A3B06"><svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"></path><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><path d="M12 17h.01"></path></svg>Asked a question · paused until you answer</span>
+          <span style="flex:1;height:1px;background:linear-gradient(90deg,#FFC9A3,transparent)"></span>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <aside aria-label="Run details" style="flex:1 1 260px;border-left:1px solid #E7E7EB;background:#FAFAFB;padding:20px 16px 28px;box-sizing:border-box;display:flex;flex-direction:column;gap:14px">
+    <section style="background:#fff;border:1px solid #E7E7EB;border-radius:16px;padding:12px;box-shadow:0 1px 2px rgba(17,18,22,.04)">
+      <h2 style="margin:2px 6px 8px;font-size:11.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#6B7080">Phases</h2>
+      <ol style="list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px">
+        <li style="display:grid;grid-template-columns:18px 1fr auto;align-items:center;gap:10px;padding:10px 8px;border-radius:10px;font-size:14px;background:#FFF1E8;box-shadow:inset 0 0 0 1px #FFD3B8">
+          <span class="pulse" aria-hidden="true" style="width:14px;height:14px;border-radius:50%;background:#FF6A1A;justify-self:center"></span>
+          <span style="font-weight:650">Plan <span style="font-weight:500;color:#9A3B06">· asked you</span></span><span class="m" style="font-size:12.5px;color:#9A3B06;font-weight:600">9m</span>
+        </li>
+        <li style="display:grid;grid-template-columns:18px 1fr auto;align-items:center;gap:10px;padding:9px 8px;font-size:14px;color:#5F6370">
+          <span aria-hidden="true" style="width:14px;height:14px;border-radius:50%;border:1.5px solid #C4C7CE;box-sizing:border-box;justify-self:center"></span><span>Gate</span><span class="m" style="font-size:12.5px">—</span>
+        </li>
+        <li style="display:grid;grid-template-columns:18px 1fr auto;align-items:center;gap:10px;padding:9px 8px;font-size:14px;color:#5F6370">
+          <span aria-hidden="true" style="width:14px;height:14px;border-radius:50%;border:1.5px solid #C4C7CE;box-sizing:border-box;justify-self:center"></span><span>Implement</span><span class="m" style="font-size:12.5px">—</span>
+        </li>
+        <li style="display:grid;grid-template-columns:18px 1fr auto;align-items:center;gap:10px;padding:9px 8px;font-size:14px;color:#5F6370">
+          <span aria-hidden="true" style="width:14px;height:14px;border-radius:50%;border:1.5px solid #C4C7CE;box-sizing:border-box;justify-self:center"></span><span>Test</span><span class="m" style="font-size:12.5px">—</span>
+        </li>
+        <li style="display:grid;grid-template-columns:18px 1fr auto;align-items:center;gap:10px;padding:9px 8px;font-size:14px;color:#5F6370">
+          <span aria-hidden="true" style="width:14px;height:14px;border-radius:50%;border:1.5px solid #C4C7CE;box-sizing:border-box;justify-self:center"></span><span>Refine</span><span class="m" style="font-size:12.5px">—</span>
+        </li>
+      </ol>
+    </section>
+
+    <section style="background:#fff;border:1px solid #E7E7EB;border-radius:16px;padding:16px;box-shadow:0 1px 2px rgba(17,18,22,.04)">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <h2 style="margin:0;font-size:11.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#6B7080">Cost</h2>
+        <span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#5F6370"><span aria-hidden="true" style="width:6px;height:6px;border-radius:50%;background:#A3A7B1"></span>paused</span>
+      </div>
+      <div style="margin-top:8px;font-size:38px;line-height:1;font-weight:650;letter-spacing:-.035em;font-variant-numeric:tabular-nums">$0.19</div>
+      <div style="margin-top:6px;font-size:13px;color:#5F6370">of <span style="font-weight:600;color:#111216">$50.00</span> ceiling for this run</div>
+      <div style="height:6px;border-radius:999px;background:#EFEFF2;margin-top:12px;overflow:hidden"><div style="width:0.38%;min-width:6px;height:100%;border-radius:999px;background:#111216"></div></div>
+    </section>
+
+    <section style="background:#fff;border:1px solid #E7E7EB;border-radius:16px;padding:16px;box-shadow:0 1px 2px rgba(17,18,22,.04)">
+      <h2 style="margin:0 0 12px;font-size:11.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#6B7080">5-hour windows</h2>
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div style="display:grid;grid-template-columns:52px 1fr;gap:12px;align-items:center">
+          <div style="position:relative;width:52px;height:52px">
+            <svg viewBox="0 0 60 60" aria-hidden="true" style="width:52px;height:52px;transform:rotate(-90deg)"><circle cx="30" cy="30" r="25" fill="none" stroke="#E6F3FB" stroke-width="6"></circle><circle class="ring" cx="30" cy="30" r="25" fill="none" stroke="#0284C7" stroke-width="6" stroke-linecap="round" stroke-dasharray="157.08" stroke-dashoffset="58.12"></circle></svg>
+            <span style="position:absolute;inset:0;display:grid;place-items:center;font-size:12.5px;font-weight:650;font-variant-numeric:tabular-nums">63%</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:2px">
+            <span style="display:flex;align-items:center;gap:6px;font-size:14px;font-weight:600;color:#075985">personal <span style="padding:1px 6px;border-radius:999px;background:#111216;color:#fff;font-size:10.5px;font-weight:600">this run</span></span>
+            <span class="m" style="font-size:12px;color:#5F6370">resets 18:40</span>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:52px 1fr;gap:12px;align-items:center">
+          <div style="position:relative;width:52px;height:52px">
+            <svg viewBox="0 0 60 60" aria-hidden="true" style="width:52px;height:52px;transform:rotate(-90deg)"><circle cx="30" cy="30" r="25" fill="none" stroke="#EEEEF1" stroke-width="6"></circle><circle class="ring" cx="30" cy="30" r="25" fill="none" stroke="#26272D" stroke-width="6" stroke-linecap="round" stroke-dasharray="157.08" stroke-dashoffset="138.23"></circle></svg>
+            <span style="position:absolute;inset:0;display:grid;place-items:center;font-size:12.5px;font-weight:650;font-variant-numeric:tabular-nums">12%</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:2px">
+            <span style="font-size:14px;font-weight:600;color:#26272D">work</span>
+            <span class="m" style="font-size:12px;color:#5F6370">resets 20:05</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div style="margin-top:auto;display:flex;flex-direction:column;gap:8px">
+      <button class="ghost" style="width:100%;height:44px;border-radius:999px;border:1px solid #DCDCE2;background:#fff;display:flex;align-items:center;justify-content:center;gap:8px;font-size:14px;font-weight:560;color:#1E2026"><svg aria-hidden="true" viewBox="0 0 24 24" style="width:12px;height:12px;fill:#1E2026"><rect width="18" height="18" x="3" y="3" rx="3"></rect></svg>Stop run</button>
+      <p style="margin:0;text-align:center;font-size:12.5px;color:#5F6370">Resumable. Stopping costs nothing.</p>
+    </div>
+  </aside>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"motion":{"editor":"boolean","default":true},"$preview":{"width":1440,"height":1280}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { answer: '', sent: false };
+  }
+  renderVals() {
+    const s = this.state;
+    return {
+      rootClass: (this.props.motion ?? true) ? '' : 'still',
+      waiting: !s.sent,
+      sent: s.sent,
+      answer: s.answer,
+      answerShown: s.answer.trim() || 'Persist it. Losing a queued write is worse than a migration.',
+      onAnswer: (e) => this.setState({ answer: e.target.value }),
+      send: () => this.setState({ sent: true })
+    };
+  }
+}
+</script>
+</body>
+</html>

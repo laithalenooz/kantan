@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>kantan — nine readings</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.m{font-family:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,monospace}
+.ic{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}
+@keyframes kpulse{0%{box-shadow:0 0 0 0 rgba(255,106,26,.55)}70%{box-shadow:0 0 0 11px rgba(255,106,26,0)}100%{box-shadow:0 0 0 0 rgba(255,106,26,0)}}
+@keyframes kspin{to{transform:rotate(360deg)}}
+@keyframes kfade{from{opacity:0;transform:translateY(10px);filter:blur(6px)}to{opacity:1;transform:none;filter:blur(0)}}
+.pulse{animation:kpulse 1.8s ease-out infinite}
+.spin{animation:kspin .9s linear infinite;transform-origin:50% 50%}
+.bf{animation:kfade .7s cubic-bezier(.2,.7,.2,1) both}
+.d1{animation-delay:.04s}.d2{animation-delay:.08s}.d3{animation-delay:.12s}.d4{animation-delay:.16s}.d5{animation-delay:.2s}.d6{animation-delay:.24s}.d7{animation-delay:.28s}.d8{animation-delay:.32s}.d9{animation-delay:.36s}
+.card:hover{box-shadow:0 1px 2px rgba(17,18,22,.04),0 18px 40px -20px rgba(17,18,22,.25)}
+@media (prefers-reduced-motion:reduce){.kr *{animation:none!important}}
+</style>
+</helmet>
+<div class="kr" style="width:1280px;height:1360px;box-sizing:border-box;padding:56px 64px;font-family:'Geist',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;color:#111216;background:#F4F4F6;-webkit-font-smoothing:antialiased">
+
+  <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:40px">
+    <div>
+      <h1 style="margin:0;font-size:52px;line-height:1;font-weight:650;letter-spacing:-.045em">Nine readings</h1>
+      <p style="margin:14px 0 0;max-width:58ch;font-size:17px;line-height:1.55;color:#4A4E59">Eight states and one flag. Each has its own shape, so none of them depends on colour. Only one of them pulses.</p>
+    </div>
+    <span class="m" style="font-size:12.5px;color:#5F6370;padding:6px 12px;border-radius:999px;background:#fff;border:1px solid #E7E7EB">&lt;StateGlyph state=… /&gt;</span>
+  </div>
+
+  <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px;margin-top:40px">
+
+    <div class="card bf d1" style="background:#fff;border:1px solid #E7E7EB;border-radius:20px;padding:22px;box-shadow:0 1px 2px rgba(17,18,22,.04);display:flex;flex-direction:column;gap:12px;transition:box-shadow .3s">
+      <div style="display:flex;align-items:center;gap:14px">
+        <span style="width:56px;height:56px;border-radius:16px;background:#F6F6F8;display:grid;place-items:center"><span style="width:26px;height:26px;border-radius:50%;border:2.5px solid #A3A7B1;box-sizing:border-box"></span></span>
+        <div><div style="font-size:21px;font-weight:650;letter-spacing:-.02em">Open</div><div class="m" style="font-size:11.5px;color:#5F6370">hollow ring · no label · still</div></div>
+      </div>
+      <p style="margin:0;font-size:14px;line-height:1.55;color:#3A3D45">Not started. Most tasks sit here, so this is the quietest mark on the screen.</p>
+      <div style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;padding:9px 12px;border-radius:10px;background:#FAFAFB;font-size:13px"><span style="width:14px;height:14px;border-radius:50%;border:1.5px solid #A3A7B1;box-sizing:border-box;justify-self:center"></span><span class="m" style="font-size:11.5px;color:#6B7080">T3</span><span>Runtime shim (v1.2)</span><span></span></div>
+    </div>
+
+    <div class="card bf d2" style="background:#fff;border:1px solid #E7E7EB;border-radius:20px;padding:22px;box-shadow:0 1px 2px rgba(17,18,22,.04);display:flex;flex-direction:column;gap:12px;transition:box-shadow .3s">
+      <div style="display:flex;align-items:center;gap:14px">
+        <span style="width:56px;height:56px;border-radius:16px;background:#F3F3FE;display:grid;place-items:center"><svg class="spin" viewBox="0 0 24 24" style="width:28px;height:28px"><circle cx="12" cy="12" r="9" fill="none" stroke="#DCDCF6" stroke-width="3"></circle><path d="M21 12a9 9 0 0 0-9-9" fill="none" stroke="#5B5BD6" stroke-width="3" stroke-linecap="round"></path></svg></span>
+        <div><div style="font-size:21px;font-weight:650;letter-spacing:-.02em">Running</div><div class="m" style="font-size:11.5px;color:#5F6370">spinning arc · indigo</div></div>
+      </div>
+      <p style="margin:0;font-size:14px;line-height:1.55;color:#3A3D45">An agent is working right now. One task at a time, so at most one of these anywhere.</p>
+      <div style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;padding:9px 12px;border-radius:10px;background:#FAFAFB;font-size:13px"><svg class="spin" viewBox="0 0 24 24" style="width:16px;height:16px;justify-self:center"><circle cx="12" cy="12" r="9" fill="none" stroke="#DCDCF6" stroke-width="3"></circle><path d="M21 12a9 9 0 0 0-9-9" fill="none" stroke="#5B5BD6" stroke-width="3" stroke-linecap="round"></path></svg><span class="m" style="font-size:11.5px;color:#6B7080">T2</span><span>Map records to rows</span><span style="font-size:11.5px;font-weight:560;color:#4B4BC8">Running</span></div>
+    </div>
+
+    <div class="card bf d3" style="background:#fff;border:1px solid #FFCFB0;border-radius:20px;padding:22px;box-shadow:0 1px 2px rgba(17,18,22,.04),0 16px 40px -22px rgba(255,106,26,.5);display:flex;flex-direction:column;gap:12px">
+      <div style="display:flex;align-items:center;gap:14px">
+        <span style="width:56px;height:56px;border-radius:16px;background:#FFF1E8;display:grid;place-items:center"><span class="pulse" style="width:24px;height:24px;border-radius:50%;background:#FF6A1A"></span></span>
+        <div><div style="font-size:21px;font-weight:650;letter-spacing:-.02em">Needs you</div><div class="m" style="font-size:11.5px;color:#9A3B06">solid disc · pulse · filled pill</div></div>
+      </div>
+      <p style="margin:0;font-size:14px;line-height:1.55;color:#3A3D45">Waiting at the gate, or the agent asked a question. The only state that pulses, fills the top band, and gets a filled pill.</p>
+      <div style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;padding:9px 12px;border-radius:10px;background:#FAFAFB;font-size:13px"><span class="pulse" style="width:14px;height:14px;border-radius:50%;background:#FF6A1A;justify-self:center"></span><span class="m" style="font-size:11.5px;color:#6B7080">T2</span><span>Map records to rows</span><span style="padding:3px 8px;border-radius:999px;background:#FF6A1A;color:#1A0B02;font-size:11.5px;font-weight:650">Needs you</span></div>
+    </div>
+
+    <div class="card bf d4" style="background:#fff;border:1px solid #E7E7EB;border-radius:20px;padding:22px;box-shadow:0 1px 2px rgba(17,18,22,.04);display:flex;flex-direction:column;gap:12px;transition:box-shadow .3s">
+      <div style="display:flex;align-items:center;gap:14px">
+        <span style="width:56px;height:56px;border-radius:16px;background:#E8F5EF;display:grid;place-items:center"><span style="width:28px;height:28px;border-radius:50%;background:#0F8A5F;display:grid;place-items:center"><svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:none;stroke:#fff;stroke-width:3.5;stroke-linecap:round;stroke-linejoin:round"><path d="M20 6 9 17l-5-5"></path></svg></span></span>
+        <div><div style="font-size:21px;font-weight:650;letter-spacing:-.02em">Passed</div><div class="m" style="font-size:11.5px;color:#5F6370">solid disc + check · green</div></div>
+      </div>
+      <p style="margin:0;font-size:14px;line-height:1.55;color:#3A3D45">Tests passed, judged by exit code 0. What the agent says about its own work never counts.</p>
+      <div style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;padding:9px 12px;border-radius:10px;background:#FAFAFB;font-size:13px"><span style="width:16px;height:16px;border-radius:50%;background:#0F8A5F;display:grid;place-items:center;justify-self:center"><svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:none;stroke:#fff;stroke-width:4;stroke-linecap:round;stroke-linejoin:round"><path d="M20 6 9 17l-5-5"></path></svg></span><span class="m" style="font-size:11.5px;color:#6B7080">T1</span><span>Parse the manifest</span><span style="font-size:11.5px;font-weight:560;color:#0F7A54">Passed · <span class="m">exit 0</span></span></div>
+    </div>
+
+    <div class="card bf d5" style="background:#fff;border:1px solid #E7E7EB;border-radius:20px;padding:22px;box-shadow:0 1px 2px rgba(17,18,22,.04);display:flex;flex-direction:column;gap:12px;transition:box-shadow .3s">
+      <div style="display:flex;align-items:center;gap:14px">
+        <span style="width:56px;height:56px;border-radius:16px;background:#FDECEE;display:grid;place-items:center"><span style="width:28px;height:28px;border-radius:50%;background:#D92D3A;display:grid;place-items:center"><svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:none;stroke:#fff;stroke-width:3.5;stroke-linecap:round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></span></span>
+        <div><div style="font-size:21px;font-weight:650;letter-spacing:-.02em">Failed</div><div class="m" style="font-size:11.5px;color:#5F6370">solid disc + cross · red</div></div>
+      </div>
+      <p style="margin:0;font-size:14px;line-height:1.55;color:#3A3D45">Tests failed with a non-zero exit, or the agent couldn't continue. The exit code is always printed next to it.</p>
+      <div style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;padding:9px 12px;border-radius:10px;background:#FAFAFB;font-size:13px"><span style="width:16px;height:16px;border-radius:50%;background:#D92D3A;display:grid;place-items:center;justify-self:center"><svg viewBox="0 0 24 24" style="width:9px;height:9px;fill:none;stroke:#fff;stroke-width:4;stroke-linecap:round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></span><span class="m" style="font-size:11.5px;color:#6B7080">T2</span><span>Refund path</span><span style="font-size:11.5px;font-weight:560;color:#C4232F">Failed · <span class="m">exit 1</span></span></div>
+    </div>
+
+    <div class="card bf d6" style="background:#fff;border:1px solid #E7E7EB;border-radius:20px;padding:22px;box-shadow:0 1px 2px rgba(17,18,22,.04);display:flex;flex-direction:column;gap:12px;transition:box-shadow .3s">
+      <div style="display:flex;align-items:center;gap:14px">
+        <span style="width:56px;height:56px;border-radius:16px;background:#F8EEF5;display:grid;place-items:center"><span style="width:28px;height:28px;border-radius:50%;border:2.5px dashed #A23B87;box-sizing:border-box;display:grid;place-items:center"><svg viewBox="0 0 24 24" style="width:12px;height:12px;fill:#A23B87"><rect x="5" y="3" width="5" height="18" rx="1.5"></rect><rect x="14" y="3" width="5" height="18" rx="1.5"></rect></svg></span></span>
+        <div><div style="font-size:21px;font-weight:650;letter-spacing:-.02em">Stalled</div><div class="m" style="font-size:11.5px;color:#5F6370">dashed ring + pause · plum</div></div>
+      </div>
+      <p style="margin:0;font-size:14px;line-height:1.55;color:#3A3D45">The same failure three times at top effort. Stuck, not broken: no cross, no red, because nothing got worse.</p>
+      <div style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;padding:9px 12px;border-radius:10px;background:#FAFAFB;font-size:13px"><span style="width:16px;height:16px;border-radius:50%;border:1.5px dashed #A23B87;box-sizing:border-box;display:grid;place-items:center;justify-self:center"><svg viewBox="0 0 24 24" style="width:8px;height:8px;fill:#A23B87"><rect x="5" y="3" width="5" height="18" rx="1.5"></rect><rect x="14" y="3" width="5" height="18" rx="1.5"></rect></svg></span><span class="m" style="font-size:11.5px;color:#6B7080">T3</span><span>Webhook retries</span><span style="font-size:11.5px;font-weight:560;color:#93307A">Stalled</span></div>
+    </div>
+
+    <div class="card bf d7" style="background:#fff;border:1px solid #E7E7EB;border-radius:20px;padding:22px;box-shadow:0 1px 2px rgba(17,18,22,.04);display:flex;flex-direction:column;gap:12px;transition:box-shadow .3s">
+      <div style="display:flex;align-items:center;gap:14px">
+        <span style="width:56px;height:56px;border-radius:16px;background:#E6F4F5;display:grid;place-items:center;color:#0E7C86"><svg class="ic" viewBox="0 0 24 24" style="width:28px;height:28px"><line x1="6" x2="6" y1="3" y2="15"></line><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg></span>
+        <div><div style="font-size:21px;font-weight:650;letter-spacing:-.02em">Done · unmerged</div><div class="m" style="font-size:11.5px;color:#5F6370">branch glyph · teal · no fill</div></div>
+      </div>
+      <p style="margin:0;font-size:14px;line-height:1.55;color:#3A3D45">Finished, but the branch isn't merged. Normal and permanent if you squash-merge. It can't be started again.</p>
+      <div style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;padding:9px 12px;border-radius:10px;background:#FAFAFB;font-size:13px"><svg class="ic" viewBox="0 0 24 24" style="width:16px;height:16px;color:#0E7C86;justify-self:center"><line x1="6" x2="6" y1="3" y2="15"></line><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg><span class="m" style="font-size:11.5px;color:#6B7080">T1</span><span>Ledger reconciliation</span><span style="font-size:11.5px;font-weight:560;color:#0B6C75">Done · unmerged</span></div>
+    </div>
+
+    <div class="card bf d8" style="background:#fff;border:1px solid #E7E7EB;border-radius:20px;padding:22px;box-shadow:0 1px 2px rgba(17,18,22,.04);display:flex;flex-direction:column;gap:12px;transition:box-shadow .3s">
+      <div style="display:flex;align-items:center;gap:14px">
+        <span style="width:56px;height:56px;border-radius:16px;background:#EFF2F6;display:grid;place-items:center;color:#64748B"><svg class="ic" viewBox="0 0 24 24" style="width:28px;height:28px"><path d="m19 5 3-3"></path><path d="m2 22 3-3"></path><path d="M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4Z"></path><path d="M7.5 13.5 10 11"></path><path d="M10.5 16.5 13 14"></path><path d="m12 6 6 6 2.3-2.3a2.4 2.4 0 0 0 0-3.4l-2.6-2.6a2.4 2.4 0 0 0-3.4 0Z"></path></svg></span>
+        <div><div style="font-size:21px;font-weight:650;letter-spacing:-.02em">Interrupted</div><div class="m" style="font-size:11.5px;color:#5F6370">unplugged glyph · slate</div></div>
+      </div>
+      <p style="margin:0;font-size:14px;line-height:1.55;color:#3A3D45">The server stopped mid-run. Normal in development, not a failure. Resume carries on from the last event.</p>
+      <div style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;padding:9px 12px;border-radius:10px;background:#FAFAFB;font-size:13px"><svg class="ic" viewBox="0 0 24 24" style="width:16px;height:16px;color:#64748B;justify-self:center"><path d="m19 5 3-3"></path><path d="m2 22 3-3"></path><path d="M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4Z"></path><path d="M7.5 13.5 10 11"></path><path d="M10.5 16.5 13 14"></path><path d="m12 6 6 6 2.3-2.3a2.4 2.4 0 0 0 0-3.4l-2.6-2.6a2.4 2.4 0 0 0-3.4 0Z"></path></svg><span class="m" style="font-size:11.5px;color:#6B7080">T1</span><span>Stream CSV export</span><span style="font-size:11.5px;font-weight:560;color:#556274">Interrupted</span></div>
+    </div>
+
+    <div class="card bf d9" style="background:#fff;border:1.5px dashed #E9C46A;border-radius:20px;padding:22px;display:flex;flex-direction:column;gap:12px">
+      <div style="display:flex;align-items:center;gap:14px">
+        <span style="width:56px;height:56px;border-radius:16px;background:#FFFBEB;display:grid;place-items:center"><span style="display:inline-flex;align-items:center;gap:4px;padding:4px 9px;border-radius:999px;background:#FEF3C7;color:#8A4B0A;font-size:13px;font-weight:650"><svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px;stroke-width:2.5"><path d="m17 2 4 4-4 4"></path><path d="M3 11v-1a4 4 0 0 1 4-4h14"></path><path d="m7 22-4-4 4-4"></path><path d="M21 13v1a4 4 0 0 1-4 4H3"></path></svg>×6</span></span>
+        <div><div style="font-size:21px;font-weight:650;letter-spacing:-.02em">Grinding <span style="font-size:13px;font-weight:550;color:#8A4B0A">flag</span></div><div class="m" style="font-size:11.5px;color:#5F6370">amber chip + count · rides on running</div></div>
+      </div>
+      <p style="margin:0;font-size:14px;line-height:1.55;color:#3A3D45">Many attempts on a task that is still running. It is a notice, never a block. It never pulses and never takes the band.</p>
+      <div style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;padding:9px 12px;border-radius:10px;background:#FAFAFB;font-size:13px"><svg class="spin" viewBox="0 0 24 24" style="width:16px;height:16px;justify-self:center"><circle cx="12" cy="12" r="9" fill="none" stroke="#DCDCF6" stroke-width="3"></circle><path d="M21 12a9 9 0 0 0-9-9" fill="none" stroke="#5B5BD6" stroke-width="3" stroke-linecap="round"></path></svg><span class="m" style="font-size:11.5px;color:#6B7080">T2</span><span>Map records to rows</span><span style="display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:999px;background:#FEF3C7;color:#8A4B0A;font-size:11.5px;font-weight:620"><svg class="ic" viewBox="0 0 24 24" style="width:11px;height:11px;stroke-width:2.5"><path d="m17 2 4 4-4 4"></path><path d="M3 11v-1a4 4 0 0 1 4-4h14"></path><path d="m7 22-4-4 4-4"></path><path d="M21 13v1a4 4 0 0 1-4 4H3"></path></svg>×6</span></div>
+    </div>
+  </div>
+
+  <div style="margin-top:28px;padding:24px 28px;border-radius:20px;background:#fff;border:1px solid #E7E7EB;display:grid;grid-template-columns:280px minmax(0,1fr);gap:32px;align-items:center">
+    <div>
+      <div style="font-size:18px;font-weight:650;letter-spacing:-.015em">The greyscale test</div>
+      <p style="margin:6px 0 0;font-size:13.5px;line-height:1.5;color:#4A4E59">With the colour removed, every mark still reads, because each one has its own shape.</p>
+    </div>
+    <div style="filter:grayscale(1);display:grid;grid-template-columns:repeat(9,minmax(0,1fr));gap:8px;align-items:end;text-align:center">
+      <div style="display:flex;flex-direction:column;align-items:center;gap:10px"><span style="width:24px;height:24px;border-radius:50%;border:2.5px solid #A3A7B1;box-sizing:border-box"></span><span style="font-size:11.5px;color:#3A3D45">open</span></div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:10px"><svg viewBox="0 0 24 24" style="width:26px;height:26px"><circle cx="12" cy="12" r="9" fill="none" stroke="#DCDCF6" stroke-width="3"></circle><path d="M21 12a9 9 0 0 0-9-9" fill="none" stroke="#5B5BD6" stroke-width="3" stroke-linecap="round"></path></svg><span style="font-size:11.5px;color:#3A3D45">running</span></div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:10px"><span style="width:24px;height:24px;border-radius:50%;background:#FF6A1A;box-shadow:0 0 0 5px rgba(255,106,26,.25)"></span><span style="font-size:11.5px;color:#3A3D45">needs you</span></div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:10px"><span style="width:26px;height:26px;border-radius:50%;background:#0F8A5F;display:grid;place-items:center"><svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:none;stroke:#fff;stroke-width:3.5;stroke-linecap:round;stroke-linejoin:round"><path d="M20 6 9 17l-5-5"></path></svg></span><span style="font-size:11.5px;color:#3A3D45">passed</span></div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:10px"><span style="width:26px;height:26px;border-radius:50%;background:#D92D3A;display:grid;place-items:center"><svg viewBox="0 0 24 24" style="width:12px;height:12px;fill:none;stroke:#fff;stroke-width:3.5;stroke-linecap:round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></span><span style="font-size:11.5px;color:#3A3D45">failed</span></div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:10px"><span style="width:26px;height:26px;border-radius:50%;border:2.5px dashed #A23B87;box-sizing:border-box;display:grid;place-items:center"><svg viewBox="0 0 24 24" style="width:11px;height:11px;fill:#A23B87"><rect x="5" y="3" width="5" height="18" rx="1.5"></rect><rect x="14" y="3" width="5" height="18" rx="1.5"></rect></svg></span><span style="font-size:11.5px;color:#3A3D45">stalled</span></div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:10px"><svg class="ic" viewBox="0 0 24 24" style="width:26px;height:26px;color:#0E7C86"><line x1="6" x2="6" y1="3" y2="15"></line><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg><span style="font-size:11.5px;color:#3A3D45">unmerged</span></div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:10px"><svg class="ic" viewBox="0 0 24 24" style="width:26px;height:26px;color:#64748B"><path d="m19 5 3-3"></path><path d="m2 22 3-3"></path><path d="M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4Z"></path><path d="M7.5 13.5 10 11"></path><path d="M10.5 16.5 13 14"></path><path d="m12 6 6 6 2.3-2.3a2.4 2.4 0 0 0 0-3.4l-2.6-2.6a2.4 2.4 0 0 0-3.4 0Z"></path></svg><span style="font-size:11.5px;color:#3A3D45">interrupted</span></div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:10px"><span style="display:inline-flex;align-items:center;gap:3px;padding:3px 7px;border-radius:999px;background:#FEF3C7;color:#8A4B0A;font-size:12px;font-weight:650"><svg class="ic" viewBox="0 0 24 24" style="width:11px;height:11px;stroke-width:2.5"><path d="m17 2 4 4-4 4"></path><path d="M3 11v-1a4 4 0 0 1 4-4h14"></path><path d="m7 22-4-4 4-4"></path><path d="M21 13v1a4 4 0 0 1-4 4H3"></path></svg>×6</span><span style="font-size:11.5px;color:#3A3D45">grinding</span></div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":1360}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

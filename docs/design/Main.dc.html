@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>kantan — approval gate</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#F4F4F6}
+.m{font-family:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,monospace}
+.ic{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}
+button{font:inherit;cursor:pointer}
+textarea{font:inherit}
+textarea::placeholder{color:#7A7F8C}
+@property --a{syntax:'<angle>';initial-value:0deg;inherits:false}
+@keyframes kbeam{to{--a:360deg}}
+@keyframes kfade{from{opacity:0;transform:translateY(10px);filter:blur(6px)}to{opacity:1;transform:none;filter:blur(0)}}
+@keyframes kpulse{0%{box-shadow:0 0 0 0 rgba(255,106,26,.55)}70%{box-shadow:0 0 0 9px rgba(255,106,26,0)}100%{box-shadow:0 0 0 0 rgba(255,106,26,0)}}
+@keyframes kpulsed{0%{box-shadow:0 0 0 0 rgba(26,11,2,.5)}70%{box-shadow:0 0 0 12px rgba(26,11,2,0)}100%{box-shadow:0 0 0 0 rgba(26,11,2,0)}}
+@keyframes kspin{to{transform:rotate(360deg)}}
+@keyframes kshine{from{background-position:150% 0}to{background-position:-50% 0}}
+@keyframes kring{from{stroke-dashoffset:157.08}}
+@keyframes kband{from{transform:translateY(-100%);opacity:0}to{transform:none;opacity:1}}
+.bf{animation:kfade .7s cubic-bezier(.2,.7,.2,1) both}
+.d1{animation-delay:.05s}.d2{animation-delay:.1s}.d3{animation-delay:.15s}.d4{animation-delay:.2s}.d5{animation-delay:.25s}.d6{animation-delay:.3s}.d7{animation-delay:.35s}.d8{animation-delay:.4s}.d9{animation-delay:.45s}
+.band{animation:kband .5s cubic-bezier(.2,.7,.2,1) both}
+.beam{background:conic-gradient(from var(--a),transparent 0deg 200deg,#FFD2B3 270deg,#FF6A1A 330deg,transparent 360deg),linear-gradient(#E8E3DE,#E8E3DE);animation:kbeam 5s linear infinite,kfade .7s cubic-bezier(.2,.7,.2,1) both}
+.calm{background:#DCEFE6;animation:kfade .7s cubic-bezier(.2,.7,.2,1) both}
+.pulse{animation:kpulse 1.8s ease-out infinite}
+.pulsed{animation:kpulsed 1.8s ease-out infinite}
+.spin{animation:kspin .9s linear infinite;transform-origin:50% 50%}
+.shiny{background:linear-gradient(90deg,#9A3B06 0%,#9A3B06 38%,#FF9A5E 50%,#9A3B06 62%,#9A3B06 100%);background-size:250% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:kshine 3.2s linear infinite}
+.ring{animation:kring 1.4s cubic-bezier(.2,.7,.2,1) both}
+.trow:hover{background:#EFEFF2}
+.lr:hover{background:#FAFAFB}
+.ghost:hover{background:#F6F6F8}
+.dots{background-image:radial-gradient(#D3D4DB 1px,transparent 1px);background-size:20px 20px;-webkit-mask-image:radial-gradient(ellipse 80% 60% at 50% 0%,#000 20%,transparent 75%);mask-image:radial-gradient(ellipse 80% 60% at 50% 0%,#000 20%,transparent 75%)}
+.plan{font-size:15.5px;line-height:1.7;color:#272930;max-width:68ch}
+.plan h2{font-size:19px;line-height:1.3;font-weight:650;letter-spacing:-.015em;color:#111216;margin:32px 0 10px}
+.plan h2:first-child{margin-top:0}
+.plan p{margin:0 0 14px;text-wrap:pretty}
+.plan code{font-family:'Geist Mono',ui-monospace,monospace;font-size:13.5px;background:#F1F1F4;border:1px solid #E7E7EB;border-radius:6px;padding:1px 5px}
+.plan pre{margin:16px 0 18px;padding:16px 18px;background:#FAFAFB;border:1px solid #E7E7EB;border-radius:14px;overflow-x:auto;font-family:'Geist Mono',ui-monospace,monospace;font-size:13px;line-height:1.65;color:#272930}
+.plan pre code{background:none;border:0;padding:0;font-size:inherit}
+.plan ol{list-style:none;counter-reset:s;margin:0 0 14px;padding:0;display:flex;flex-direction:column;gap:10px}
+.plan ol li{counter-increment:s;display:grid;grid-template-columns:28px minmax(0,1fr);gap:12px;align-items:baseline}
+.plan ol li::before{content:counter(s);display:grid;place-items:center;width:26px;height:26px;border-radius:999px;background:#111216;color:#fff;font-size:12.5px;font-weight:600;transform:translateY(-1px)}
+.plan strong{font-weight:620;color:#111216}
+.kw{color:#4B4BC8}.ty{color:#0B6C75}.st{color:#A2421B}
+.still *{animation:none!important}
+@media (prefers-reduced-motion:reduce){.kr *{animation:none!important}}
+a{color:#4B4BC8}a:hover{color:#3A3AA8}
+</style>
+</helmet>
+<div class="kr {{rootClass}}" style="min-height:100vh;display:flex;flex-direction:column;font-family:'Geist',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;color:#111216;background:#F4F4F6;-webkit-font-smoothing:antialiased">
+
+<header style="display:flex;align-items:center;gap:12px;height:56px;padding:0 20px;background:rgba(255,255,255,.86);border-bottom:1px solid #E7E7EB">
+  <span aria-hidden="true" style="width:26px;height:26px;border-radius:8px;background:linear-gradient(145deg,#2A2B31,#0E0F12);display:grid;place-items:center;box-shadow:inset 0 1px 0 rgba(255,255,255,.14),0 2px 6px -2px rgba(17,18,22,.5)"><span style="width:8px;height:8px;border-radius:50%;background:#FF6A1A"></span></span>
+  <span style="font-size:17px;font-weight:700;letter-spacing:-.025em">kantan</span>
+  <span class="m" style="font-size:12px;color:#6B7080;padding:3px 8px;border-radius:999px;background:#F1F1F4">localhost:4317</span>
+</header>
+
+<div class="band" role="status" style="display:flex;flex-wrap:wrap;align-items:center;gap:10px 20px;padding:18px 24px;background:#FF6A1A;color:#1A0B02">
+  <span class="pulsed" aria-hidden="true" style="width:14px;height:14px;border-radius:50%;background:#1A0B02;flex:none"></span>
+  <span style="font-size:28px;line-height:1;font-weight:700;letter-spacing:-.025em">Needs you</span>
+  <span style="font-size:16px;font-weight:500">your-app · T2 Map records to rows — the plan is ready for review</span>
+  <span class="m" style="margin-left:auto;font-size:14px;font-weight:500">waiting 2m 14s</span>
+</div>
+
+<div style="flex:1;display:flex;flex-wrap:wrap;align-items:stretch">
+
+  <aside aria-label="Projects and tasks" style="flex:1 1 288px;background:#FAFAFB;border-right:1px solid #E7E7EB;padding:16px 10px 28px;box-sizing:border-box">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:0 8px 6px">
+      <span style="font-size:11.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#6B7080">Projects</span>
+      <button aria-label="Add a repository" class="ghost" style="width:30px;height:30px;border-radius:9px;border:1px solid #E2E2E7;background:#fff;display:grid;place-items:center;color:#3A3D45"><svg class="ic" viewBox="0 0 24 24" style="width:15px;height:15px"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg></button>
+    </div>
+
+    <div class="bf d1">
+      <div style="display:flex;align-items:center;gap:8px;padding:14px 10px 2px">
+        <svg class="ic" viewBox="0 0 24 24" style="color:#6B7080"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg>
+        <span style="font-size:14px;font-weight:620">your-app</span>
+        <span style="margin-left:auto;display:inline-flex;align-items:center;gap:4px;padding:2px 7px 2px 5px;border-radius:6px;background:#E0F2FE;color:#075985;font-size:11.5px;font-weight:550"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>personal</span>
+      </div>
+      <div class="m" style="padding:0 10px 6px 34px;font-size:12px;color:#6B7080">$ npm test</div>
+      <div class="m" style="display:flex;align-items:center;gap:6px;padding:6px 10px 4px 14px;font-size:12px;color:#5F6370"><svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="m6 9 6 6 6-6"></path></svg>docs/features/importer.md</div>
+      <button class="trow" style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;min-height:44px;text-align:left;padding:8px 10px 8px 14px;border:0;border-radius:10px;background:transparent;color:#1E2026;font-size:13.5px;line-height:1.35">
+        <span aria-hidden="true" style="width:16px;height:16px;border-radius:50%;background:#0F8A5F;display:grid;place-items:center;justify-self:center"><svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:none;stroke:#fff;stroke-width:4;stroke-linecap:round;stroke-linejoin:round"><path d="M20 6 9 17l-5-5"></path></svg></span>
+        <span class="m" style="font-size:11.5px;color:#6B7080">T1</span><span>Parse the manifest</span><span style="font-size:11.5px;font-weight:560;color:#0F7A54">Passed</span>
+      </button>
+      <button aria-current="true" style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;min-height:44px;text-align:left;padding:8px 10px 8px 14px;border:0;border-radius:10px;background:#fff;box-shadow:0 0 0 1px #FFCFB0,0 4px 14px -6px rgba(255,106,26,.45);color:#111216;font-size:13.5px;line-height:1.35;font-weight:560">
+        <span class="pulse" aria-hidden="true" style="width:14px;height:14px;border-radius:50%;background:#FF6A1A;justify-self:center"></span>
+        <span class="m" style="font-size:11.5px;color:#6B7080;font-weight:400">T2</span><span>Map records to rows</span><span style="padding:3px 8px;border-radius:999px;background:#FF6A1A;color:#1A0B02;font-size:11.5px;font-weight:650">Needs you</span>
+      </button>
+      <button class="trow" style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;min-height:44px;text-align:left;padding:8px 10px 8px 14px;border:0;border-radius:10px;background:transparent;color:#1E2026;font-size:13.5px;line-height:1.35">
+        <span aria-hidden="true" style="width:14px;height:14px;border-radius:50%;border:1.5px solid #A3A7B1;box-sizing:border-box;justify-self:center"></span>
+        <span class="m" style="font-size:11.5px;color:#6B7080">T3</span><span>Runtime shim (v1.2)</span><span></span>
+      </button>
+      <div class="m" style="display:flex;align-items:center;gap:6px;padding:10px 10px 4px 14px;font-size:12px;color:#5F6370"><svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="m6 9 6 6 6-6"></path></svg>docs/features/export.md</div>
+      <button class="trow" style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;min-height:44px;text-align:left;padding:8px 10px 8px 14px;border:0;border-radius:10px;background:transparent;color:#1E2026;font-size:13.5px;line-height:1.35">
+        <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="color:#64748B;justify-self:center"><path d="m19 5 3-3"></path><path d="m2 22 3-3"></path><path d="M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4Z"></path><path d="M7.5 13.5 10 11"></path><path d="M10.5 16.5 13 14"></path><path d="m12 6 6 6 2.3-2.3a2.4 2.4 0 0 0 0-3.4l-2.6-2.6a2.4 2.4 0 0 0-3.4 0Z"></path></svg>
+        <span class="m" style="font-size:11.5px;color:#6B7080">T1</span><span>Stream CSV export</span><span style="font-size:11.5px;font-weight:560;color:#556274">Interrupted</span>
+      </button>
+    </div>
+
+    <div class="bf d2" style="margin-top:6px;border-top:1px solid #ECECEF">
+      <div style="display:flex;align-items:center;gap:8px;padding:14px 10px 2px">
+        <svg class="ic" viewBox="0 0 24 24" style="color:#6B7080"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg>
+        <span style="font-size:14px;font-weight:620">other-repo</span>
+        <span style="margin-left:auto;display:inline-flex;align-items:center;gap:4px;padding:2px 7px 2px 5px;border-radius:6px;background:#26272D;color:#F4F4F6;font-size:11.5px;font-weight:550"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M16 20V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path><rect width="20" height="14" x="2" y="6" rx="2"></rect></svg>work</span>
+      </div>
+      <div class="m" style="padding:0 10px 6px 34px;font-size:12px;color:#6B7080">$ vendor/bin/pest</div>
+      <div class="m" style="display:flex;align-items:center;gap:6px;padding:6px 10px 4px 14px;font-size:12px;color:#5F6370"><svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="m6 9 6 6 6-6"></path></svg>docs/features/billing.md</div>
+      <button class="trow" style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;min-height:44px;text-align:left;padding:8px 10px 8px 14px;border:0;border-radius:10px;background:transparent;color:#1E2026;font-size:13.5px;line-height:1.35">
+        <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="color:#0E7C86;justify-self:center"><line x1="6" x2="6" y1="3" y2="15"></line><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg>
+        <span class="m" style="font-size:11.5px;color:#6B7080">T1</span><span>Ledger reconciliation</span><span style="font-size:11.5px;font-weight:560;color:#0B6C75">Done · unmerged</span>
+      </button>
+      <button class="trow" style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;min-height:44px;text-align:left;padding:8px 10px 8px 14px;border:0;border-radius:10px;background:transparent;color:#1E2026;font-size:13.5px;line-height:1.35">
+        <span aria-hidden="true" style="width:16px;height:16px;border-radius:50%;background:#D92D3A;display:grid;place-items:center;justify-self:center"><svg viewBox="0 0 24 24" style="width:9px;height:9px;fill:none;stroke:#fff;stroke-width:4;stroke-linecap:round"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></span>
+        <span class="m" style="font-size:11.5px;color:#6B7080">T2</span><span>Refund path</span><span style="font-size:11.5px;font-weight:560;color:#C4232F">Failed</span>
+      </button>
+      <button class="trow" style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:start;gap:8px;width:100%;min-height:44px;text-align:left;padding:10px 10px 10px 14px;border:0;border-radius:10px;background:transparent;color:#1E2026;font-size:13.5px;line-height:1.35">
+        <span aria-hidden="true" style="width:16px;height:16px;border-radius:50%;border:1.5px dashed #A23B87;box-sizing:border-box;display:grid;place-items:center;justify-self:center;margin-top:1px"><svg viewBox="0 0 24 24" style="width:8px;height:8px;fill:#A23B87"><rect x="5" y="3" width="5" height="18" rx="1.5"></rect><rect x="14" y="3" width="5" height="18" rx="1.5"></rect></svg></span>
+        <span class="m" style="font-size:11.5px;color:#6B7080;margin-top:1px">T3</span><span>Retry webhook deliveries with exponential backoff, and stop once the provider returns 410 Gone</span><span style="font-size:11.5px;font-weight:560;color:#93307A;margin-top:1px">Stalled</span>
+      </button>
+    </div>
+
+    <div class="bf d3" style="margin-top:6px;border-top:1px solid #ECECEF">
+      <div style="display:flex;align-items:center;gap:8px;padding:14px 10px 2px">
+        <svg class="ic" viewBox="0 0 24 24" style="color:#6B7080"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg>
+        <span style="font-size:14px;font-weight:620">phone-app</span>
+        <span style="margin-left:auto;display:inline-flex;align-items:center;gap:4px;padding:2px 7px 2px 5px;border-radius:6px;background:#E0F2FE;color:#075985;font-size:11.5px;font-weight:550"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>personal</span>
+      </div>
+      <div class="m" style="padding:0 10px 6px 34px;font-size:12px;color:#6B7080">$ flutter test</div>
+      <div class="m" style="display:flex;align-items:center;gap:6px;padding:6px 10px 4px 14px;font-size:12px;color:#5F6370"><svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="m6 9 6 6 6-6"></path></svg>docs/features/offline.md</div>
+      <button class="trow" style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;min-height:44px;text-align:left;padding:8px 10px 8px 14px;border:0;border-radius:10px;background:transparent;color:#1E2026;font-size:13.5px;line-height:1.35">
+        <span aria-hidden="true" style="width:14px;height:14px;border-radius:50%;border:1.5px solid #A3A7B1;box-sizing:border-box;justify-self:center"></span>
+        <span class="m" style="font-size:11.5px;color:#6B7080">T1</span><span>Queue writes while offline</span><span></span>
+      </button>
+      <button class="trow" style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;min-height:44px;text-align:left;padding:8px 10px 8px 14px;border:0;border-radius:10px;background:transparent;color:#1E2026;font-size:13.5px;line-height:1.35">
+        <span aria-hidden="true" style="width:14px;height:14px;border-radius:50%;border:1.5px solid #A3A7B1;box-sizing:border-box;justify-self:center"></span>
+        <span class="m" style="font-size:11.5px;color:#6B7080">T2</span><span dir="auto" lang="ar">مزامنة البيانات عند عودة الاتصال</span><span></span>
+      </button>
+    </div>
+  </aside>
+
+  <main style="flex:999 1 560px;min-width:0;position:relative;padding:24px clamp(16px,3vw,44px) 40px;box-sizing:border-box">
+    <div class="dots" aria-hidden="true" style="position:absolute;inset:0;pointer-events:none"></div>
+    <div style="position:relative;max-width:920px;margin:0 auto">
+
+      <nav aria-label="Breadcrumb" style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:13.5px;color:#5F6370;margin-bottom:18px">
+        <span>your-app</span>
+        <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:14px;height:14px;color:#A3A7B1"><path d="m9 18 6-6-6-6"></path></svg>
+        <span class="m" style="font-size:12.5px">importer.md</span>
+        <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:14px;height:14px;color:#A3A7B1"><path d="m9 18 6-6-6-6"></path></svg>
+        <span style="color:#111216;font-weight:600">T2 · Map records to rows</span>
+        <span style="display:inline-flex;align-items:center;gap:4px;padding:2px 7px 2px 5px;border-radius:6px;background:#E0F2FE;color:#075985;font-size:11.5px;font-weight:550"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>runs as personal</span>
+      </nav>
+
+      <section aria-labelledby="gate-q" class="{{beamClass}}" style="padding:1.5px;border-radius:24px;box-shadow:0 1px 2px rgba(17,18,22,.04),0 18px 50px -18px rgba(17,18,22,.18),0 40px 90px -50px rgba(255,106,26,.35)">
+        <div onMouseMove="{{spot}}" style="border-radius:22.5px;overflow:clip;background:radial-gradient(560px circle at {{mx}}px {{my}}px, rgba(255,106,26,.07), transparent 45%), #FFFFFF">
+
+          <div style="padding:32px clamp(20px,4vw,44px) 26px;border-bottom:1px solid #EEEEF1;background:linear-gradient(180deg,#FFF8F3 0%,rgba(255,255,255,0) 100%)">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+              <span class="pulse" aria-hidden="true" style="width:10px;height:10px;border-radius:50%;background:#FF6A1A"></span>
+              <span class="shiny" style="font-size:13px;font-weight:620;letter-spacing:.02em">Plan ready · waiting for you</span>
+            </div>
+            <h1 id="gate-q" style="margin:0;font-size:clamp(32px,4vw,46px);line-height:1.05;font-weight:650;letter-spacing:-.035em">Is this plan right?</h1>
+            <p style="margin:12px 0 0;max-width:60ch;font-size:15.5px;line-height:1.6;color:#4A4E59">Read it the way you would read a teammate's draft. If you approve, a fresh agent implements it, and kantan runs <code class="m" style="font-size:13.5px;background:#F1F1F4;border-radius:6px;padding:1px 5px">npm test</code> until the exit code says it passed.</p>
+            <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:18px">
+              <span class="m" style="display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;background:#fff;border:1px solid #E7E7EB;font-size:12px;color:#2A2C33;overflow-wrap:anywhere"><svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px;color:#6B7080"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path></svg>docs/plans/2026-10-11-t2-map-records.md</span>
+              <span style="padding:6px 10px;border-radius:999px;background:#F1F1F4;font-size:12.5px;color:#3A3D45;font-weight:500">4 steps</span>
+              <span style="padding:6px 10px;border-radius:999px;background:#F1F1F4;font-size:12.5px;color:#3A3D45;font-weight:500">2 files to change</span>
+              <span style="padding:6px 10px;border-radius:999px;background:#F1F1F4;font-size:12.5px;color:#3A3D45;font-weight:500">Planned in 8s · $0.42</span>
+            </div>
+          </div>
+
+          <article class="plan" style="padding:30px clamp(20px,4vw,44px) 8px">
+            <h2>Goal</h2>
+            <p>Turn each parsed manifest entry into a row the writer accepts. T1 gave us <code>parseManifest()</code>, which returns <code>ManifestEntry[]</code>, but nothing converts those entries into <code>Row</code> objects yet, so the importer stops right after parsing.</p>
+            <h2>Approach</h2>
+            <p>Add a pure function <code>mapRecord(entry)</code> in <code>src/importer/map.ts</code>. It copies the known fields, normalises <code>createdAt</code> to an ISO string, and <strong>drops unknown fields instead of passing them through</strong>. <code>RowWriter.write()</code> throws on keys it does not recognise, so one stray field would otherwise fail the whole batch.</p>
+            <pre><code><span class="kw">export function</span> mapRecord(entry: <span class="ty">ManifestEntry</span>, warn = noop): <span class="ty">Row</span> {
+  <span class="kw">const</span> { id, name, createdAt, tags = [], ...rest } = entry;
+  <span class="kw">for</span> (<span class="kw">const</span> key <span class="kw">of</span> Object.keys(rest)) warn(<span class="st">`ignored field: ${key}`</span>);
+  <span class="kw">return</span> { id, name, createdAt: toIso(createdAt), tags };
+}</code></pre>
+            <p>Dropped fields are counted, not lost silently. They go through the existing <code>onWarning</code> hook, so the import summary can say “3 fields ignored”.</p>
+            <h2>Steps</h2>
+            <ol>
+              <li><span>Write a failing test in <code>map.test.ts</code> for a record carrying an unknown field, <code>legacyRef</code>. It should be absent from the row, with exactly one warning emitted.</span></li>
+              <li><span>Run <code>npm test</code> and confirm it fails for the right reason: <code>mapRecord</code> does not exist yet.</span></li>
+              <li><span>Implement <code>mapRecord</code> and call it from <code>importer.ts</code> straight after <code>parseManifest</code>.</span></li>
+              <li><span>Run the full suite, then commit as <code>importer: map records to rows (T2)</code>.</span></li>
+            </ol>
+            <h2>Out of scope</h2>
+            <p>The v1.2 runtime shim, which is T3. No field renames either: the current manifest version does not need any.</p>
+            <h2>Risk</h2>
+            <p>Older manifests send <code>createdAt</code> in two formats, ISO strings and epoch seconds. <code>toIso</code> already handles both, and the new test includes an epoch-seconds case so a regression shows up here first.</p>
+          </article>
+
+          <div style="padding:8px clamp(20px,4vw,44px) 24px">
+            <button onClick="{{toggleFiles}}" aria-expanded="{{filesOpen}}" class="ghost" style="display:flex;align-items:center;gap:8px;width:100%;min-height:44px;padding:0 14px;border-radius:12px;border:1px solid #EEEEF1;background:#FCFCFD;color:#3A3D45;font-size:13.5px;font-weight:550;text-align:left">
+              <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:14px;height:14px;transition:transform .2s;transform:{{filesChevron}}"><path d="m9 18 6-6-6-6"></path></svg>
+              Planning also read 4 files
+              <span class="m" style="margin-left:auto;font-size:12px;color:#6B7080;font-weight:400">read-only</span>
+            </button>
+            <sc-if value="{{filesOpen}}" hint-placeholder-val="{{ false }}">
+              <ul class="m bf" style="list-style:none;margin:8px 0 0;padding:6px 14px;border-radius:12px;background:#FAFAFB;border:1px solid #EEEEF1;font-size:12.5px;color:#3A3D45;display:flex;flex-direction:column;gap:6px">
+                <li style="overflow-wrap:anywhere">src/importer/manifest.ts</li>
+                <li style="overflow-wrap:anywhere">src/importer/writer.ts</li>
+                <li style="overflow-wrap:anywhere">src/importer/importer.ts</li>
+                <li style="overflow-wrap:anywhere">test/importer/manifest.test.ts</li>
+              </ul>
+            </sc-if>
+          </div>
+
+          <div style="position:sticky;bottom:0;padding:20px clamp(20px,4vw,44px) 24px;background:rgba(251,251,252,.94);border-top:1px solid #EEEEF1;display:flex;flex-wrap:wrap;align-items:flex-end;gap:16px">
+            <sc-if value="{{pending}}" hint-placeholder-val="{{ true }}">
+              <div style="flex:1 1 380px;display:flex;flex-direction:column;gap:8px;min-width:0">
+                <label for="note" style="font-size:13px;font-weight:600;color:#2A2C33">Not quite? Reply to the draft</label>
+                <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end">
+                  <textarea id="note" rows="1" placeholder="e.g. Keep unknown fields under row.meta instead of dropping them" style="flex:1 1 240px;min-height:48px;resize:vertical;padding:13px 16px;border-radius:14px;border:1px solid transparent;background:#EFEFF2;font-size:14px;line-height:1.45;color:#111216;outline:none;box-sizing:border-box"></textarea>
+                  <button class="ghost" style="height:48px;padding:0 18px;border-radius:999px;border:1px solid #D9D9DF;background:#fff;color:#1E2026;font-weight:560;font-size:14px;display:inline-flex;align-items:center;gap:8px"><svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:15px;height:15px"><polyline points="9 14 4 9 9 4"></polyline><path d="M20 20v-7a4 4 0 0 0-4-4H4"></path></svg>Send back</button>
+                </div>
+              </div>
+              <button onClick="{{approve}}" style="height:56px;padding:0 22px 0 20px;border-radius:999px;border:0;background:#111216;color:#fff;font-size:16px;font-weight:620;display:inline-flex;align-items:center;gap:10px;box-shadow:0 10px 28px -10px rgba(17,18,22,.6),inset 0 1px 0 rgba(255,255,255,.16)">
+                <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:18px;height:18px;stroke-width:2.5"><path d="M20 6 9 17l-5-5"></path></svg>
+                Approve plan
+                <span class="m" style="margin-left:4px;padding:3px 7px;border-radius:7px;background:rgba(255,255,255,.14);font-size:12px;font-weight:500">⌘↵</span>
+              </button>
+            </sc-if>
+            <sc-if value="{{approved}}" hint-placeholder-val="{{ false }}">
+              <div class="bf" role="status" style="flex:1;display:flex;align-items:center;gap:12px;min-height:56px">
+                <svg class="spin" aria-hidden="true" viewBox="0 0 24 24" style="width:20px;height:20px"><circle cx="12" cy="12" r="9" fill="none" stroke="#DCDCF6" stroke-width="3"></circle><path d="M21 12a9 9 0 0 0-9-9" fill="none" stroke="#5B5BD6" stroke-width="3" stroke-linecap="round"></path></svg>
+                <span style="font-size:16px;font-weight:600">Approved. A fresh agent is implementing the plan.</span>
+                <span style="margin-left:auto;font-size:13px;color:#5F6370">You can leave. This tab will call you back.</span>
+              </div>
+            </sc-if>
+          </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="log-h" class="bf d3" style="margin-top:28px;background:#fff;border:1px solid #E7E7EB;border-radius:20px;box-shadow:0 1px 2px rgba(17,18,22,.04),0 12px 32px -20px rgba(17,18,22,.18);overflow:clip">
+        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid #EEEEF1">
+          <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="color:#3A3D45"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" x2="20" y1="19" y2="19"></line></svg>
+          <h2 id="log-h" style="margin:0;font-size:15px;font-weight:620">Run record</h2>
+          <span class="m" style="font-size:12px;color:#6B7080">412 events · newest at the bottom</span>
+          <button class="ghost" style="margin-left:auto;height:32px;padding:0 12px;border-radius:999px;border:1px solid #E2E2E7;background:#fff;font-size:12.5px;font-weight:550;color:#3A3D45;display:inline-flex;align-items:center;gap:6px"><svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="M12 5v14"></path><path d="m19 12-7 7-7-7"></path></svg>Follow</button>
+        </div>
+        <div style="max-height:520px;overflow:auto">
+          <div class="m" style="padding:10px 16px;font-size:12px;color:#6B7080;background:linear-gradient(180deg,#F7F7F9,#fff)">↑ 403 earlier events, rendered as you scroll</div>
+
+          <div class="lr bf d1" style="display:grid;grid-template-columns:22px 58px minmax(0,1fr) auto;gap:10px;align-items:start;padding:9px 16px;border-top:1px solid #F0F0F3;font-size:13px;line-height:1.5">
+            <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:15px;height:15px;color:#111216;margin-top:2px"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" x2="20" y1="19" y2="19"></line></svg>
+            <span class="m" style="font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:#6B7080;padding-top:2px">shell</span>
+            <span class="m" style="font-size:12.5px">git log --oneline -1</span>
+            <span class="m" style="font-size:11.5px;color:#6B7080">17:55:41</span>
+          </div>
+
+          <div class="lr bf d2" style="display:grid;grid-template-columns:22px 58px minmax(0,1fr) auto;gap:10px;align-items:start;padding:9px 16px;border-top:1px solid #F0F0F3;font-size:13px;line-height:1.5">
+            <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:15px;height:15px;color:#5F6370;margin-top:2px"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path></svg>
+            <span class="m" style="font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:#6B7080;padding-top:2px">read</span>
+            <span class="m" style="font-size:12.5px;color:#3A3D45;overflow-wrap:anywhere">/home/you/code/your-app/packages/importer/src/adapters/legacy/manifest-v1/__fixtures__/2024-q3-export-with-unknown-fields-and-mixed-epoch-and-iso-timestamps.json</span>
+            <span class="m" style="font-size:11.5px;color:#6B7080">17:55:43</span>
+          </div>
+
+          <div class="lr bf d3" style="display:grid;grid-template-columns:22px 58px minmax(0,1fr) auto;gap:10px;align-items:start;padding:9px 16px;border-top:1px solid #F0F0F3;font-size:13px;line-height:1.5">
+            <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:15px;height:15px;color:#5F6370;margin-top:2px"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path></svg>
+            <span class="m" style="font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:#6B7080;padding-top:2px">read</span>
+            <span class="m" style="font-size:12.5px;color:#3A3D45;overflow-wrap:anywhere">/home/you/code/your-app/src/importer/writer.ts</span>
+            <span class="m" style="font-size:11.5px;color:#6B7080">17:55:44</span>
+          </div>
+
+          <button onClick="{{t4}}" aria-expanded="{{o4}}" class="lr bf d4" style="display:grid;grid-template-columns:22px 58px minmax(0,1fr) auto;gap:10px;align-items:start;width:100%;text-align:left;padding:9px 16px;border:0;border-top:1px solid #F0F0F3;background:transparent;color:#1E2026;font-size:13.5px;line-height:1.5">
+            <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:15px;height:15px;color:#5B5BD6;margin-top:2px"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+            <span class="m" style="font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:#6B7080;padding-top:3px">agent</span>
+            <span style="{{c4}}">RowWriter.write() throws on keys it does not recognise, so the mapping has to drop unknown fields rather than pass them through. I will report each dropped field through onWarning so nothing disappears silently, and cover the epoch-seconds createdAt case in the same test file.</span>
+            <span class="m" style="font-size:11.5px;color:#6B7080">17:55:52</span>
+          </button>
+
+          <div class="lr bf d5" style="display:grid;grid-template-columns:22px 58px minmax(0,1fr) auto;gap:10px;align-items:start;padding:9px 16px;border-top:1px solid #F0F0F3;font-size:13px;line-height:1.5">
+            <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:15px;height:15px;color:#0369A1;margin-top:2px"><path d="m12 14 4-4"></path><path d="M3.34 19a10 10 0 1 1 17.32 0"></path></svg>
+            <span class="m" style="font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:#6B7080;padding-top:2px">limit</span>
+            <span style="color:#3A3D45"><span style="font-weight:560;color:#075985">personal</span> · 41% of the 5-hour window used · resets 18:40</span>
+            <span class="m" style="font-size:11.5px;color:#6B7080">17:56:02</span>
+          </div>
+
+          <button onClick="{{t6}}" aria-expanded="{{o6}}" class="lr bf d6" style="display:grid;grid-template-columns:22px 58px minmax(0,1fr) auto;gap:10px;align-items:start;width:100%;text-align:left;padding:9px 16px;border:0;border-top:1px solid #F0F0F3;background:transparent;color:#1E2026;font-size:13px;line-height:1.5">
+            <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:15px;height:15px;color:#6B7080;margin-top:2px;stroke-dasharray:3 3"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" style="stroke-dasharray:none"></path><path d="M12 17h.01" style="stroke-dasharray:none"></path></svg>
+            <span class="m" style="font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:#6B7080;padding-top:2px">new</span>
+            <span style="display:flex;flex-direction:column;gap:6px;min-width:0">
+              <span><span style="display:inline-block;padding:1px 7px;border-radius:6px;border:1px dashed #A3A7B1;font-size:11.5px;font-weight:550;color:#3A3D45;margin-right:6px">Unrecognised event</span><span class="m" style="font-size:12.5px">tool_progress_v2</span> <span style="color:#5F6370">· shown as it arrived</span></span>
+              <sc-if value="{{o6}}" hint-placeholder-val="{{ false }}"><span class="m" style="display:block;padding:10px 12px;border-radius:10px;background:#FAFAFB;border:1px solid #EEEEF1;font-size:12px;color:#3A3D45;overflow-wrap:anywhere;white-space:pre-wrap">{"type":"tool_progress_v2","tool":"Read","pct":0.62,"bytes":18233}</span></sc-if>
+            </span>
+            <span class="m" style="font-size:11.5px;color:#6B7080">17:56:05</span>
+          </button>
+
+          <div class="lr bf d7" style="display:grid;grid-template-columns:22px 58px minmax(0,1fr) auto;gap:10px;align-items:start;padding:9px 16px;border-top:1px solid #F0F0F3;font-size:13px;line-height:1.5">
+            <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:15px;height:15px;color:#8A8F9C;margin-top:2px"><path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1"></path><path d="M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"></path></svg>
+            <span class="m" style="font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:#6B7080;padding-top:2px">raw</span>
+            <span style="color:#5F6370">One line wasn't JSON, so it's kept as plain text.</span>
+            <span class="m" style="font-size:11.5px;color:#6B7080">17:56:05</span>
+          </div>
+
+          <div class="lr bf d8" style="display:grid;grid-template-columns:22px 58px minmax(0,1fr) auto;gap:10px;align-items:start;padding:9px 16px;border-top:1px solid #F0F0F3;font-size:13px;line-height:1.5">
+            <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:15px;height:15px;color:#4B4BC8;margin-top:2px"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"></path><path d="m15 5 4 4"></path></svg>
+            <span class="m" style="font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:#6B7080;padding-top:2px">write</span>
+            <span class="m" style="font-size:12.5px;overflow-wrap:anywhere">docs/plans/2026-10-11-t2-map-records.md <span style="color:#0F7A54;font-weight:600">+62</span> <span style="color:#5F6370;font-family:'Geist',sans-serif">new file</span></span>
+            <span class="m" style="font-size:11.5px;color:#6B7080">17:56:11</span>
+          </div>
+
+          <div class="bf d9" style="display:flex;align-items:center;gap:12px;padding:14px 16px;border-top:1px solid #F0F0F3">
+            <span style="flex:1;height:1px;background:linear-gradient(90deg,transparent,#FFC9A3)"></span>
+            <span style="display:inline-flex;align-items:center;gap:8px;padding:5px 12px;border-radius:999px;background:#FFF1E8;border:1px solid #FFD3B8;font-size:12.5px;font-weight:600;color:#9A3B06"><span class="pulse" aria-hidden="true" style="width:8px;height:8px;border-radius:50%;background:#FF6A1A"></span>Gate · run paused until you decide</span>
+            <span style="flex:1;height:1px;background:linear-gradient(90deg,#FFC9A3,transparent)"></span>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <aside aria-label="Run details" style="flex:1 1 260px;border-left:1px solid #E7E7EB;background:#FAFAFB;padding:20px 16px 28px;box-sizing:border-box;display:flex;flex-direction:column;gap:14px">
+    <section class="bf d2" style="background:#fff;border:1px solid #E7E7EB;border-radius:16px;padding:12px;box-shadow:0 1px 2px rgba(17,18,22,.04)">
+      <h2 style="margin:2px 6px 8px;font-size:11.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#6B7080">Phases</h2>
+      <ol style="list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px">
+        <li style="display:grid;grid-template-columns:18px 1fr auto;align-items:center;gap:10px;padding:9px 8px;border-radius:10px;font-size:14px">
+          <span aria-hidden="true" style="width:16px;height:16px;border-radius:50%;background:#0F8A5F;display:grid;place-items:center"><svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:none;stroke:#fff;stroke-width:4;stroke-linecap:round;stroke-linejoin:round"><path d="M20 6 9 17l-5-5"></path></svg></span>
+          <span>Plan</span><span class="m" style="font-size:12.5px;color:#5F6370">8s</span>
+        </li>
+        <li style="display:grid;grid-template-columns:18px 1fr auto;align-items:center;gap:10px;padding:10px 8px;border-radius:10px;font-size:14px;background:#FFF1E8;box-shadow:inset 0 0 0 1px #FFD3B8">
+          <span class="pulse" aria-hidden="true" style="width:14px;height:14px;border-radius:50%;background:#FF6A1A;justify-self:center"></span>
+          <span style="font-weight:650">Gate <span style="font-weight:500;color:#9A3B06">· waiting</span></span><span class="m" style="font-size:12.5px;color:#9A3B06;font-weight:600">2m 14s</span>
+        </li>
+        <li style="display:grid;grid-template-columns:18px 1fr auto;align-items:center;gap:10px;padding:9px 8px;font-size:14px;color:#5F6370">
+          <span aria-hidden="true" style="width:14px;height:14px;border-radius:50%;border:1.5px solid #C4C7CE;box-sizing:border-box;justify-self:center"></span><span>Implement</span><span class="m" style="font-size:12.5px">—</span>
+        </li>
+        <li style="display:grid;grid-template-columns:18px 1fr auto;align-items:center;gap:10px;padding:9px 8px;font-size:14px;color:#5F6370">
+          <span aria-hidden="true" style="width:14px;height:14px;border-radius:50%;border:1.5px solid #C4C7CE;box-sizing:border-box;justify-self:center"></span><span>Test</span><span class="m" style="font-size:12.5px">—</span>
+        </li>
+        <li style="display:grid;grid-template-columns:18px 1fr auto;align-items:center;gap:10px;padding:9px 8px;font-size:14px;color:#5F6370">
+          <span aria-hidden="true" style="width:14px;height:14px;border-radius:50%;border:1.5px solid #C4C7CE;box-sizing:border-box;justify-self:center"></span><span>Refine</span><span class="m" style="font-size:12.5px">—</span>
+        </li>
+      </ol>
+    </section>
+
+    <section class="bf d3" style="background:#fff;border:1px solid #E7E7EB;border-radius:16px;padding:16px;box-shadow:0 1px 2px rgba(17,18,22,.04)">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <h2 style="margin:0;font-size:11.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#6B7080">Cost</h2>
+        <span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#5F6370"><span aria-hidden="true" style="width:6px;height:6px;border-radius:50%;background:#A3A7B1"></span>paused at gate</span>
+      </div>
+      <div style="margin-top:8px;font-size:38px;line-height:1;font-weight:650;letter-spacing:-.035em;font-variant-numeric:tabular-nums">$0.42</div>
+      <div style="margin-top:6px;font-size:13px;color:#5F6370">of <span style="font-weight:600;color:#111216">$50.00</span> ceiling for this run</div>
+      <div style="height:6px;border-radius:999px;background:#EFEFF2;margin-top:12px;overflow:hidden"><div style="width:0.84%;min-width:6px;height:100%;border-radius:999px;background:#111216"></div></div>
+    </section>
+
+    <section class="bf d4" style="background:#fff;border:1px solid #E7E7EB;border-radius:16px;padding:16px;box-shadow:0 1px 2px rgba(17,18,22,.04)">
+      <h2 style="margin:0 0 12px;font-size:11.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#6B7080">5-hour windows</h2>
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div style="display:grid;grid-template-columns:52px 1fr;gap:12px;align-items:center">
+          <div style="position:relative;width:52px;height:52px">
+            <svg viewBox="0 0 60 60" aria-hidden="true" style="width:52px;height:52px;transform:rotate(-90deg)"><circle cx="30" cy="30" r="25" fill="none" stroke="#E6F3FB" stroke-width="6"></circle><circle class="ring" cx="30" cy="30" r="25" fill="none" stroke="#0284C7" stroke-width="6" stroke-linecap="round" stroke-dasharray="157.08" stroke-dashoffset="92.68"></circle></svg>
+            <span style="position:absolute;inset:0;display:grid;place-items:center;font-size:12.5px;font-weight:650;font-variant-numeric:tabular-nums">41%</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:2px">
+            <span style="display:flex;align-items:center;gap:6px;font-size:14px;font-weight:600;color:#075985">personal <span style="padding:1px 6px;border-radius:999px;background:#111216;color:#fff;font-size:10.5px;font-weight:600">this run</span></span>
+            <span class="m" style="font-size:12px;color:#5F6370">resets 18:40</span>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:52px 1fr;gap:12px;align-items:center">
+          <div style="position:relative;width:52px;height:52px">
+            <svg viewBox="0 0 60 60" aria-hidden="true" style="width:52px;height:52px;transform:rotate(-90deg)"><circle cx="30" cy="30" r="25" fill="none" stroke="#EEEEF1" stroke-width="6"></circle><circle class="ring" cx="30" cy="30" r="25" fill="none" stroke="#26272D" stroke-width="6" stroke-linecap="round" stroke-dasharray="157.08" stroke-dashoffset="138.23"></circle></svg>
+            <span style="position:absolute;inset:0;display:grid;place-items:center;font-size:12.5px;font-weight:650;font-variant-numeric:tabular-nums">12%</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:2px">
+            <span style="font-size:14px;font-weight:600;color:#26272D">work</span>
+            <span class="m" style="font-size:12px;color:#5F6370">resets 20:05</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="bf d5" style="margin-top:auto;display:flex;flex-direction:column;gap:8px">
+      <button class="ghost" style="width:100%;height:44px;border-radius:999px;border:1px solid #DCDCE2;background:#fff;display:flex;align-items:center;justify-content:center;gap:8px;font-size:14px;font-weight:560;color:#1E2026"><svg aria-hidden="true" viewBox="0 0 24 24" style="width:12px;height:12px;fill:#1E2026"><rect width="18" height="18" x="3" y="3" rx="3"></rect></svg>Stop run</button>
+      <p style="margin:0;text-align:center;font-size:12.5px;color:#5F6370">Resumable. Stopping costs nothing.</p>
+    </div>
+  </aside>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"motion":{"editor":"boolean","default":true},"$preview":{"width":1440,"height":1780}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { approved: false, filesOpen: false, open: {}, mx: -600, my: -600 };
+    this._raf = 0;
+  }
+  componentWillUnmount() { if (this._raf) cancelAnimationFrame(this._raf); }
+  renderVals() {
+    const s = this.state;
+    const o = s.open || {};
+    const tog = (k) => () => { const n = Object.assign({}, o); n[k] = !o[k]; this.setState({ open: n }); };
+    const clamp = 'display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis';
+    const free = 'display:block';
+    return {
+      rootClass: (this.props.motion ?? true) ? '' : 'still',
+      pending: !s.approved,
+      approved: s.approved,
+      approve: () => this.setState({ approved: true }),
+      beamClass: s.approved ? 'calm' : 'beam',
+      filesOpen: s.filesOpen,
+      toggleFiles: () => this.setState({ filesOpen: !s.filesOpen }),
+      filesChevron: s.filesOpen ? 'rotate(90deg)' : 'rotate(0deg)',
+      mx: s.mx,
+      my: s.my,
+      spot: (e) => {
+        const r = e.currentTarget.getBoundingClientRect();
+        const x = Math.round(e.clientX - r.left), y = Math.round(e.clientY - r.top);
+        if (this._raf) return;
+        this._raf = requestAnimationFrame(() => { this._raf = 0; this.setState({ mx: x, my: y }); });
+      },
+      o4: !!o.r4, t4: tog('r4'), c4: o.r4 ? free : clamp,
+      o6: !!o.r6, t6: tog('r6')
+    };
+  }
+}
+</script>
+</body>
+</html>
