@@ -16,6 +16,36 @@
 - Never call the real API in a test. Task 5 builds a fake binary; everything after it uses that.
 - Commit after each task.
 - `ORCH: done` is a literal string this codebase emits in prompts and parses in output. Do not "improve" it.
+- Finish on `bun run check`: typecheck, then tests, both clean.
+
+### The skipping-guard rule
+
+Task 2 produced fourteen defects in roughly a hundred lines. Every one came from a rule that
+decided to **skip** input, and none came from the byte-preservation logic everyone was worried
+about. The difference: byte preservation was a closed-form problem that could be reasoned about
+completely, while deciding where a task list stops is an open-ended classification of someone
+else's markdown.
+
+Three rounds of fixes each introduced the next defect, because each fix was aimed at the case
+that motivated it rather than at the worst case it could hit.
+
+**So: a guard that skips, filters, or normalizes input is a guess, and its risk is its worst
+case, not its motivating case.** Before writing one:
+
+1. **Name the input dimension the guard reads.** Not the input in general: the specific thing it
+   inspects.
+2. **Enumerate every value that dimension can take**, including values no existing test produces
+   and no sane file contains.
+3. **Say what a wrong guess costs in each direction.** Over-skipping and under-skipping usually
+   have wildly different costs, and the cheap direction is the one to fail toward.
+4. **Test the whole enumeration**, as a matrix if it has more than one dimension.
+
+A corollary that cost three rounds to learn: **replaying an existing suite after a change proves
+nothing about a rule that reads something the suite never varied.** A regression check inherits
+the blind spots of the suite it replays, so report the method together with what it cannot see.
+
+Tasks 6, 9, 10 and 12 are built almost entirely out of such guards and each names its own
+enumeration below.
 
 ---
 
@@ -504,7 +534,33 @@ test("a line split across two chunks reassembles", async () => {
 
 The chunk-splitting test matters: `probe.mjs` buffers partial lines by hand and so must this. A naive `data.toString().split("\n")` corrupts events the moment a message straddles a chunk boundary, which happens constantly with large tool inputs.
 
-**Step 3: Implement** a transform over the raw byte stream that buffers partial lines, JSON-parses each complete one, filters `type === "system" && subtype.startsWith("hook")`, and maps the rest to a narrow discriminated union: `init | text | tool_use | tool_result | thinking | rate_limit | result | parse-error`.
+**Step 3: Implement** a transform over the raw byte stream that buffers partial lines, JSON-parses each complete one, filters the hook noise, and maps the rest to a narrow discriminated union: `init | text | tool_use | tool_result | thinking | rate_limit | result | parse-error`.
+
+**The filter is a skipping guard. Apply the rule above before writing it.**
+
+The dimension it reads is `(type, subtype)`. Enumerate it from the fixtures rather than from imagination:
+
+```bash
+cat test/fixtures/*.jsonl | python3 -c "
+import json,sys,collections
+c=collections.Counter()
+for l in sys.stdin:
+    if l.strip():
+        m=json.loads(l); c[(m.get('type'), m.get('subtype'))]+=1
+for k,v in sorted(c.items(), key=str): print(v, k)
+"
+```
+
+Captured fixtures contain at least `system/init`, `system/hook_started`, `system/hook_response`, `system/hook_progress`, **`system/thinking_tokens`**, `assistant`, `user`, `rate_limit_event`, `result/success` and `result/error_max_budget_usd`. That `thinking_tokens` subtype is easy to miss and is **not** hook noise.
+
+Cost of a wrong guess, which is asymmetric:
+
+| Direction | Cost |
+|---|---|
+| Over-filtering (`subtype.startsWith("hook")` catching too much, or filtering all of `system`) | A real message vanishes from the run log and the UI. Silent, and the user cannot tell the run from a stalled one. |
+| Under-filtering | Noise in the stream. Visible, harmless, fixable later. |
+
+So fail toward under-filtering: match an explicit allowlist of hook subtypes, never a prefix, and route anything unrecognised to a `parse-error`-style passthrough that is visible rather than dropped. A new CLI version adding `system/something_new` must show up, not disappear.
 
 **Step 5: Commit**
 
@@ -632,7 +688,20 @@ git add -A && git commit -m "feat: detect phase outcome from the final sentinel 
 
 Per design §3.4. These repos run Pest, PHPUnit and `flutter test`, so parsing `bun test` output is not enough.
 
-Tests: a JUnit XML yields the set of failing test names, order-independent; two runs failing the same tests in a different order hash equal; two runs failing different tests hash differently; with no `reportPath`, the normalized stdout tail is used, stripping durations, timestamps, absolute paths and ANSI codes; two runs differing only in elapsed time hash equal; exit code is part of the signature.
+**The normalizer is a skipping guard, and its two failure directions are both bad.** Apply the rule above.
+
+The dimension it reads is "which substrings of test output are incidental". Enumerate what varies between two runs of the *same* failure: elapsed times (`0.40ms`, `1.2s`, `in 31ms`), timestamps, absolute paths, temp directories, PIDs, ports, ANSI colour codes, random seeds, worker or shard ids, memory figures, and the order of concurrent output.
+
+| Direction | Cost |
+|---|---|
+| Over-stripping | Every failure hashes alike, so a stall fires on genuine progress and interrupts a run that was converging. |
+| Under-stripping | No two runs ever hash alike, so a real loop never trips the detector and grinds until the budget stops it. |
+
+Neither is safe, so this one cannot fail in a cheap direction. Test both ends explicitly: two runs of an identical failure differing only in timing must hash **equal**, and two genuinely different failures must hash **differently**. Build the fixtures from real output of at least two runners with different formats, since a normalizer tuned to one runner's output is a normalizer that does not work.
+
+Prefer `project.reportPath` wherever it exists: a JUnit XML gives the failing test names directly and needs no normalization at all, which is why it is the first branch rather than a nicety.
+
+Tests: a JUnit XML yields the set of failing test names, order-independent; two runs failing the same tests in a different order hash equal; two runs failing different tests hash differently; with no `reportPath`, the normalized stdout tail is used; two runs differing only in elapsed time hash equal; exit code is part of the signature.
 
 ```bash
 git add -A && git commit -m "feat: failure signature from junit xml or normalized output"
