@@ -378,6 +378,16 @@ tests and the UI shows a generic failure for what is actually a one-line config 
 Around line 109. The field is gone; the comment explains why a session id is recorded per phase,
 and that reason still stands without it. Left alone because Task 7b was editing that file.
 
+### Bun cuts an idle SSE stream at 10s — Task 17
+Found by Task 17 before it was paused: **Bun closes an idle response stream after about 10
+seconds**, so a keep-alive on a longer interval (15s was the first attempt) never fires and the
+browser sees the run stream drop. Any keep-alive must beat that window, and whether an *outgoing*
+write resets Bun's idle timer was the open question when the session paused — settle that first,
+because if outgoing writes do not reset it, a keep-alive cannot work at all and the stream needs a
+different mechanism.
+
+This is the plan gate's exact failure case: a run waiting for a human sits idle for minutes.
+
 ### A run has TWO session ids and using the wrong one fails silently — Task 13
 `runId` names the run. `planSessionId` and `implementSessionId` are separate conversations, and
 `--session-id` takes a UUID so neither can be derived from `runId`. Gate feedback resumes the

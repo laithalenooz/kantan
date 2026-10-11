@@ -18,10 +18,10 @@ Re-dispatch each with its brief rather than resuming the agent.
 
 | Task | Files on disk | State |
 |---|---|---|
-| **7b** run index | `src/runindex.ts`, `test/runindex.test.ts`, modified `src/runlog.ts` | mid-TDD. Was adding `featureFileHash` to `RunHeader` |
-| **10** stall signature | modified `src/stall.ts`, `test/stall.test.ts`, ~20 fixtures under `test/fixtures/output/` | captured real output from **dart, jest and pest** — that capture is the expensive part, keep it |
-| **13** phase machine | `src/run.ts` if present | the integration funnel. Had just received the stdout-deadlock warning |
-| **17** SSE | modified `src/server.ts` | was adding the run stream |
+| **7b** run index | `src/runindex.ts`, `test/runindex.test.ts`, modified `src/runlog.ts` | well along: **21 of 27 mutants killed**, was analysing 6 survivors. Was adding `featureFileHash` to `RunHeader` |
+| **10** stall signature | modified `src/stall.ts`, `test/stall.test.ts`, ~20 fixtures under `test/fixtures/output/` | captured real output from **dart, jest and pest** — that capture is the expensive part, keep it. Was nearly done, running its final attributable check |
+| **13** phase machine | nothing yet | barely started: had confirmed a green baseline and was about to plan. Re-dispatch from scratch |
+| **17** SSE | modified `src/server.ts` | was adding the run stream. **Had just found that Bun cuts an idle stream at ~10s**, so a 15s keep-alive never fires — see HANDOFF |
 
 Check `git status` first: anything uncommitted there is one of these four, not a mistake.
 
