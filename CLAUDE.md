@@ -67,13 +67,24 @@ Add no dependencies without a reason that survives being written down.
 
 This repo is developed with background agents, and they edit files in the same working tree.
 
-**Never `git add -A` while one is running.** Stage explicit paths. Twice during development a
-docs-only commit swept in another agent's half-written test file, which is harmless but means a
-commit message describes something other than its diff.
+**Never `git add -A`, and never a bare `git commit`, while one is running.** Both sweep in
+whatever else sits in the shared index. Twice during development a docs-only commit captured
+another agent's half-written test file: harmless content, but the message then describes something
+other than its diff.
 
-This is the same hazard kantan guards against with one active run per project: two writers in one
-checkout is a collision whether or not git notices. The difference is that kantan refuses, and a
-human with `git add -A` does not.
+**Commit with a pathspec instead:**
+
+```bash
+git add src/mine.ts test/mine.test.ts
+git commit -m "feat: ..." -- src/mine.ts test/mine.test.ts
+```
+
+Verified: a pathspec commit builds from HEAD plus only the named paths, so another agent's staged
+files stay staged and uncommitted, and it can then commit them itself. Both land, nothing is lost,
+nothing is cross-contaminated. A bare commit with both staged takes both.
+
+This is what makes work on disjoint files parallelisable without a worktree per agent, which
+matters because kantan's own design rejects worktree proliferation in favour of serialising runs.
 
 ## Commits
 
