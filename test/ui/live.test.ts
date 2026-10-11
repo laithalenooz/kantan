@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { act, foldRun, subscribeRun, taskKeyOf, type RunView } from "../../src/ui/live"
+import { act, foldRun, startRun, subscribeRun, taskKeyOf, type RunView } from "../../src/ui/live"
 import { sumProcessCost } from "../../src/ui/Sidebar"
 import type { RunRecord } from "../../src/runlog"
 
@@ -379,5 +379,27 @@ describe("taskKeyOf", () => {
     // It cannot be run either: run.ts refuses a task without a ref rather than
     // inventing one, so a fabricated key would address a run that cannot exist.
     expect(taskKeyOf({ projectPath: "/repo", featureFile: "f.md", taskRef: null })).toBeNull()
+  })
+})
+
+describe("startRun", () => {
+  test("names the task and returns the id everything else is keyed by", async () => {
+    const calls: { url: string; body: unknown }[] = []
+    const fetcher = (async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), body: init?.body })
+      return Response.json({ ok: true, runId: "r-new" }, { status: 201 })
+    }) as unknown as typeof fetch
+    const id = await startRun({ projectPath: "/repo", featureFile: "f.md", taskRef: "T1" }, fetcher)
+    expect(id).toBe("r-new")
+    expect(calls[0]?.body).toBe(JSON.stringify({ projectPath: "/repo", featureFile: "f.md", taskRef: "T1" }))
+  })
+
+  test("a 201 with no usable id is a failure, not a run to follow", async () => {
+    // Continuing would subscribe to `undefined` and show an empty log for a run
+    // that is already spending money.
+    for (const answer of [{ ok: true }, { ok: true, runId: "" }, { ok: true, runId: 7 }]) {
+      const fetcher = (async () => Response.json(answer, { status: 201 })) as unknown as typeof fetch
+      await expect(startRun({ projectPath: "/r", featureFile: "f.md", taskRef: "T1" }, fetcher)).rejects.toThrow("did not say what its id is")
+    }
   })
 })
