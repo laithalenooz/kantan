@@ -49,10 +49,16 @@ this a usable git repo" question, and should expect to be handed a path that is 
 `reportPath` may contain `..`; refusing it would mean guessing at monorepo layouts, so the code
 that joins it owns that check.
 
-### `claudeVersion()` ignores the exit code — whoever hardens spawning
-It reads stdout and never awaits exit. A missing or failing binary degrades to
-`cannot parse version from:` with an empty tail: no stderr, no status. Deliberate under "no
-features beyond the task"; worth fixing when the fake CLI lands and spawn failures become real.
+### The fake binary must answer `--version` — Task 5
+`test/version.test.ts`'s first test calls the real binary and asserts an `X.Y.Z` string. If Task 5
+installs the fake CLI suite-wide (preload, `bunfig`, env), **the fake must print a version** or
+that test fails for a confusing reason. `claudeVersion()` now reports exit code and stderr, so a
+fake that exits non-zero will at least say so.
+
+### Fixtures are redacted, and the redaction is not optional — Task 5 and anyone recapturing
+`test/fixtures/` holds real captures with synthetic `rate_limit_info`. A recapture **must** rerun
+both redaction passes; the telemetry pass is the one no grep will remind you about. See
+`test/fixtures/README.md`.
 
 ### `tickTask` returns its input unchanged for an already-ticked task — Task 13 (phase machine)
 Idempotent on purpose, so a retried run cannot disturb a finished file. **A caller that logs,

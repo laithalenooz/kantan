@@ -387,7 +387,13 @@ git add -A && git commit -m "feat: project store with sonnet and per-phase effor
 
 ---
 
-## Task 4: Capture stream-json fixtures
+## Task 4: Capture stream-json fixtures — DONE
+
+> Captured 2026-10-11 against CLI 2.1.296. Three fixtures in `test/fixtures/`, both redaction
+> passes run, and all twelve of their documented claims verified by assertion. See
+> `test/fixtures/README.md`. The capture also validated Task 15's whole contract end to end: the
+> agent emitted `ORCH: done` as its final line, wrote the plan to the dictated path, implemented
+> nothing, and did not stall asking which execution mode to use. $0.18 on Sonnet at effort high.
 
 Everything downstream is tested against these. They come from real output, not from imagination.
 
