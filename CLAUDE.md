@@ -63,6 +63,18 @@ Build what the task asks for. Over-building is a defect, not a bonus: an unreque
 
 Add no dependencies without a reason that survives being written down.
 
+## Working alongside a background agent
+
+This repo is developed with background agents, and they edit files in the same working tree.
+
+**Never `git add -A` while one is running.** Stage explicit paths. Twice during development a
+docs-only commit swept in another agent's half-written test file, which is harmless but means a
+commit message describes something other than its diff.
+
+This is the same hazard kantan guards against with one active run per project: two writers in one
+checkout is a collision whether or not git notices. The difference is that kantan refuses, and a
+human with `git add -A` does not.
+
 ## Commits
 
 Conventional-ish subject, body explaining *why*. End with:
