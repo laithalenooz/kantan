@@ -1,7 +1,11 @@
 import { afterAll, expect, test } from "bun:test"
+import { mkdtemp, open as openFile, readdir, readlink, realpath, rm } from "node:fs/promises"
 import { connect } from "node:net"
-import { networkInterfaces } from "node:os"
-import { ROUTES, TOKEN_EXEMPT, createServer, type Launch } from "../src/server"
+import { networkInterfaces, tmpdir } from "node:os"
+import { join } from "node:path"
+import { createRunLog, runLogPath } from "../src/runlog"
+import type { RunHeader, RunLog, RunRecord } from "../src/runlog"
+import { ROUTES, TOKEN_EXEMPT, createServer, type Launch, type RouteContext } from "../src/server"
 
 // These endpoints hand arbitrary text to an agent with file-write and shell
 // access, so the guards below are the project's only security boundary.
@@ -494,4 +498,758 @@ test("an unknown route is a 404, not a 500", async () => {
   expect((await call(app, { path: "/api/nope" })).status).toBe(404)
   expect((await call(app, { path: "/api/health/", method: "GET" })).status).toBe(404)
   expect((await call(app, { path: "/api/health", method: "PUT", origin: `http://127.0.0.1:${PORT}` })).status).toBe(404)
+})
+
+// ---------------------------------------------------------------------------
+// 9. The run stream: SSE, replayed from byte 0, then live
+// ---------------------------------------------------------------------------
+
+// Design §4.4: the server owns the child process, so closing the browser does
+// not touch the run. A reconnecting client replays the whole log from byte 0
+// and then tails. There is no cursor and no reconnect state machine.
+//
+// The failure this section exists for is not a wrong byte, it is a leak.
+// `replay({ follow: true })` ends ONLY on its abort signal - never at the `end`
+// record, because deciding a record is terminal is interpretation and
+// `runlog.ts` is framing. So a handler that forgets to abort leaves a poller
+// and an open file descriptor behind for every closed tab, on finished runs
+// too, and nothing in the type signature hints at it. That is the first test
+// below, and the one worth keeping if the rest were deleted.
+
+const STREAM_ROUTE = "GET /api/runs/:id/stream"
+
+/** Resolves to the descriptors *this process* holds on `path`, or `null` where
+ * a descriptor's target cannot be read. The server runs in the test process,
+ * so its handles are visible here: the poller inside `replay` cannot exist
+ * without one, which makes a count of zero a proof and not a hope. */
+async function fdsFor(path: string): Promise<number | null> {
+  let names: string[]
+  try {
+    names = await readdir("/proc/self/fd")
+  } catch {
+    return null
+  }
+  let held = 0
+  for (const name of names) {
+    try {
+      if ((await readlink(`/proc/self/fd/${name}`)) === path) held++
+    } catch {
+      // The descriptor closed between the readdir and the readlink.
+    }
+  }
+  return held
+}
+
+/** Whether a descriptor's target can be read on this machine. Linux can; where
+ * it cannot, the precise assertions are skipped rather than quietly passing. */
+const FD_PATHS = (await fdsFor("/")) !== null
+
+/** Total descriptors held, as a portable backstop to the precise count.
+ * `/dev/fd` rather than `/proc/self/fd`, so it also answers on macOS. */
+async function openHandles(): Promise<number> {
+  return (await readdir("/dev/fd")).length
+}
+
+const scratchDirs: string[] = []
+
+afterAll(async () => {
+  for (const dir of scratchDirs) await rm(dir, { recursive: true, force: true })
+})
+
+/** A runs directory of its own, canonicalised: a descriptor's readlink target
+ * is the real path, so the fd assertions compare like with like. */
+async function runsDir(): Promise<string> {
+  const dir = await realpath(await mkdtemp(join(tmpdir(), "orch-sse-")))
+  scratchDirs.push(dir)
+  return dir
+}
+
+const FEATURE_HASH = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+function header(over: Partial<RunHeader> = {}): RunHeader {
+  return {
+    claudeVersion: "2.1.3",
+    runId: "11111111-1111-4111-8111-111111111111",
+    planSessionId: "22222222-2222-4222-8222-222222222222",
+    profile: null,
+    planModel: "claude-opus-5-5",
+    implementModel: "claude-sonnet-5-5",
+    planEffort: "high",
+    implementEffort: "medium",
+    projectPath: "/repo",
+    featureFile: "docs/features/run-log.md",
+    taskRef: "T7",
+    featureFileHash: FEATURE_HASH,
+    budgetUsd: 50,
+    startedAt: "2026-10-11T09:00:00.000Z",
+    ...over,
+  }
+}
+
+/** A real run log in `dir` under `id`, header already on disk. No fakes: the
+ * thing under test is how the server reads what `runlog.ts` writes. */
+async function startLog(dir: string, id: string): Promise<RunLog> {
+  return await createRunLog(runLogPath(id, dir), header({ runId: id }))
+}
+
+async function until(check: () => boolean | Promise<boolean>, label: string, ms = 5000): Promise<void> {
+  const deadline = Date.now() + ms
+  for (;;) {
+    if (await check()) return
+    if (Date.now() > deadline) throw new Error(`timed out after ${ms}ms waiting for ${label}`)
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+interface Frame {
+  event: string
+  data: string
+}
+
+interface Stream {
+  status: number
+  headers: Headers
+  /** Dispatched events in arrival order. A comment is not one. */
+  frames: Frame[]
+  /** Every comment line seen, which is how a keep-alive shows up. */
+  comments: string[]
+  /** Every byte received, for assertions about the wire format itself. */
+  wire(): string
+  records(): RunRecord[]
+  /** True once the server closed the stream, without anyone disconnecting. */
+  closed(): boolean
+  waitForRecords(n: number): Promise<RunRecord[]>
+  waitForEvent(name: string): Promise<Frame>
+  waitForClose(): Promise<void>
+  /** What a closed tab does: the connection goes, mid-stream. */
+  disconnect(): Promise<void>
+}
+
+interface StreamCall {
+  cookie?: string | null
+  host?: string
+  /** `null` omits it, which is what `EventSource` does not do - but a
+   * hand-written client might. */
+  accept?: string | null
+  /** Overrides the whole path, for the ids a template cannot express. */
+  path?: string
+}
+
+/**
+ * Opens the run stream and parses it the way `EventSource` would: blocks
+ * separated by a blank line, a line starting with `:` is a comment and
+ * dispatches nothing, `data:` lines are joined with a newline.
+ *
+ * Deliberately not the `call()` helper above: that reads the body to
+ * completion, which on a live stream never returns.
+ */
+async function stream(l: Launch, runId: string, c: StreamCall = {}): Promise<Stream> {
+  const ac = new AbortController()
+  const headers = new Headers({ Host: c.host ?? `127.0.0.1:${l.port}` })
+  const accept = c.accept === undefined ? "text/event-stream" : c.accept
+  if (accept !== null) headers.set("Accept", accept)
+  const cookie = c.cookie === undefined ? `orch_token=${l.token}` : c.cookie
+  if (cookie !== null) headers.set("Cookie", cookie)
+
+  const path = c.path ?? `/api/runs/${runId}/stream`
+  const res = await fetch(`http://127.0.0.1:${l.port}${path}`, { headers, signal: ac.signal })
+
+  const frames: Frame[] = []
+  const comments: string[] = []
+  let text = ""
+  let done = false
+
+  function dispatch(block: string): void {
+    let event = "message"
+    const data: string[] = []
+    let sawData = false
+    for (const line of block.split("\n")) {
+      if (line === "") continue
+      if (line.startsWith(":")) {
+        comments.push(line)
+        continue
+      }
+      const colon = line.indexOf(":")
+      const field = colon === -1 ? line : line.slice(0, colon)
+      let value = colon === -1 ? "" : line.slice(colon + 1)
+      if (value.startsWith(" ")) value = value.slice(1)
+      if (field === "event") event = value
+      else if (field === "data") {
+        data.push(value)
+        sawData = true
+      }
+    }
+    // A comment-only block carries no event, which is the whole point of the
+    // keep-alive: it must never arrive as a record.
+    if (sawData) frames.push({ event, data: data.join("\n") })
+  }
+
+  const pump = (async () => {
+    const body = res.body
+    if (body === null) {
+      done = true
+      return
+    }
+    const reader = body.getReader()
+    const decoder = new TextDecoder()
+    let buffered = ""
+    try {
+      for (;;) {
+        const { done: finished, value } = await reader.read()
+        if (finished) break
+        // `stream: true`, or a multi-byte character split across two reads
+        // becomes U+FFFD here and the test lies about the server.
+        const chunk = decoder.decode(value, { stream: true })
+        text += chunk
+        buffered += chunk
+        for (;;) {
+          const at = buffered.indexOf("\n\n")
+          if (at === -1) break
+          dispatch(buffered.slice(0, at))
+          buffered = buffered.slice(at + 2)
+        }
+      }
+    } catch {
+      // Our own abort, which is how a disconnect is spelled.
+    }
+    done = true
+  })()
+
+  const records = (): RunRecord[] =>
+    frames.filter((f) => f.event === "record").map((f) => JSON.parse(f.data) as RunRecord)
+
+  return {
+    status: res.status,
+    headers: res.headers,
+    frames,
+    comments,
+    wire: () => text,
+    records,
+    closed: () => done,
+    async waitForRecords(n) {
+      await until(() => records().length >= n, `${n} records on the stream`)
+      return records()
+    },
+    async waitForEvent(name) {
+      await until(() => frames.some((f) => f.event === name), `an SSE "${name}" event`)
+      const found = frames.find((f) => f.event === name)
+      if (found === undefined) throw new Error(`"${name}" vanished after it arrived`)
+      return found
+    },
+    waitForClose: () => until(() => done, "the server to close the stream"),
+    async disconnect() {
+      ac.abort()
+      await pump
+    },
+  }
+}
+
+function kindOf(record: RunRecord): string {
+  return record.kind
+}
+
+// --- The leak, first --------------------------------------------------------
+
+test("a disconnecting client leaves no poller and no open descriptor behind", async () => {
+  const dir = await runsDir()
+  const l = serve({ runsDir: dir, streamPollMs: 2 })
+  const log = await startLog(dir, "leak")
+  const path = runLogPath("leak", dir)
+
+  // No `end` record, so this is a live run and replay({follow:true}) will poll
+  // for ever. A finished run leaks exactly the same way, which is why the
+  // handler cannot lean on the log having ended.
+  const writer = await fdsFor(path)
+  if (FD_PATHS) expect(writer).toBe(1) // the log's own append handle, and only it
+
+  const baseline = await openHandles()
+  const clients = []
+  for (let i = 0; i < 12; i++) clients.push(await stream(l, "leak"))
+  for (const client of clients) await client.waitForRecords(1)
+
+  // The control comes first. Without it, the zero below could mean the
+  // measurement cannot see a poller rather than that there is none.
+  if (FD_PATHS) expect(await fdsFor(path)).toBe(12 + (writer ?? 0))
+  expect(await openHandles()).toBeGreaterThanOrEqual(baseline + 12)
+
+  for (const client of clients) await client.disconnect()
+
+  // Every poller returned through replay's own `finally`, which is the only
+  // thing that closes its descriptor - so zero here is the abort, observed.
+  if (FD_PATHS) await until(async () => (await fdsFor(path)) === (writer ?? 0), "every poller's descriptor to close")
+  await until(async () => (await openHandles()) < baseline + 6, "the sockets and descriptors to be released")
+
+  // And the run is untouched by twelve tabs closing.
+  await log.append({ kind: "phase", phase: "plan", state: "running" })
+  const after = await stream(l, "leak")
+  expect((await after.waitForRecords(2)).map(kindOf)).toEqual(["header", "phase"])
+  await after.disconnect()
+  await log.close()
+})
+
+test("a finished run's stream closes itself, so a tab on history leaves nothing running", async () => {
+  const dir = await runsDir()
+  const l = serve({ runsDir: dir, streamPollMs: 2 })
+  const log = await startLog(dir, "over")
+  await log.append({ kind: "end", state: "done", costUsd: 1.5 })
+  await log.close()
+  const path = runLogPath("over", dir)
+
+  const client = await stream(l, "over")
+  await client.waitForClose()
+
+  expect(client.records().map(kindOf)).toEqual(["header", "end"])
+  // Nobody disconnected: the server let go on its own.
+  if (FD_PATHS) expect(await fdsFor(path)).toBe(0)
+})
+
+// --- Replay from byte 0, then live ------------------------------------------
+
+test("a connecting client gets the whole log from byte 0, in order", async () => {
+  const dir = await runsDir()
+  const l = serve({ runsDir: dir, streamPollMs: 2 })
+  const log = await startLog(dir, "whole")
+  await log.append({ kind: "phase", phase: "plan", state: "running", planPath: "docs/plans/x.md" })
+  await log.appendCli(JSON.stringify({ type: "assistant", seq: 1 }))
+  await log.append({ kind: "phase", phase: "plan", state: "waiting", reason: "gate" })
+  await log.append({ kind: "human", action: "approve" })
+
+  const client = await stream(l, "whole")
+  const records = await client.waitForRecords(5)
+  expect(records.map(kindOf)).toEqual(["header", "phase", "cli", "phase", "human"])
+  expect(records[0]).toMatchObject({ kind: "header", runId: "whole", featureFileHash: FEATURE_HASH })
+  expect(records[2]).toEqual({ kind: "cli", event: { type: "assistant", seq: 1 } })
+  await client.disconnect()
+  await log.close()
+})
+
+test("a client connecting mid-run misses nothing: everything before it, then everything after", async () => {
+  const dir = await runsDir()
+  const l = serve({ runsDir: dir, streamPollMs: 2 })
+  const log = await startLog(dir, "midrun")
+  for (let i = 1; i <= 40; i++) await log.appendCli(JSON.stringify({ type: "assistant", seq: i }))
+
+  const client = await stream(l, "midrun")
+  await client.waitForRecords(41)
+
+  for (let i = 41; i <= 120; i++) await log.appendCli(JSON.stringify({ type: "assistant", seq: i }))
+  const records = await client.waitForRecords(121)
+
+  // A short count is a lost record and a long one is a duplicate, so the
+  // length pins both at once; the sequence pins the order.
+  expect(records).toHaveLength(121)
+  expect(records.slice(1).map((r) => ((r as { event: { seq: number } }).event.seq))).toEqual(
+    Array.from({ length: 120 }, (_, i) => i + 1),
+  )
+  await sleep(20)
+  expect(client.records()).toHaveLength(121)
+  await client.disconnect()
+  await log.close()
+})
+
+test("a record appended in two writes arrives once and whole, not split or doubled", async () => {
+  const dir = await runsDir()
+  const l = serve({ runsDir: dir, streamPollMs: 2 })
+  const log = await startLog(dir, "split")
+  const client = await stream(l, "split")
+  await client.waitForRecords(1)
+
+  // runlog's replay holds bytes until their newline arrives. This asserts the
+  // SSE layer puts no second framing layer on top of that, which is where a
+  // record would be lost or doubled at the boundary.
+  const line = JSON.stringify({ kind: "test", exitCode: 0, attempt: 1 })
+  const fh = await openFile(runLogPath("split", dir), "a")
+  try {
+    await fh.write(line.slice(0, 11))
+    await sleep(30) // many poll cycles at 2ms
+    expect(client.records()).toHaveLength(1)
+    await fh.write(`${line.slice(11)}\n`)
+  } finally {
+    await fh.close()
+  }
+
+  const records = await client.waitForRecords(2)
+  expect(records[1]).toEqual({ kind: "test", exitCode: 0, attempt: 1 })
+  await sleep(30)
+  expect(client.records()).toHaveLength(2)
+  await client.disconnect()
+  await log.close()
+})
+
+test("two clients on one run both see every record, and one leaving does not disturb the other", async () => {
+  const dir = await runsDir()
+  const l = serve({ runsDir: dir, streamPollMs: 2 })
+  const log = await startLog(dir, "pair")
+  const a = await stream(l, "pair")
+  const b = await stream(l, "pair")
+  await a.waitForRecords(1)
+  await b.waitForRecords(1)
+
+  await log.append({ kind: "phase", phase: "plan", state: "running" })
+  expect((await a.waitForRecords(2))[1]).toMatchObject({ kind: "phase", phase: "plan" })
+  expect((await b.waitForRecords(2))[1]).toMatchObject({ kind: "phase", phase: "plan" })
+
+  await a.disconnect()
+  await log.append({ kind: "test", exitCode: 1, signature: "boom", attempt: 1 })
+  expect((await b.waitForRecords(3))[2]).toMatchObject({ kind: "test", exitCode: 1 })
+  // a's abort tore down a's poller, not b's.
+  expect(a.records()).toHaveLength(2)
+  await b.disconnect()
+  await log.close()
+})
+
+test("a reconnect replays from byte 0 again, because there is no cursor to resume from", async () => {
+  const dir = await runsDir()
+  const l = serve({ runsDir: dir, streamPollMs: 2 })
+  const log = await startLog(dir, "again")
+  await log.append({ kind: "phase", phase: "plan", state: "running" })
+
+  const first = await stream(l, "again")
+  expect((await first.waitForRecords(2)).map(kindOf)).toEqual(["header", "phase"])
+  await first.disconnect()
+
+  await log.append({ kind: "test", exitCode: 0, attempt: 1 })
+
+  const second = await stream(l, "again")
+  expect((await second.waitForRecords(3)).map(kindOf)).toEqual(["header", "phase", "test"])
+
+  // Design §4.4 replays from byte 0 deliberately, so there is no `id:` on the
+  // wire: an id invites Last-Event-ID, which is the reconnect state machine
+  // the design rejects.
+  expect(second.wire()).not.toContain("id:")
+  await second.disconnect()
+  await log.close()
+})
+
+test("the stream stops at the end record, which is what it costs not to leak a poller per finished run", async () => {
+  const dir = await runsDir()
+  const l = serve({ runsDir: dir, streamPollMs: 2 })
+  const log = await startLog(dir, "past")
+  await log.append({ kind: "end", state: "failed", why: "budget", costUsd: 2 })
+  // replay() does not stop at `end` - that is interpretation, and runlog is
+  // framing - so a record can follow it on disk. The stream stops anyway,
+  // because the other direction is a poller and a descriptor per tab on every
+  // finished run, for the life of the process. This test pins the price.
+  await log.append({ kind: "test", exitCode: 0, attempt: 9 })
+  await log.close()
+
+  const client = await stream(l, "past")
+  await client.waitForClose()
+  expect(client.records().map(kindOf)).toEqual(["header", "end"])
+  // And a reconnect does not reach it either, so it is invisible rather than
+  // merely late.
+  const again = await stream(l, "past")
+  await again.waitForClose()
+  expect(again.records().map(kindOf)).toEqual(["header", "end"])
+})
+
+// --- How a client learns the run is over ------------------------------------
+
+test("the end record is forwarded, and then an eof event tells the client not to reconnect", async () => {
+  const dir = await runsDir()
+  const l = serve({ runsDir: dir, streamPollMs: 2 })
+  const log = await startLog(dir, "eof")
+  const client = await stream(l, "eof")
+  await client.waitForRecords(1)
+
+  await log.append({ kind: "end", state: "done", costUsd: 3.25 })
+  await log.close()
+
+  // The record itself, so nothing is withheld from the fold of the log...
+  const records = await client.waitForRecords(2)
+  expect(records[1]).toEqual({ kind: "end", state: "done", costUsd: 3.25 })
+  // ...and then an explicit frame, so the client does not have to fold the log
+  // to know it should call close(). A stream that merely drops is a dropped
+  // connection, which EventSource is right to retry; eof is how "the run is
+  // over, stop retrying" is said out loud.
+  const eof = await client.waitForEvent("eof")
+  expect(JSON.parse(eof.data)).toEqual({ reason: "end" })
+  expect(client.frames.at(-1)).toBe(eof)
+  await client.waitForClose()
+})
+
+// --- Keep-alive -------------------------------------------------------------
+
+test("an idle stream is held open by comments, which never arrive as events", async () => {
+  const dir = await runsDir()
+  const l = serve({ runsDir: dir, streamPollMs: 2, streamKeepAliveMs: 15 })
+  const log = await startLog(dir, "idle")
+  const client = await stream(l, "idle")
+  await client.waitForRecords(1)
+
+  // A run waiting at the gate is idle for as long as the human takes, and an
+  // idle connection is what a proxy or a browser reclaims.
+  await until(() => client.comments.length >= 3, "keep-alive comments on an idle stream")
+
+  // The log has one record and the stream has one event, however many
+  // keep-alives went past: a comment is not a record.
+  expect(client.records()).toHaveLength(1)
+  expect(client.frames).toHaveLength(1)
+  expect(client.comments).toContain(": keep-alive")
+  await client.disconnect()
+  await log.close()
+})
+
+// --- The wire format --------------------------------------------------------
+
+test("every record is one SSE event named record, with the record as its data", async () => {
+  const dir = await runsDir()
+  const l = serve({ runsDir: dir, streamPollMs: 2 })
+  const log = await startLog(dir, "shape")
+  await log.append({ kind: "phase", phase: "implement", state: "running", sessionId: "33333333-3333-4333-8333-333333333333" })
+  await log.close()
+
+  const client = await stream(l, "shape")
+  await client.waitForRecords(2)
+
+  // One constant event name, not one per kind: runlog's own rule is that a
+  // record whose kind this version does not know passes through, and an
+  // addEventListener per kind has no listener for a kind a newer writer
+  // invented. The client switches on data.kind, where unknown is visible.
+  expect(client.frames.map((f) => f.event)).toEqual(["record", "record"])
+  expect(JSON.parse(client.frames[1]?.data ?? "null")).toMatchObject({ kind: "phase", phase: "implement" })
+  await client.disconnect()
+})
+
+test("a record with an unknown kind reaches the client unchanged", async () => {
+  const dir = await runsDir()
+  const l = serve({ runsDir: dir, streamPollMs: 2 })
+  const path = runLogPath("future", dir)
+  const log = await startLog(dir, "future")
+  await log.close()
+  const fh = await openFile(path, "a")
+  try {
+    await fh.write(`{"kind":"snapshot","at":"later"}\n`)
+  } finally {
+    await fh.close()
+  }
+
+  const client = await stream(l, "future")
+  const records = await client.waitForRecords(2)
+  expect(records[1]).toEqual({ kind: "snapshot", at: "later" } as unknown as RunRecord)
+  await client.disconnect()
+})
+
+test("a record carrying newlines, carriage returns and multi-byte text survives the framing", async () => {
+  const dir = await runsDir()
+  const l = serve({ runsDir: dir, streamPollMs: 2 })
+  const log = await startLog(dir, "text")
+  const event = { type: "assistant", text: "line one\nline two\r\n\r\nend", path: "/tmp/café/✓/🙂" }
+  await log.appendCli(JSON.stringify(event))
+  await log.close()
+
+  const client = await stream(l, "text")
+  const records = await client.waitForRecords(2)
+  // A raw newline in the payload would end the SSE data line, and a raw blank
+  // line would end the event: JSON.stringify escapes both, so one data: line
+  // per record is always enough and no second framing layer is needed.
+  expect(records[1]).toEqual({ kind: "cli", event })
+  expect(client.wire().split("\n").filter((line) => line.startsWith("data:"))).toHaveLength(2)
+  await client.disconnect()
+})
+
+test("the stream declares text/event-stream and forbids caching", async () => {
+  const dir = await runsDir()
+  const l = serve({ runsDir: dir, streamPollMs: 2 })
+  const log = await startLog(dir, "heads")
+  await log.close()
+
+  const client = await stream(l, "heads")
+  expect(client.status).toBe(200)
+  expect(client.headers.get("content-type")).toStartWith("text/event-stream")
+  // A cached run stream would replay a finished run as if it were live.
+  expect(client.headers.get("cache-control")).toBe("no-store")
+  await client.disconnect()
+})
+
+// --- Auth: the reason the token is a cookie ---------------------------------
+
+test("an EventSource-shaped request authenticates: the cookie alone, no Authorization header", async () => {
+  // EventSource has no API for custom headers, which is why Task 16 put the
+  // token in a SameSite=Strict cookie. That limitation is spec-level: no real
+  // browser was involved here, and HANDOFF records the gap.
+  const dir = await runsDir()
+  const l = serve({ runsDir: dir, streamPollMs: 2 })
+  const log = await startLog(dir, "es")
+  await log.close()
+  const url = `http://127.0.0.1:${l.port}/api/runs/es/stream`
+
+  const ok = await fetch(url, {
+    headers: { Host: `127.0.0.1:${l.port}`, Accept: "text/event-stream", Cookie: `orch_token=${l.token}` },
+  })
+  expect(ok.status).toBe(200)
+  expect(ok.headers.get("content-type")).toStartWith("text/event-stream")
+  await ok.body?.cancel()
+
+  // The same request with the token only in a header, which is what a
+  // header-only scheme would have forced on the UI, is refused.
+  const headerOnly = await fetch(url, {
+    headers: { Host: `127.0.0.1:${l.port}`, Accept: "text/event-stream", Authorization: `Bearer ${l.token}` },
+  })
+  expect(headerOnly.status).toBe(401)
+  await headerOnly.body?.cancel()
+
+  // And a top-level EventSource sends no Origin, as every GET does not.
+  const noOrigin = await fetch(url, {
+    headers: { Host: `127.0.0.1:${l.port}`, Cookie: `orch_token=${l.token}` },
+  })
+  expect(noOrigin.status).toBe(200)
+  await noOrigin.body?.cancel()
+})
+
+test("the run stream is registered in ROUTES, behind the guards, and is not token-exempt", async () => {
+  expect(Object.keys(ROUTES)).toContain(STREAM_ROUTE)
+  // A pattern must never make a route exempt: the token check keys on the
+  // request's own literal "METHOD /path", which no pattern is.
+  expect(TOKEN_EXEMPT.has(STREAM_ROUTE)).toBe(false)
+  expect([...TOKEN_EXEMPT].sort()).toEqual(["GET /", "GET /api/session"])
+
+  // Section 7's loop probes the literal pattern path. A concrete id has to
+  // meet the same three guards, which it only does if the matcher runs after
+  // them rather than before.
+  const dir = await runsDir()
+  const l = serve({ runsDir: dir })
+  expect((await call(l, { path: "/api/runs/abc/stream", host: "evil.example.com" })).status).toBe(403)
+  expect((await call(l, { path: "/api/runs/abc/stream", cookie: null })).status).toBe(401)
+  expect((await call(l, { path: "/api/runs/abc/stream", cookie: `orch_token=${l.token}x` })).status).toBe(401)
+})
+
+// --- Ids the matcher and runLogPath must refuse -----------------------------
+
+test("an unknown run id is a 404, not a 500", async () => {
+  const dir = await runsDir()
+  const l = serve({ runsDir: dir })
+  // runlog's replay raises ENOENT for a missing log, and the status cannot be
+  // taken back once an SSE body has started, so this has to be decided before
+  // the stream opens.
+  const res = await call(l, { path: "/api/runs/11111111-1111-4111-8111-111111111111/stream" })
+  expect(res.status).toBe(404)
+  expect(res.body).not.toContain(l.token)
+})
+
+test("the default runs directory is used when none is given", async () => {
+  // Only ever stat()ed here, so this reads the real ~/.orch/runs and writes
+  // nothing. It is the one assertion that the option is wired to a default at
+  // all rather than to undefined.
+  const l = serve()
+  expect((await call(l, { path: "/api/runs/f0f0f0f0-0000-4000-8000-000000000000/stream" })).status).toBe(404)
+})
+
+interface IdRow {
+  path: string
+  status: number
+  why: string
+}
+
+/** The matcher is a guard that decides whether to skip a route, so its input
+ * dimension - what a `:id` segment may be - is enumerated rather than sampled.
+ * Over-accepting here hands a path to `runLogPath`; over-rejecting costs a 404
+ * on a request nothing generates. */
+const idRows: IdRow[] = [
+  { path: "/api/runs/abc/stream", status: 404, why: "a well-formed id with no log: the control for every row below" },
+  { path: "/api/runs//stream", status: 404, why: "an empty segment is not an id, and // survives URL parsing" },
+  { path: "/api/runs/abc/stream/", status: 404, why: "no trailing-slash normalisation, here as anywhere else" },
+  { path: "/api/runs/abc", status: 404, why: "the pattern is the whole path, not a prefix of it" },
+  { path: "/api/runs/abc/stream/extra", status: 404, why: "nor a prefix in the other direction" },
+  { path: "/api/runs/a/b/stream", status: 404, why: "a :id segment is exactly one segment" },
+  { path: "/api/runs/abc/STREAM", status: 404, why: "segments are compared as sent; nothing lowercases" },
+  { path: "/api/runs/abc/stream?x=1", status: 404, why: "the query is not part of the path and cannot smuggle a segment" },
+  { path: "/api/runs/../stream", status: 404, why: "the URL parser resolves dot segments before dispatch sees them" },
+  { path: "/api/runs/./stream", status: 404, why: "and the single-dot spelling too" },
+  { path: "/api/runs/..%2F..%2F.ssh%2Fauthorized_keys/stream", status: 404, why: "percent-encoded traversal: never decoded, so %2F never becomes a separator" },
+  { path: "/api/runs/%2E%2E/stream", status: 404, why: "an encoded .. stays two percent-escapes, so it is not the parent directory" },
+  { path: "/api/runs/%00/stream", status: 404, why: "an encoded NUL stays an escape, so it cannot truncate a path" },
+  { path: "/api/runs/:id/stream", status: 404, why: "the pattern's own key is a requestable path, and must not match itself into an empty id" },
+  { path: "/api/runs/a:b/stream", status: 404, why: "a colon inside a segment is part of the id, not a pattern marker" },
+]
+
+for (const row of idRows) {
+  test(`${row.path} -> ${row.status} (${row.why})`, async () => {
+    const dir = await runsDir()
+    const l = serve({ runsDir: dir })
+    expect((await call(l, { path: row.path })).status).toBe(row.status)
+    // Nothing outside the runs directory was created, whatever the id spelled.
+    expect(await readdir(dir)).toEqual([])
+  })
+}
+
+test("a path that only shares a prefix with the pattern does not match it", async () => {
+  // Every row above asks for a log that does not exist, so a matcher wide
+  // enough to claim the wrong path still answers 404 and the row passes for
+  // the wrong reason. Proven: widening the segment-count check from `!==` to
+  // `>` leaves all of them green. The log has to exist for the width of a
+  // `:id` segment to be observable at all.
+  const dir = await runsDir()
+  const l = serve({ runsDir: dir, streamPollMs: 2 })
+  const log = await startLog(dir, "real")
+  await log.append({ kind: "end", state: "done", costUsd: 0 })
+  await log.close()
+
+  const control = await stream(l, "real")
+  expect(control.status).toBe(200)
+  await control.waitForClose()
+
+  for (const path of [
+    "/api/runs/real/stream/extra",
+    "/api/runs/real/stream/",
+    "/api/runs/real/streamx",
+    "/api/runs/real/x/stream",
+    "/api/runs/extra/real/stream",
+    "/api/runs/real",
+    "/api/real/stream",
+  ]) {
+    expect((await call(l, { path })).status, path).toBe(404)
+  }
+})
+
+test("a traversal attempt reads nothing outside the runs directory", async () => {
+  const dir = await runsDir()
+  const outside = await runsDir()
+  const decoy = await startLog(outside, "decoy")
+  await decoy.append({ kind: "end", state: "done", costUsd: 0 })
+  await decoy.close()
+
+  // The id is never percent-decoded, so `..%2F` is a filename and not a path.
+  // The log it would have reached if it were decoded exists, and the request
+  // still finds nothing.
+  const l = serve({ runsDir: dir })
+  const escape = `..%2F${outside.split("/").pop() ?? ""}%2Fdecoy`
+  const res = await call(l, { path: `/api/runs/${escape}/stream` })
+  expect(res.status).toBe(404)
+  expect(res.body).not.toContain("decoy")
+})
+
+test("an id runLogPath refuses becomes a 400, not an unhandled rejection", async () => {
+  // Nothing in a URL reaches this today: the parser resolves `..` and `.`
+  // before dispatch, converts a backslash to a slash, and an empty segment
+  // does not match the pattern - so every spelling above is a 404 before
+  // runLogPath is called. The mapping is asserted through the exported route
+  // anyway, because the alternative to a 400 is a rejected promise inside a
+  // route handler, which is a 500 with nothing useful in it.
+  const dir = await runsDir()
+  const handler = ROUTES[STREAM_ROUTE]
+  if (handler === undefined) throw new Error(`${STREAM_ROUTE} is not registered`)
+  const ctx: RouteContext = {
+    token: "unused",
+    port: 3100,
+    dev: false,
+    devPort: 5173,
+    hosts: new Set(),
+    origins: new Set(),
+    runsDir: dir,
+    streamPollMs: 2,
+    streamKeepAliveMs: 1000,
+  }
+
+  for (const id of ["..", ".", "", "a/b", "a\\b", "a\0b"]) {
+    const res = await handler(new Request("http://127.0.0.1:3100/api/runs/x/stream"), ctx, { id })
+    expect(res.status, `id ${JSON.stringify(id)}`).toBe(400)
+    expect(res.headers.get("content-type")).toStartWith("application/json")
+    await res.body?.cancel()
+  }
+  expect(await readdir(dir)).toEqual([])
 })

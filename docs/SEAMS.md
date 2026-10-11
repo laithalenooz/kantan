@@ -33,11 +33,19 @@ same mismatch found at Task 13 costs reopening finished work.
 | `git` | repo guards, branch, lock | Branches from a **recorded base**, never from whatever is checked out. The dirty check applies to **new** runs only, never to resuming a run on its own branch. |
 | `runlog` | append, replay | `cli` payloads nest **byte-identically**, by splicing the raw stdout line — so `appendCli` takes the line **without** its terminator and refuses a trailing newline rather than trimming it. `implementSessionId` is **not** in the header; it rides `PhaseRecord.sessionId`, which must be written on every spawning phase. `replay({follow:true})` ends **only on abort**, never at `end`. |
 
-## A resource leak waiting for Task 18
+## The resource leak, closed by Task 17
 
-`replay({ follow: true })` never ends on its own, not even at the `end` record. **The SSE handler
-must abort on client disconnect**, or every closed tab leaves a poller and an open file descriptor
-behind, including on runs that have already finished. Nothing in the type signature hints at this.
+`replay({ follow: true })` never ends on its own, not even at the `end` record, so the SSE handler
+had to abort on client disconnect or every closed tab would leave a poller and an open file
+descriptor behind — including on runs that have already finished. Nothing in the type signature
+hints at this.
+
+**Done in `src/server.ts`.** `runLogBody` wires one `AbortController` to both `req.signal` and the
+stream's `cancel` (Bun fires both on disconnect, probed), and the stream also stops at the `end`
+record so a tab on a finished run leaves nothing polling. Proven rather than assumed: removing the
+abort wiring fails `test/server.test.ts`'s descriptor test, and forcing `isTerminal` to `false`
+fails three more. Anything else that follows a run log — Task 18's stop, a future log viewer — owes
+the same abort.
 
 ## The two ids that fail silently
 

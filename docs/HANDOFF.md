@@ -19,25 +19,40 @@ old XML on disk, where it parses perfectly and names the **previous** attempt's 
 attempts then hash equal, and the detector escalates effort — and finally interrupts a human —
 against a run that may have been converging. This is the expensive direction.
 
-`src/testrun.ts` does not touch the file. **Whoever spawns `testCmd` must delete
-`project.reportPath` first**, because only that code knows when the run began; an mtime check
-inside `failureSignature` would still need to be handed that moment. Nothing in `TestOutcome`
-dates the file, so there is no way to catch this later.
+`src/testrun.ts` does not touch the file. **Whoever spawns `testCmd` must delete the report
+first**, because only that code knows when the run began; an mtime check inside
+`failureSignature` would still need to be handed that moment. Nothing in `TestOutcome` dates the
+file, so there is no way to catch this later. Delete the **joined** path, per the next two
+entries: unlinking `project.reportPath` as stored would either miss the real file, leaving this
+bug live, or unlink something of the same name beside the server.
 
 ### Two different `TestOutcome` types exist, and they are compatible by luck — Task 13
 `src/testrun.ts` and `src/stall.ts` each export an interface of that name. `runTests`' result is
 structurally assignable to the signature's, so `failureSignature(await runTests(p))` compiles —
 excess property checks only bite on fresh object literals. But `reportPath` lives only on the
-`stall.ts` one, so the report branch is **dead unless the caller spreads it in**:
-`failureSignature({ ...outcome, reportPath })`. Forget it and every signature silently comes from
-the parsed output, which still works and is simply weaker. There is no error to catch.
+`stall.ts` one, so the report branch is **dead unless the caller passes it in**, joined as the
+next entry requires: `failureSignature({ ...outcome, reportPath: join(project.path, rp) })`.
+Forget it and every signature silently comes from the parsed output, which still works and is
+simply weaker. There is no error to catch.
 
 ### `failureSignature`'s window must stay well under `MAX_OUTPUT_BYTES` — anyone tuning either
-`src/testrun.ts` keeps the last 1 MiB of each stream; `src/stall.ts` hashes the last 256 KiB of
-that. If the two ever meet, the signature reaches bytes that a chatty run had already dropped and
-a quiet one still had, and one failure hashes two ways depending on how much the suite printed.
-The marker `testrun.ts` prepends is normalized in `stall.ts` as well, so the byte counts in it
-cannot reach the digest even if the windows do change.
+`src/testrun.ts` keeps the last 1 MiB of each stream; `src/stall.ts` hashes the last 256 Ki
+**UTF-16 code units** of that, so up to about 768 KB of UTF-8 in the worst case. If the two ever
+meet, the signature reaches bytes that a chatty run had already dropped and a quiet one still
+had, and one failure hashes two ways depending on how much the suite printed. The marker
+`testrun.ts` prepends is normalized in `stall.ts` as well, so the byte counts in it cannot reach
+the digest even if the windows do change.
+
+### `reportPath` must be joined with `project.path`, or the JUnit branch never runs — Task 13
+`failureSignature` takes an **absolute** path and resolves nothing. `validateProject` **refuses
+an absolute `reportPath`** — "reportPath is relative to the repo" — so every stored value is
+relative by construction. Passed through as stored, it is read against the **server's** working
+directory, missed, and the signature falls back to the parsed output **for every project, always**.
+This is not an edge case; it is the whole branch, dead, with no error and no log line. The run
+works and the signature is merely weaker, so nothing surfaces it.
+
+The caller joins. It also owns the `..` check, per "Two spellings of one repo still split the
+records" below.
 
 ### `CLAUDE_BIN` binds at module load — anything spawning
 `src/version.ts` resolves `process.env.ORCH_CLAUDE_BIN` **once, when the module is imported**.
@@ -264,9 +279,49 @@ then dispatch. A loop over `ROUTES` asserts all three guards for every registere
 routes are covered the moment you add an entry — and `TOKEN_EXEMPT` is asserted to be *exactly*
 `["GET /", "GET /api/session"]`, so widening it fails a test first.
 
-Dispatch is exact `METHOD /path` with no percent-decoding or trailing-slash normalisation. Task
-17's `:id` route needs a matcher that runs **after** the guards, and a pattern must never make a
-route token-exempt. `RouteHandler` and `RouteContext` are exported; do not invent your own.
+Dispatch is exact `METHOD /path` with no percent-decoding or trailing-slash normalisation.
+`RouteHandler` and `RouteContext` are exported; do not invent your own.
+
+Task 17 added the matcher, so **a `:name` route is already supported**: register the pattern as an
+ordinary `ROUTES` key (`GET /api/runs/:id/stream`) and take the segments from `RouteHandler`'s third
+argument, `params`. It is optional, so a static route still takes two. The matcher runs after the
+guards and a pattern can never be token-exempt, because the token check keys on the request's own
+literal `METHOD /path`, which no pattern is. A `:name` matches exactly one non-empty segment and is
+handed over **as sent** — do not decode it: nothing else does, which is the only reason `%2F`
+cannot put back the separator the URL parser already resolved away.
+
+`RouteContext` also carries `runsDir`, `streamPollMs` and `streamKeepAliveMs`, resolved from
+`ServerOptions` so a handler never consults a default. `runsDir` is what lets a test keep away from
+the developer's own `~/.orch/runs`; Task 18's actions will want it for the same reason.
+
+### The run stream's contract, and the two things the UI must do — the UI tasks
+`GET /api/runs/:id/stream` sends **one SSE event per log record**, always named `record`, with the
+record itself as `data`. Every frame is named, so **`onmessage` never fires**: listen with
+`addEventListener("record", …)` and `addEventListener("eof", …)`, then switch on `data.kind` inside
+the record handler. Switching on the *event name* instead is the trap — the log's rule is that a
+kind this version does not know passes through rather than being dropped, and a listener per kind
+would have none at all for a kind a newer writer invented. There is no `id:` field and no batching,
+deliberately: design §4.4 replays from byte 0 every time, so there is no cursor, and batching would
+add a second framing layer with its own boundary to lose or duplicate a record at.
+
+**One: clear the record state on `open`.** Every connection replays the whole log from byte 0,
+reconnects included, so a client that appends without resetting double-renders everything after any
+reconnect — and reconnects happen on their own, with no user action to blame it on.
+
+**Two: call `EventSource.close()` on `event: eof`.** The run's `end` record is forwarded first, then
+an `eof` frame carrying `{"reason":"end"}`, and then the server closes the stream. A browser treats
+a closed SSE connection as a dropped one and reconnects, so a client that ignores `eof` still
+renders correctly — given the reset above — but re-reads the whole log every few seconds for as long
+as the tab is open. `eof` means "the run is over, stop retrying"; a stream that drops *without* one
+is a genuine disconnect and should be retried.
+
+Idle streams carry `: keep-alive` SSE comments, which `EventSource` discards, so they can never
+arrive as a record. A run waiting at the gate is idle for as long as the human takes.
+
+One cost, recorded because it is invisible from the client: the stream **stops at the `end` record**,
+while `replay` does not. A record appended after `end` therefore never reaches a client and never
+will, since a reconnect replays from byte 0 and stops there again. Nothing writes past `end` today;
+the alternative was a poller and a descriptor per tab on every finished run.
 
 ### `GET` must have no side effects — Tasks 17, 18 and every UI task
 `SameSite=Strict` ignores **ports**, so a page on any other localhost port is same-site. Its
