@@ -315,7 +315,7 @@ git add -A && git commit -m "feat: parse and tick tasks in feature markdown"
 
 ---
 
-## Task 3: The project store
+## Task 3: The project store — DONE
 
 **Files:**
 - Create: `src/projects.ts`
@@ -330,7 +330,8 @@ export interface Project {
   reportPath?: string       // JUnit XML, for the stall signature
   configDir?: string        // CLAUDE_CONFIG_DIR; undefined means the personal default
   budgetUsd: number
-  model: string             // "claude-sonnet-5-5"
+  planModel: string         // "claude-opus-5-5"
+  implementModel: string    // "claude-sonnet-5-5"
   planEffort: Effort        // "high"
   implementEffort: Effort   // "medium"
 }
@@ -353,7 +354,8 @@ test("an absent store reads as empty rather than throwing", async () => {
 
 test("a new project gets sonnet, high plan effort and medium implement effort", () => {
   const p = defaults({ path: "/repo", testCmd: "bun test" })
-  expect(p.model).toBe("claude-sonnet-5-5")
+  expect(p.planModel).toBe("claude-opus-5-5")
+  expect(p.implementModel).toBe("claude-sonnet-5-5")
   expect(p.planEffort).toBe("high")
   expect(p.implementEffort).toBe("medium")
   expect(p.configDir).toBeUndefined()
@@ -604,7 +606,23 @@ git add -A && git commit -m "feat: atomic, byte-preserving feature file io"
 - Create: `src/runlog.ts`
 - Test: `test/runlog.test.ts`
 
-Per design §2, the raw stream-json appended verbatim is both the live feed and the permanent history. A header line goes first, carrying `claude --version`, the account, the model, the task ref and the start time.
+Per design §2, the raw stream-json appended verbatim is both the live feed and the permanent history.
+
+A header line goes first. It carries everything needed to interpret the rest **and** to resume after a crash:
+
+| Field | Why |
+|---|---|
+| `claudeVersion` | the stream-json envelope shape depends on it |
+| `runId` | names the run |
+| `planSessionId` | gate feedback resumes this one |
+| `implementSessionId` | minted at gate approval, so absent on a run abandoned at the gate |
+| `profile` | which `configDir`, so you can tell which account paid |
+| `planModel`, `implementModel`, `planEffort`, `implementEffort` | effort changes during a run; record the starting values and let the stream show escalations |
+| `projectPath`, `featureFile`, `taskRef` | what was being worked on |
+| `budgetUsd` | the ceiling this run was given |
+| `startedAt` | absolute, ISO 8601 |
+
+Reading the profile is not uniform: the default profile's identity lives in `~/.claude.json`, **not** `~/.claude/.claude.json`, and only a non-default `CLAUDE_CONFIG_DIR` keeps it inside the directory.
 
 Tests: a header is written once; raw lines append unmodified; `replay()` yields the whole file then tails appended lines; `replay()` on a partially written final line does not emit a broken event; two concurrent readers both see every line.
 
@@ -623,23 +641,42 @@ git add -A && git commit -m "feat: append-only run log with replay and tail"
 The flag set, from design §3.1:
 
 ```ts
+/**
+ * One phase invocation. `sessionId` is the PHASE's session, never the run id:
+ * design §3.1 gives a run a planSessionId and an implementSessionId, and
+ * `--session-id` takes a UUID so neither can be derived from the run id.
+ */
+export interface PhaseSpawn {
+  project: Project
+  sessionId: string      // planSessionId or implementSessionId
+  resume: boolean        // --resume vs --session-id
+  model: string          // project.planModel or project.implementModel
+  effort: Effort         // project.planEffort or project.implementEffort, raised on escalation
+  remainingUsd: number   // ceiling - spent, per design §3.4: the flag bounds one PROCESS
+}
+
 const args = [
   "-p",
   "--input-format", "stream-json",
   "--output-format", "stream-json",
   "--verbose",                       // required, or stream-json emits nothing
   "--permission-mode", "bypassPermissions",
-  "--model", project.model,
-  "--effort", effort,
-  "--max-budget-usd", String(ceiling - spent),
-  ...(resume ? ["--resume", runId] : ["--session-id", runId]),
+  "--model", spec.model,
+  "--effort", spec.effort,
+  "--max-budget-usd", String(spec.remainingUsd),
+  ...(spec.resume ? ["--resume", spec.sessionId] : ["--session-id", spec.sessionId]),
 ]
 const env = { ...process.env, ...(project.configDir ? { CLAUDE_CONFIG_DIR: project.configDir } : {}) }
 ```
 
+**`spawn.ts` must not choose the model, the effort or the session.** It takes them. Task 13 owns
+the mapping from phase to session and model, because choosing the wrong session fails *silently*
+(`HANDOFF.md` has the entry). A spawn layer that reached into `project` for "the model" would
+make that mistake unrepresentable in a test.
+
 A non-default profile accepts this exact flag set **(probed)**: with `bypassPermissions`, `claude-sonnet-5-5` and effort `medium`, a `Bash` call and an `Edit` both ran, `permission_denials` came back empty, and the file changed. Note that a managed or enterprise profile may carry policy that refuses some of these; treat that as a supported case and surface it, per design §2.1.
 
-Tests, asserted against the fake binary's argv log: a fresh phase passes `--session-id`; a resumed phase passes `--resume` and never `--session-id`; `CLAUDE_CONFIG_DIR` is set only when the project names one; `--effort` carries the phase's level; a resumed phase may carry a **different** `--effort` than the one that started the session (probed: context survives); **stdin is drained before closing** (design §5: closing it on `result` produced `SessionEnd hook failed: Hook cancelled` in both probes); SIGTERM resolves without throwing.
+Tests, asserted against the fake binary's argv log: a fresh phase passes `--session-id`; a resumed phase passes `--resume` and never `--session-id`; `CLAUDE_CONFIG_DIR` is set only when the project names one; `--effort` carries the phase's level; a resumed phase may carry a **different** `--effort` than the one that started the session (probed: context survives); **the caller's session id is passed through verbatim and never substituted with the run id**; **stdin is drained before closing** (design §5: closing it on `result` produced `SessionEnd hook failed: Hook cancelled` in both probes); SIGTERM resolves without throwing.
 
 ```bash
 git add -A && git commit -m "feat: spawn a phase with session, account, model and effort"
