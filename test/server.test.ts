@@ -1256,8 +1256,6 @@ test("an id runLogPath refuses becomes a 400, not an unhandled rejection", async
   // anyway, because the alternative to a 400 is a rejected promise inside a
   // route handler, which is a 500 with nothing useful in it.
   const dir = await runsDir()
-  const handler = ROUTES[STREAM_ROUTE]
-  if (handler === undefined) throw new Error(`${STREAM_ROUTE} is not registered`)
   const ctx: RouteContext = {
     token: "unused",
     port: 3100,
@@ -1272,11 +1270,18 @@ test("an id runLogPath refuses becomes a 400, not an unhandled rejection", async
     projectsFile: null,
   }
 
-  for (const id of ["..", ".", "", "a/b", "a\\b", "a\0b"]) {
-    const res = await handler(new Request("http://127.0.0.1:3100/api/runs/x/stream"), ctx, { id })
-    expect(res.status, `id ${JSON.stringify(id)}`).toBe(400)
-    expect(res.headers.get("content-type")).toStartWith("application/json")
-    await res.body?.cancel()
+  // Both `:id` reads, not only the stream: the plan route refuses an id the
+  // same way, and for the same reason - the alternative is handing `runLogPath`
+  // an id that makes it throw inside a route.
+  for (const key of [STREAM_ROUTE, PLAN_ROUTE]) {
+    const handler = ROUTES[key]
+    if (handler === undefined) throw new Error(`${key} is not registered`)
+    for (const id of ["..", ".", "", "a/b", "a\\b", "a\0b"]) {
+      const res = await handler(new Request("http://127.0.0.1:3100/api/runs/x/stream"), ctx, { id })
+      expect(res.status, `${key} with id ${JSON.stringify(id)}`).toBe(400)
+      expect(res.headers.get("content-type")).toStartWith("application/json")
+      await res.body?.cancel()
+    }
   }
   expect(await readdir(dir)).toEqual([])
 })
@@ -2045,12 +2050,13 @@ async function planLog(dir: string, id: string, projectPath: string, planPath?: 
   await log.close()
 }
 
+/** The success body is `{ok, plan}` where `plan` is `PlanSource` **field for
+ * field as `src/ui/Gate.tsx` declares it**, so the shell hands it straight to
+ * the card. Spelled loosely here on purpose: these tests are about what goes
+ * over the wire, and a typed parse would assert the type rather than the JSON. */
 interface PlanBody {
   ok?: boolean
-  state?: string
-  planPath?: string
-  plan?: string
-  message?: string
+  plan?: { status?: string; path?: string; markdown?: string; why?: string }
   error?: string
 }
 
@@ -2080,12 +2086,81 @@ test("the plan is served from the path the log recorded, not from the naming con
 
   const { status, body } = await getPlan(l, "plan-ok")
   expect(status).toBe(200)
+  // `toEqual` on the whole body, so an extra key cannot creep in unnoticed:
+  // `plan` is `PlanSource` as `src/ui/Gate.tsx` declares it, and the shell hands
+  // it straight to the card.
   expect(body).toEqual({
     ok: true,
-    state: "ready",
-    planPath: "docs/plans/agent-preferred-name.md",
-    plan: "# The plan\n\nStep 1. café ✓ 🙂\n",
+    plan: {
+      status: "loaded",
+      path: "docs/plans/agent-preferred-name.md",
+      markdown: "# The plan\n\nStep 1. café ✓ 🙂\n",
+    },
   })
+})
+
+test("a project spelled through a symlink still resolves to its own plan", async () => {
+  // `header.projectPath` is the store's spelling, which may be a symlink, while
+  // the containment check needs a canonical root. The control for the escape
+  // test below: if resolving were done by string comparison alone, this would
+  // be refused as an escape.
+  const repo = await cleanRepo()
+  await mkdir(join(repo, "docs", "plans"), { recursive: true })
+  await writeFile(join(repo, "docs", "plans", "p.md"), "# Through a link\n")
+  const link = join(await scratch("orch-plink-"), "repo")
+  await symlink(repo, link)
+
+  const dir = await runsDir()
+  const l = serve({ runsDir: dir })
+  await planLog(dir, "linked-project", link, "docs/plans/p.md")
+
+  const { status, body } = await getPlan(l, "linked-project")
+  expect(status).toBe(200)
+  expect(body.plan).toEqual({ status: "loaded", path: "docs/plans/p.md", markdown: "# Through a link\n" })
+})
+
+test("a plan file that is a symlink inside the repo is read; one pointing out of it is a 400", async () => {
+  // The string checks cannot see this: `stat` and `readFile` follow symlinks,
+  // so a `docs/plans/x.md` that links to `~/.ssh/id_rsa` - or a `docs/plans`
+  // that does - passes every check on the path and still reads the key. The
+  // agent that writes plans has shell access in that repo, so the link is one
+  // command away.
+  const secret = join(await scratch("orch-secret-"), "id_rsa")
+  await writeFile(secret, "PRIVATE KEY MATERIAL\n")
+  const dir = await runsDir()
+  const l = serve({ runsDir: dir })
+
+  // A link to a file inside the repo: a legitimate thing someone may do, and
+  // the control that proves the refusals below are about leaving the repo.
+  const ok = await cleanRepo()
+  await mkdir(join(ok, "docs", "plans"), { recursive: true })
+  await writeFile(join(ok, "docs", "the-real-plan.md"), "# Linked inside\n")
+  await symlink(join(ok, "docs", "the-real-plan.md"), join(ok, "docs", "plans", "p.md"))
+  await planLog(dir, "link-inside", ok, "docs/plans/p.md")
+  const inside = await getPlan(l, "link-inside")
+  expect(inside.status).toBe(200)
+  expect(inside.body.plan).toEqual({ status: "loaded", path: "docs/plans/p.md", markdown: "# Linked inside\n" })
+
+  // The plan file itself is a link out of the repo.
+  const viaFile = await cleanRepo()
+  await mkdir(join(viaFile, "docs", "plans"), { recursive: true })
+  await symlink(secret, join(viaFile, "docs", "plans", "p.md"))
+  await planLog(dir, "link-file", viaFile, "docs/plans/p.md")
+
+  // The directory holding it is a link out of the repo.
+  const viaDir = await cleanRepo()
+  const elsewhere = await scratch("orch-elsewhere-")
+  await writeFile(join(elsewhere, "p.md"), "PRIVATE KEY MATERIAL\n")
+  await mkdir(join(viaDir, "docs"), { recursive: true })
+  await symlink(elsewhere, join(viaDir, "docs", "plans"))
+  await planLog(dir, "link-dir", viaDir, "docs/plans/p.md")
+
+  for (const id of ["link-file", "link-dir"]) {
+    const { status, body, raw } = await getPlan(l, id)
+    expect(status, id).toBe(400)
+    expect(body.error, id).toContain("repository")
+    expect(raw, id).not.toContain("PRIVATE KEY")
+  }
 })
 
 test("a run that never dictated a path is undictated, which is not the same as unreadable", async () => {
@@ -2101,10 +2176,10 @@ test("a run that never dictated a path is undictated, which is not the same as u
   for (const id of ["no-path", "empty-path"]) {
     const { status, body } = await getPlan(l, id)
     expect(status, id).toBe(200)
-    expect(body.state, id).toBe("undictated")
-    expect(body.planPath, id).toBeUndefined()
-    // Prose, because the gate renders it to a person.
-    expect(body.message, id).toContain("no plan path")
+    // No path and no prose, exactly as `PlanSource` declares this shape: the
+    // gate owns that sentence, and a second copy here would be a second place
+    // for it to drift.
+    expect(body.plan, id).toEqual({ status: "undictated" })
   }
 })
 
@@ -2119,10 +2194,11 @@ test("a dictated path with nothing at it is unreadable, and says which path it l
 
   const { status, body } = await getPlan(l, "missing")
   expect(status).toBe(200)
-  expect(body.state).toBe("unreadable")
-  expect(body.planPath).toBe("docs/plans/never-written.md")
-  expect(body.message).toContain("docs/plans/never-written.md")
-  expect(body.plan).toBeUndefined()
+  expect(body.plan?.status).toBe("unreadable")
+  expect(body.plan?.path).toBe("docs/plans/never-written.md")
+  expect(body.plan?.why).toContain("docs/plans/never-written.md")
+  // Nothing is offered to render: the card disables Approve on this shape.
+  expect(body.plan?.markdown).toBeUndefined()
 })
 
 test("a plan path that is a directory, is not UTF-8, or is enormous is unreadable rather than a 500", async () => {
@@ -2144,11 +2220,11 @@ test("a plan path that is a directory, is not UTF-8, or is enormous is unreadabl
     await planLog(dir, id, repo, planPath)
     const { status, body } = await getPlan(l, id)
     expect(status, id).toBe(200)
-    expect(body.state, id).toBe("unreadable")
-    expect(body.planPath, id).toBe(planPath)
-    expect(body.plan, id).toBeUndefined()
-    if (says !== "") expect(body.message, id).toContain(says)
-    expect(body.message, id).toBeTypeOf("string")
+    expect(body.plan?.status, id).toBe("unreadable")
+    expect(body.plan?.path, id).toBe(planPath)
+    expect(body.plan?.markdown, id).toBeUndefined()
+    if (says !== "") expect(body.plan?.why, id).toContain(says)
+    expect(body.plan?.why, id).toBeTypeOf("string")
   }
 })
 
@@ -2193,8 +2269,8 @@ test("a project whose repo has moved is unreadable with git's own reason, not a 
 
   const { status, body } = await getPlan(l, "moved")
   expect(status).toBe(200)
-  expect(body.state).toBe("unreadable")
-  expect(body.message).toContain("git repository")
+  expect(body.plan?.status).toBe("unreadable")
+  expect(body.plan?.why).toContain("git repository")
 })
 
 test("the plan route refuses an unusable run id and 404s a run with no log", async () => {
@@ -2223,7 +2299,7 @@ test("reading a plan changes nothing on disk, because a local page can make this
   const before = (await readdir(dir)).sort()
   const res = await call(l, { path: "/api/runs/quiet/plan", origin: null })
   expect(res.status).toBe(200)
-  expect(JSON.parse(res.body).state).toBe("ready")
+  expect(JSON.parse(res.body).plan.status).toBe("loaded")
   expect((await readdir(dir)).sort()).toEqual(before)
   expect((await readdir(join(repo, "docs", "plans"))).sort()).toEqual(["p.md"])
   // Still a document, not a page: nothing here renders HTML.
@@ -2603,11 +2679,32 @@ test("the real entry point builds a server that can register a project and start
     const startedBody = (await started.json()) as { ok?: boolean; runId?: string }
     expect(started.status).toBe(201)
     expect(startedBody.runId).toBeTypeOf("string")
+    const log = join(home, ".orch", "runs", `${startedBody.runId}.jsonl`)
     await until(
       async () =>
         (await readdir(join(home, ".orch", "runs")).catch((): string[] => [])).includes(`${startedBody.runId}.jsonl`),
       "the run log the machine opened under this HOME",
     )
+
+    // Waited out rather than killed mid-phase: the double is scriptless, so it
+    // exits 2 and the run fails, and the `end` record is how the machine says
+    // it has let go of the lock and the repo. Killing while a `git` of its own
+    // was still running would leave one writing into a directory `afterAll` is
+    // about to `rm -rf`, which is the flake CLAUDE.md's history is full of.
+    await until(
+      async () => (await readFile(log, "utf8").catch(() => "")).includes('"kind":"end"'),
+      "the run to end, which the scriptless double makes it do",
+      20_000,
+    )
+    const records = (await readFile(log, "utf8"))
+      .split("\n")
+      .filter((line) => line !== "")
+      .map((line) => JSON.parse(line) as RunRecord)
+    const end = records.find((r) => r.kind === "end")
+    // Asserted rather than assumed: this is what the double actually produces,
+    // and a `done` here would mean the fake had somehow satisfied a phase.
+    expect(end).toMatchObject({ kind: "end", state: "failed" })
+    expect(records[0]).toMatchObject({ kind: "header", projectPath: repo, taskRef: "T1" })
   } finally {
     server.kill()
     await server.exited

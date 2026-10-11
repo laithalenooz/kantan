@@ -2513,9 +2513,9 @@ export type Acted = { ok: true } | Refused
  *    is also where the path checks belong, because this is the code that later
  *    writes to that file.
  *
- * It deliberately keeps `answer` as well, which the server's port does not yet
- * have: a run that asked a question is otherwise unreachable, since stopping
- * and resuming only re-park it.
+ * It keeps `answer` as well, which the server's port now has too: a run that
+ * asked a question is otherwise unreachable, since stopping and resuming only
+ * re-park it. `POST /api/runs/:id/answer` is the route.
  */
 export interface Runner {
   start(request: StartRequest): Promise<Started>

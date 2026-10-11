@@ -290,21 +290,23 @@ the alternative was a poller and a descriptor per tab on every finished run.
 
 ### The plan the gate renders has its own route, with three states — the gate UI
 
-`GET /api/runs/:id/plan` answers **200** with one of three shapes, and the gate's `undictated` and
-`unreadable` states are two of them:
+`GET /api/runs/:id/plan` answers **200** with `{"ok":true,"plan":<PlanSource>}`, where `plan` is
+`PlanSource` from `src/ui/Gate.tsx` **field for field**, so `App.tsx` passes it straight to the card
+instead of keeping a translation table:
 
 ```
-{"ok":true,"state":"ready","planPath":"docs/plans/2026-10-11-x-t7.md","plan":"# The plan\n…"}
-{"ok":true,"state":"undictated","message":"…"}
-{"ok":true,"state":"unreadable","planPath":"…","message":"…"}
+{"ok":true,"plan":{"status":"loaded","path":"docs/plans/2026-10-11-x-t7.md","markdown":"# The plan\n…"}}
+{"ok":true,"plan":{"status":"unreadable","path":"docs/plans/…","why":"…"}}
+{"ok":true,"plan":{"status":"undictated"}}
 ```
 
 - **All three are a 200, because all three are states of a run** rather than failed requests. A run
   can legitimately sit at a gate with no plan behind it: `ORCH: done` without a file written is
   `unreadable`, and a log that never carried a path at all - an older log, or a run resumed from
   one, where `src/run.ts` rehydrates `folded.planPath ?? ""` - is `undictated`. **Switch on
-  `state`, and render `message` as written**: it is prose for a person, which is what the card's
-  `role="alert"` needs.
+  `status`, and render `why` as written**: it is prose for a person, which is what the card needs.
+  `undictated` deliberately carries no text, as the component declares it - the gate owns that
+  sentence, and a copy on the server would be a second place for it to drift.
 - **A 4xx means the request cannot be answered**: 400 for an unusable run id, 404 for a run with no
   log, and 400 for a recorded path that does not sit inside the repo. That last one never quotes
   the path back, so do not expect to render it.
@@ -312,7 +314,15 @@ the alternative was a poller and a descriptor per tab on every finished run.
   from the branch name and the date the run *started*, so a convention-derived path would point at
   a file nothing wrote the moment either moved. The plan path is **repo-relative**, resolved against
   git's own root for `header.projectPath`; a project whose repo has moved is `unreadable` carrying
-  git's reason.
+  git's reason. `path` in the answer is always the path **the log recorded**, never the resolved
+  one: that is what the human would look for, and a resolved path would say where a symlink inside
+  their repo points.
+- **Symlinks are resolved before the read, and a link out of the repo is a 400.** `stat` and
+  `readFile` follow links, so a `docs/plans/x.md` - or a `docs/plans` - that points at
+  `~/.ssh/id_rsa` would otherwise be rendered in the gate, and the agent writing plans has shell
+  access in that repo. The file is then opened `O_NOFOLLOW` and read through that one handle, so a
+  final-component swap after the check is refused rather than read. A link to a file **inside** the
+  repo is served normally.
 - **A plan over 1 MiB is `unreadable` rather than served**, with its size in the message. The file
   is still on disk; nothing truncates it.
 - Invalid UTF-8 is `unreadable` too, rather than decoded with U+FFFD: a mangled plan is one someone
@@ -354,13 +364,14 @@ strings, and answers **201** `{"ok":true,"runId"}`. `POST /api/runs/:id/approve`
   run parked at `waiting(question)` **or `waiting(blocked)`**, as the next turn on the session that
   asked. Sending a reply to `/feedback` would put it into `feedbackPrompt`, which opens with "a
   human read that plan at the gate and did not approve it".
-- **No action takes a `waitId`, and none will.** The gate's `${runId}#${phaseRecordIndex}` is a
-  client-side disambiguator: which states accept which action is the machine's rule, and a server
-  that re-read the log to check an id would encode run state a second time and race between the
-  check and the doing — the exact race the `Runner` port exists to avoid. The index is derivable
-  where the gate already reads: every stream connection replays from byte 0, so a client counting
-  `record` events has the log's own record index. Sending `waitId` to an action is a 400, like any
-  unknown key.
+- **No action takes a `waitId`, and none will.** The gate's `${runId}#${phaseRecordIndex}` stays
+  entirely client-side: which states accept which action is the machine's rule, and a server that
+  re-read the log to check an id would encode run state a second time and race between the check
+  and the doing — the exact race the `Runner` port exists to avoid. `Gate.tsx` treats it as an
+  opaque string ("anything that changes every time the run stops for the human"), so the shell is
+  free to count what it is already reading: every stream connection replays from byte 0, so a
+  client counting `record` events has an index of the log's own records. Sending `waitId` to an
+  action is a 400, like any unknown key.
 - **503** on every action from a server launched without a phase machine. `bun run src/server.ts`
   is **no longer** one: `import.meta.main` constructs `createRunner({ projectsFile, runsDir })` and
   passes the same two paths to `createServer`, so the store the registration route writes is the

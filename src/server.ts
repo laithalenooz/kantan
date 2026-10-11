@@ -1,5 +1,6 @@
 import { randomBytes, timingSafeEqual } from "node:crypto"
-import { readFile, stat } from "node:fs/promises"
+import { constants } from "node:fs"
+import { open, realpath, stat } from "node:fs/promises"
 import { isAbsolute, resolve, sep } from "node:path"
 import type { Server } from "bun"
 import { requireUsableRepo } from "./git"
@@ -810,28 +811,35 @@ const MAX_PLAN_BYTES = 1024 * 1024
 /**
  * What the gate needs to render, in the three shapes it already models.
  *
- * Why these are a 200 and not a 404: a run can legitimately be parked at a gate
- * with no plan behind it. The implement prompt tells the agent to write one at a
- * dictated path, and an agent that answers `ORCH: done` without writing it
- * parks the run at a gate rendering nothing (HANDOFF names the gate UI as where
- * that surfaces). So "there is no plan" is a **state of the run**, which the
- * gate shows with Approve disabled, rather than a request that failed. A 4xx
- * here is reserved for a request that cannot be answered at all: an unusable
- * run id, a run with no log, or a recorded path that points outside the repo.
+ * **Deliberately `PlanSource` from `src/ui/Gate.tsx`, field for field**, so the
+ * shell passes this through instead of maintaining a translation table. Two
+ * vocabularies for one three-state answer is how a card ends up stuck in a
+ * state the server never meant - and this type is new, so there is nothing to
+ * be compatible with except the component that consumes it.
  *
- * `message` is prose for a human, because the gate shows a refusal in a
- * `role="alert"`: a code alone would be rendered to someone who then has to
- * guess what to do about it.
+ * Why all three are a 200 and not a 404: a run can legitimately be parked at a
+ * gate with no plan behind it. The plan prompt dictates a path, and an agent
+ * that answers `ORCH: done` without writing one parks the run at a gate with
+ * nothing to show (HANDOFF names the gate UI as where that surfaces). So "there
+ * is no plan" is a **state of the run**, which the gate renders with Approve
+ * disabled, rather than a request that failed. A 4xx here is reserved for a
+ * request that cannot be answered at all: an unusable run id, a run with no
+ * log, or a recorded path that does not sit inside the repo.
+ *
+ * `why` is prose for a human, because that is what the card renders. The
+ * `undictated` shape carries none, exactly as the component declares it: the
+ * gate owns that sentence, and a second copy here would be a second place for
+ * it to drift.
  */
-export type PlanAnswer =
-  | { ok: true; state: "ready"; planPath: string; plan: string }
-  /** No `phase` record carried a `planPath`, so the run never dictated one -
-   * an older log, or a run that failed before the plan phase started. */
-  | { ok: true; state: "undictated"; message: string }
+export type PlanSource =
+  | { status: "loaded"; path: string; markdown: string }
   /** A path was dictated and its contents cannot be had: never written, since
-   * deleted, not a file, not UTF-8, too large, or a project whose repo has
-   * moved. */
-  | { ok: true; state: "unreadable"; planPath: string; message: string }
+   * deleted, not a file, not UTF-8, too large, outside the repo once its
+   * symlinks are resolved, or a project whose repo has moved. */
+  | { status: "unreadable"; path: string; why: string }
+  /** No `phase` record carried a usable `planPath`, so the run never dictated
+   * one - an older log, or a run that failed before its plan phase started. */
+  | { status: "undictated" }
 
 /**
  * The path a plan may be recorded at, or `null`.
@@ -913,14 +921,7 @@ async function readPlan(ctx: RouteContext, id: string): Promise<Response> {
   // `folded.planPath ?? ""`, so a run resumed from a log that never carried one
   // writes `planPath: ""` on its next phase record. It names no file either
   // way, and "the run never dictated a path" is what the gate shows for it.
-  if (planPath === null || planPath === "") {
-    return planAnswer({
-      ok: true,
-      state: "undictated",
-      message:
-        "this run's log records no plan path, so there is nothing to show. A run that failed before its plan phase started, or one resumed from a log written without one, looks like this.",
-    })
-  }
+  if (planPath === null || planPath === "") return planAnswer({ status: "undictated" })
 
   // Before anything touches the filesystem, so a traversal is refused rather
   // than attempted. Loud - a 400 - because a log recording a path outside its
@@ -930,70 +931,133 @@ async function readPlan(ctx: RouteContext, id: string): Promise<Response> {
   if (relative === null || projectPath === null) return refuse(400, PLAN_OUTSIDE_REPO)
 
   // git's own answer for the root, so a project registered through a symlink
-  // resolves to the directory the plan was actually written in. A project whose
-  // repo has moved or is no longer a repository is `unreadable` rather than a
+  // resolves to the directory the plan was actually written in, and so the
+  // containment check below compares two canonical paths. A project whose repo
+  // has moved or is no longer a repository is `unreadable` rather than a
   // refusal: the request was fine, and the gate's own state for "the plan
   // cannot be had" is exactly what that is.
   let root: string
   try {
     root = (await requireUsableRepo(projectPath)).root
   } catch (cause) {
-    return planAnswer({ ok: true, state: "unreadable", planPath, message: (cause as Error).message })
+    return planAnswer(unreadable(planPath, (cause as Error).message))
   }
 
-  const file = resolve(root, relative)
-  // Unreachable given `plannedPath`, and kept because the two guards fail in
-  // different ways: that one reads the recorded string, this one reads the
-  // result of joining it. A future edit that loosened either alone would still
-  // meet this.
-  if (file !== root && !file.startsWith(root + sep)) return refuse(400, PLAN_OUTSIDE_REPO)
+  const joined = resolve(root, relative)
+  // Unreachable given `plannedPath`, and kept because the two read different
+  // things: that one reads the recorded string, this one the result of joining
+  // it. A future edit that loosened either alone would still meet this.
+  if (!inside(joined, root)) return refuse(400, PLAN_OUTSIDE_REPO)
 
-  let size: number
+  /**
+   * **The string checks above are not enough, and this is the line that makes
+   * the route safe.** `stat` and `readFile` follow symlinks, so a
+   * `docs/plans/x.md` that links to `~/.ssh/id_rsa` - or a `docs/plans`
+   * directory that does - passes every check on the path and still reads the
+   * key. The agent that writes plans has shell access in that repo, so the link
+   * is one command away.
+   *
+   * Resolved once, and then **opened** with `O_NOFOLLOW` and read through that
+   * one handle: the window between resolving and reading is a window the same
+   * agent can swap the final component in, and a handle-based `stat` and read
+   * cannot be pointed at a second file after the size was checked. Only the
+   * final component is covered, which is the realistic case; an intermediate
+   * directory swapped mid-request would need `openat` on every segment, which
+   * is a different piece of machinery than this route should carry.
+   */
+  let real: string
   try {
-    const info = await stat(file)
-    if (!info.isFile()) {
-      return planAnswer({
-        ok: true,
-        state: "unreadable",
-        planPath,
-        message: `${planPath} exists in ${root} but is not a file, so there is no plan to read.`,
-      })
-    }
-    size = info.size
-  } catch {
-    // The common case, and the one HANDOFF predicted: the agent answered
-    // `ORCH: done` without writing the plan it was told to write.
-    return planAnswer({
-      ok: true,
-      state: "unreadable",
-      planPath,
-      message: `${planPath} is the plan path this run dictated, and there is no file there. The agent ended its planning turn without writing one.`,
-    })
-  }
-  if (size > MAX_PLAN_BYTES) {
-    return planAnswer({
-      ok: true,
-      state: "unreadable",
-      planPath,
-      message: `${planPath} is ${size} bytes, past the ${MAX_PLAN_BYTES} a plan may be, so it is not rendered here. It is still on disk.`,
-    })
-  }
-
-  try {
-    // Not `utf8`: a decoder that substitutes U+FFFD would show a human mangled
-    // prose and let them approve it. Invalid bytes are `unreadable` instead.
-    const bytes = await readFile(file)
-    const plan = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes)
-    return planAnswer({ ok: true, state: "ready", planPath, plan })
+    real = await realpath(joined)
   } catch (cause) {
-    return planAnswer({ ok: true, state: "unreadable", planPath, message: (cause as Error).message })
+    const code = (cause as NodeJS.ErrnoException).code
+    // The common case, and the one HANDOFF predicted: the agent answered
+    // `ORCH: done` without writing the plan it was told to write. `ENOTDIR` is
+    // the same answer one level up - a path component that is a file.
+    if (code === "ENOENT" || code === "ENOTDIR") {
+      return planAnswer(
+        unreadable(
+          planPath,
+          `${planPath} is the plan path this run dictated, and there is no file there. The agent ended its planning turn without writing one.`,
+        ),
+      )
+    }
+    return planAnswer(unreadable(planPath, (cause as Error).message))
   }
+  if (!inside(real, root)) return refuse(400, PLAN_OUTSIDE_REPO)
+
+  // `O_NONBLOCK` as well, so a FIFO swapped in where the plan was does not hang
+  // the request on a writer that never comes.
+  let handle: Awaited<ReturnType<typeof open>>
+  try {
+    handle = await open(real, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+  } catch (cause) {
+    // `ELOOP` is the final component having become a symlink since `realpath`
+    // answered, which is the swap this flag exists to refuse.
+    return planAnswer(unreadable(planPath, (cause as Error).message))
+  }
+  try {
+    const info = await handle.stat()
+    if (!info.isFile()) {
+      return planAnswer(unreadable(planPath, `${planPath} is not a file, so there is no plan to read.`))
+    }
+    if (info.size > MAX_PLAN_BYTES) {
+      return planAnswer(
+        unreadable(
+          planPath,
+          `${planPath} is ${info.size} bytes, past the ${MAX_PLAN_BYTES} a plan may be, so it is not rendered here. It is still on disk.`,
+        ),
+      )
+    }
+    // Read through the handle the size came from, and read it **bounded**: the
+    // check above is a cheap refusal that can name the size, but a file appended
+    // to between the two would be read to its new end, and bounding what one
+    // GET spends is the cap's only job. One byte past the cap is what makes
+    // "too large" detectable here rather than silently truncated - and a short
+    // read is why this loops, since dropping half of the document a human is
+    // being asked to approve is the worst thing this route could do.
+    const buffer = new Uint8Array(MAX_PLAN_BYTES + 1)
+    let total = 0
+    while (total < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, total, buffer.length - total, total)
+      if (bytesRead === 0) break
+      total += bytesRead
+    }
+    if (total > MAX_PLAN_BYTES) {
+      return planAnswer(
+        unreadable(planPath, `${planPath} is past the ${MAX_PLAN_BYTES} bytes a plan may be, so it is not rendered here.`),
+      )
+    }
+    // Not `utf8`: a decoder that substitutes U+FFFD would show a human mangled
+    // prose and let them approve it, so invalid bytes are `unreadable` instead.
+    const markdown = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(buffer.subarray(0, total))
+    return planAnswer({ status: "loaded", path: planPath, markdown })
+  } catch (cause) {
+    return planAnswer(unreadable(planPath, (cause as Error).message))
+  } finally {
+    // Closed because a handle left to the garbage collector is an error on bun
+    // 1.4, and swallowing a close failure because the answer is already decided
+    // by then - letting it throw would turn a served plan into a 500.
+    await handle.close().catch((cause: unknown) => console.error(`closing ${real} failed:`, cause))
+  }
+}
+
+/** Whether `path` is `root` or sits under it. Both sides are canonical where
+ * this is called, so there is nothing left for a link to hide behind. */
+function inside(path: string, root: string): boolean {
+  return path === root || path.startsWith(root + sep)
+}
+
+/** The path the **log** recorded is what the gate prints, never the resolved
+ * one: that is the path the prompt dictated and the one a human would look for,
+ * and a resolved path would leak where a symlink inside their repo points. */
+function unreadable(path: string, why: string): PlanSource {
+  return { status: "unreadable", path, why }
 }
 
 /** No caching, as nothing else here is cached: a plan is rewritten when the
  * human sends feedback, and a cached one would show the previous round's. */
-function planAnswer(answer: PlanAnswer): Response {
-  return Response.json(answer, { headers: { "Cache-Control": "no-store" } })
+function planAnswer(plan: PlanSource): Response {
+  return Response.json({ ok: true, plan }, { headers: { "Cache-Control": "no-store" } })
 }
 
 // --- The actions ------------------------------------------------------------
