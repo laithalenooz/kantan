@@ -47,6 +47,25 @@ abort wiring fails `test/server.test.ts`'s descriptor test, and forcing `isTermi
 fails three more. Anything else that follows a run log — Task 18's stop, a future log viewer — owes
 the same abort.
 
+## The run-log header is load-bearing in ways its type does not show
+
+`src/runindex.ts` reads it to build the task tree, and three fields have constraints nothing
+enforces:
+
+| Field | Constraint | What breaks |
+|---|---|---|
+| `projectPath` | the path **as registered in `projects.json`**, never git's resolved `Repo.root` | `requireUsableRepo` resolves symlinks; `projects.json` stores what the user typed. Write the resolved root and **every log for a symlinked project is skipped as unregistered**, so the project silently vanishes from the tree |
+| `featureFile` | repo-relative | `taskBranchName` throws and the row has no branch |
+| `taskRef` | non-blank | same |
+
+`TaskStatus` is keyed on **`(projectPath, featureFile, taskRef)`**. Keying on the ref alone merges
+two different tasks, because every feature file has a `T1`, and newest-wins then hides one.
+
+**`featureFileHash` is underspecified and Task 13 owns it.** No algorithm, no stated input, and
+`tickTaskInFile` takes a `FeatureFile` rather than a hash — so the comparison the field exists for
+does not exist yet. Hash the **raw bytes**: `src/featurefile.ts` preserves a BOM and CRLF on
+purpose, and decoding normalises exactly the differences that prove a human edited the file.
+
 ## The two ids that fail silently
 
 A run owns `planSessionId` and `implementSessionId`. Passing the wrong one runs the implement

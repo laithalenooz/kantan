@@ -388,6 +388,22 @@ different mechanism.
 
 This is the plan gate's exact failure case: a run waiting for a human sits idle for minutes.
 
+### `runindex` reads a window, so `costUsd` is a floor — Task 24 and the UI
+Except for `done` and `failed`, where an `end` record gives the authoritative total. Do not render
+a floor as an exact figure.
+
+`running` is reachable **only** when the caller passes `liveRunIds`; without it a live run reads as
+`interrupted`. `branch: ""` means the name could not be derived. A truncated tail is
+indistinguishable from a missing `end` record — both fold to `interrupted`, and `resumeFrom` is the
+last **complete** `phase` record, which may be one step behind what the server was doing.
+
+### The merge predicate is the cost, not the reading — Task 12 or 13 owns caching
+Measured over 500 logs: `indexRuns` reads **4.6% of 718 MiB in 89-180ms**. Adding a 5ms-per-row
+merge predicate (roughly a warm `git merge-base --is-ancestor`) takes it to **2733ms**, awaited one
+row at a time. `runindex` deliberately does not cache that: only the caller knows when a branch can
+have moved, and a stale cache would feed wrong merge state to the guard whose job is refusing a
+second run against finished work.
+
 ### A run has TWO session ids and using the wrong one fails silently — Task 13
 `runId` names the run. `planSessionId` and `implementSessionId` are separate conversations, and
 `--session-id` takes a UUID so neither can be derived from `runId`. Gate feedback resumes the
