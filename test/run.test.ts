@@ -192,6 +192,14 @@ for (const step of job.steps) {
       results.push(await run.sendFeedback({ ...options, feedback: step.text ?? "" }))
     } else if (step.action === "answer") {
       results.push(await run.answerQuestion({ ...options, answer: step.text ?? "" }))
+    } else if (step.action === "stop-absent") {
+      // A stop on a run this process never drove, which is what the server
+      // does after a restart.
+      try {
+        results.push(await run.stopRun(options))
+      } catch (e) {
+        results.push({ error: (e as Error).message, code: (e as { code?: unknown }).code })
+      }
     } else if (step.action === "live") {
       results.push({ live: run.liveRunIds() })
     } else if (step.action === "runner") {
@@ -298,7 +306,13 @@ async function workspace(
   name: string,
   opts: { turns?: Turn[]; feature?: string } = {},
 ): Promise<Ws> {
-  const dir = join(repoRoot, ".orch-test", "run", name)
+  // Keyed on the pid, not on the case name alone. This repo is developed with
+  // several agents in one working tree and each of them runs `bun run check`,
+  // so two processes **will** run this file at once - and with a shared
+  // directory the second one's `rm -rf` deletes the first one's repo, cursor
+  // and argv log mid-test. Reproduced: two concurrent runs failed 10 and 1
+  // cases respectively; keyed per process, both pass.
+  const dir = join(repoRoot, ".orch-test", "run", `${name}-${process.pid}`)
   await rm(dir, { recursive: true, force: true })
   const repo = join(dir, "repo")
   await mkdir(join(repo, "docs", "features"), { recursive: true })
@@ -1744,3 +1758,48 @@ test("a run parked at the gate is reported live, and stops being live when it en
   expect(out.results[1]).toMatchObject({ live: [out.runId] })
   expect(out.results[3]).toMatchObject({ live: [] })
 }, 180_000)
+
+/**
+ * The port in `src/server.ts` is satisfied **structurally**: the machine
+ * imports nothing from the server, so nothing but this line checks that the
+ * two shapes still agree. Both imports are types and are erased, so
+ * `src/version.ts` never loads here and no binary is resolved.
+ *
+ * If this stops compiling, the port and the machine have drifted - which is
+ * the whole failure this one line exists to catch, since nothing wires a real
+ * runner yet.
+ */
+import type { Runner as ServerRunner } from "../src/server"
+type MachineRunner = ReturnType<(typeof import("../src/run"))["createRunner"]>
+const _satisfiesThePort: ServerRunner = null as unknown as MachineRunner
+void _satisfiesThePort
+
+test("stopping a finished run is a wrong-state refusal, not an unknown run", async () => {
+  const ws = await workspace("stop-finished")
+  const done = await fixture(ws, "done", "ORCH: done")
+  await script(ws, [{ fixture: PLAN_FIXTURE }, { fixture: done }])
+
+  const out = await drive(ws, {
+    steps: [{ action: "start" }, { action: "approve" }, { action: "stop-absent" }],
+  })
+  expect(out.results[1]).toMatchObject({ state: { kind: "done" } })
+  // The task tree still shows that row, so "no such run" would be a lie about
+  // something the human is looking at.
+  expect(out.results[2]?.["code"]).toBe("wrong-state")
+  expect(String(out.results[2]?.["error"])).toContain("already finished")
+}, 120_000)
+
+test("stopping a run whose server died reports it already interrupted", async () => {
+  const ws = await workspace("stop-dead")
+  await script(ws, [{ fixture: PLAN_FIXTURE }])
+
+  const first = await drive(ws, { steps: [{ action: "start" }] })
+  // A second process: the registry is empty and the lock names a dead pid.
+  const second = await drive(ws, { runId: first.runId, steps: [{ action: "stop-absent" }] })
+  expect(second.results[0]).toMatchObject({ state: { kind: "interrupted", resumeFrom: "plan" } })
+  expect(String((second.results[0]?.["warnings"] as string[])[0])).toContain("already interrupted")
+
+  // And the run is still resumable, which is what makes the no-op honest.
+  const third = await drive(ws, { runId: first.runId, steps: [{ action: "resume" }] })
+  expect(third.results[0]).toMatchObject({ state: { kind: "waiting", reason: "gate" } })
+}, 120_000)

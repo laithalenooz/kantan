@@ -56,8 +56,23 @@ export interface RunHeader {
    * shows up in the stream rather than being patched in here. */
   planEffort: Effort
   implementEffort: Effort
+  /**
+   * The project, spelled **as `projects.json` spells it** - never git's
+   * resolved `Repo.root`.
+   *
+   * `requireUsableRepo` resolves symlinks and `projects.json` stores what the
+   * user typed. Write the resolved root and every log for a symlinked project
+   * is skipped as belonging to no registered project, so the project silently
+   * vanishes from the task tree.
+   */
   projectPath: string
+  /** Repo-relative, or `taskBranchName` throws and the task's row has no
+   * branch at all. */
   featureFile: string
+  /** Non-blank, for the same reason. `src/runindex.ts` keys a task on
+   * **(`projectPath`, `featureFile`, `taskRef`)**, because every feature file
+   * in a repo has a `T1` and keying on the ref alone merges two tasks and
+   * hides the older one. */
   taskRef: string
   /**
    * A hash of the feature file's bytes as the run parsed them.

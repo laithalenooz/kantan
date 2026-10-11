@@ -802,6 +802,13 @@ function taskSpecFor(
  * file, exits, and the gate can then sit for hours across a server restart.
  */
 async function planTurn(run: ActiveRun, prompt: string, resume: boolean): Promise<RunResult> {
+  // Before the record, not after: a `phase` record carries a `sessionId`
+  // exactly when it spawned a process, and a budget refusal spawns nothing. A
+  // record written first would claim a process that never existed, which is
+  // the invariant the per-process cost windows read.
+  const refusal = await refuseIfSpent(run, "plan")
+  if (refusal !== null) return refusal
+
   run.phase = "plan"
   await run.log.append({
     kind: "phase",
@@ -810,9 +817,6 @@ async function planTurn(run: ActiveRun, prompt: string, resume: boolean): Promis
     planPath: run.planPath,
     sessionId: run.planSessionId,
   })
-
-  const refusal = await refuseIfSpent(run, "plan")
-  if (refusal !== null) return refusal
 
   if (stopping(run)) return await interrupted(run, "plan")
   const session = PhaseSession.start(
@@ -884,6 +888,14 @@ async function drive(run: ActiveRun, work: () => Promise<RunResult>): Promise<Ru
     try {
       return await work()
     } catch (e) {
+      // A refusal is passed through rather than recorded as a failure, and is
+      // **unreachable from inside a drive today**: every `new RunRefusal` in
+      // this file is in `refusing`, `repoRelative`, `requireRef`,
+      // `taskSpecFor`, `requireRest`, `rehydrate`, `resumeRun`, `stopRun`,
+      // `stopAbsent`, `projectForRun`, `projectAt` or this guard itself, all of
+      // which run before `work()` is called. If a refusal ever does come from
+      // inside, this branch has to retire the run first - otherwise it leaves
+      // the lock and the registry entry behind with nothing driving them.
       if (e instanceof RunRefusal) throw e
       return await fail(
         run,
@@ -2029,12 +2041,7 @@ export async function answerQuestion(
  */
 export async function stopRun(options: ActionOptions): Promise<RunResult> {
   const run = active.get(options.runId)
-  if (run === undefined) {
-    throw new RunRefusal(
-      "unknown-run",
-      `kantan has no run ${options.runId} in flight in this process, so there is no child to stop. A run whose server died is already stopped: resume it, or leave it.`,
-    )
-  }
+  if (run === undefined) return await stopAbsent(options)
   const rest = run.rest
   if (rest !== null && (rest.kind === "done" || rest.kind === "failed")) {
     throw new RunRefusal(
@@ -2057,6 +2064,59 @@ export async function stopRun(options: ActionOptions): Promise<RunResult> {
     return out
   }
   return await interrupted(run, run.phase)
+}
+
+/**
+ * Stopping a run this process is not driving, which the log has to answer.
+ *
+ * A finished run is `wrong-state` rather than `unknown-run`: the task tree
+ * still shows it, so a 404 would tell the human that a row they are looking at
+ * does not exist. A run whose *server* died is already stopped - there is no
+ * child and no drive - so that reports the state the log folds to and touches
+ * nothing. Its lock names a dead process, which `acquireRunLock` reclaims on
+ * the next start, so the project is not left busy either.
+ */
+async function stopAbsent(options: ActionOptions): Promise<RunResult> {
+  const path = runLogPath(options.runId, options.runsDir)
+  let folded: Folded
+  try {
+    folded = await foldForResume(path)
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new RunRefusal("unknown-run", `kantan has no run ${options.runId}: there is no log at ${path}`, {
+        cause: e,
+      })
+    }
+    throw e
+  }
+  if (folded.ended !== null) {
+    throw new RunRefusal(
+      "wrong-state",
+      `run ${options.runId} has already finished (${folded.ended.state}), so there is nothing to stop.`,
+    )
+  }
+  const phase = folded.lastPhase?.phase ?? "plan"
+  return {
+    runId: options.runId,
+    state: { kind: "interrupted", resumeFrom: phase },
+    costUsd: folded.spent,
+    branch: branchOf(folded.header),
+    planPath: folded.planPath ?? "",
+    warnings: [
+      `run ${options.runId} was not being driven by this server, so there was nothing to stop: it is already interrupted at the ${phase} phase, and resuming it picks it up from there.`,
+    ],
+  }
+}
+
+/** The branch a header's task owns, or `""` when the header cannot name one. */
+function branchOf(header: RunHeader): string {
+  try {
+    return taskBranchName({ feature: header.featureFile, ref: header.taskRef })
+  } catch {
+    // A header that cannot name a branch is `src/runindex.ts`'s `branch: ""`
+    // case, and a stop is no place to start refusing over it.
+    return ""
+  }
 }
 
 /**
