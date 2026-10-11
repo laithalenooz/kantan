@@ -102,9 +102,12 @@ The line is matched literally, so:
  * dictated. Nothing is implemented and no test is run: the human at the gate
  * reads the plan before any code exists.
  *
- * Invoked as a slash command on the first line, which is the form that was probed
- * and then captured end to end on 2026-10-11: the skill loaded, the turn ran
- * headless without stalling, and the final line was `ORCH: done`.
+ * Invoked as a slash command on the first line. That is the form `docs/probes/
+ * probeAB.mjs` probed, where the skill loaded and the turn ran headless without
+ * stalling, and it is consistent with the 2026-10-11 capture, which announced the
+ * skill with no `Skill` tool_use of its own. Two differences from the probe are
+ * untested: the arguments here run over many lines rather than one, and the
+ * capture's own prompt text was not kept, so this wording is new.
  */
 export function planPrompt({ task, planPath }: { task: TaskSpec; planPath: string }): string {
   return `/superpowers:writing-plans Write an implementation plan for one backlog task, exactly as instructed below.

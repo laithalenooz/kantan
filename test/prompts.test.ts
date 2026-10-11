@@ -283,10 +283,18 @@ test("the feedback prompt keeps the plan-only suppressions", () => {
 // `test/__snapshots__/`, because an uncommitted `.snap` file is regenerated on a
 // fresh checkout and then pins nothing at all.
 //
-// If one of these fails, read the diff before updating it. This wording was
-// validated against the real CLI on 2026-10-11: the agent emitted `ORCH: done`
-// as its final line, wrote the plan to the dictated path, implemented nothing,
-// and did not stall.
+// If one of these fails, read the diff before updating it against the four
+// properties this wording is aiming at: the agent's final line is exactly
+// `ORCH: done`, the plan lands at the dictated path, nothing is implemented, and
+// the turn does not stall.
+//
+// Those four come from the 2026-10-11 capture in `test/fixtures/plan-success.jsonl`,
+// which demonstrated them. **This text is not that text.** The capture's prompt
+// was fed from a scratch `turn.jsonl` that was never committed, and the CLI does
+// not echo the user turn into stream-json, so it is unrecoverable; this wording
+// was written from the design, the probes and the two installed SKILL.md files.
+// So the snapshots pin what we send, not something already proven to work.
+// Recapturing the fixture with `planPrompt` is what would make it evidence.
 
 test("the plan prompt is unchanged", () => {
   expect(plan).toMatchInlineSnapshot(`
