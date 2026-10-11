@@ -357,6 +357,15 @@ Three things to know before wiring it:
   parks as `waiting(question)` / `waiting(blocked)`, and **no HTTP route can move it**: approve and
   feedback both refuse (`wrong-state`), and stop/resume only re-park it. `createRunner` exposes
   `answer(runId, text)` already, so the gap is a route and a `Runner` method, not machine work.
+
+  This also settles the question `docs/SEAMS.md` left open - whether `feedback` should accept
+  `waiting(question)` as well as `waiting(gate)`. It should not. `feedbackPrompt` opens with "a
+  human read that plan at the gate and did not approve it", which is false for an agent that asked
+  something and is waiting for the answer, and it is the wrong instruction for a question raised
+  mid-implement: the gate's feedback revises a plan, while an answer continues work. So a question
+  gets its own action and its own prompt, `answerPrompt`, which carries the reply verbatim plus the
+  one clause that differs by phase. The UI needs two controls on one reply box, not one route that
+  guesses which conversation it is talking to.
 - **Two refusal codes collapse.** The machine refuses with nine codes (`RefusalCode`); the HTTP
   vocabulary has seven. `no-base` (a detached HEAD, or a checkout an earlier run left on `orch/*`)
   and `branch-exists` (the task has run before) both arrive as `wrong-state`, because `dirty` would
