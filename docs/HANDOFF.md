@@ -67,6 +67,16 @@ commits, or reports "ticked" must compare `out !== src`** rather than assume a w
 ### `Task.line` is valid only for the string it came from — Task 6b (file I/O), Task 13
 `tickTask` re-resolves by ref on purpose. No caller may splice by a cached line number.
 
+### A run has TWO session ids and using the wrong one fails silently — Task 13
+`runId` names the run. `planSessionId` and `implementSessionId` are separate conversations, and
+`--session-id` takes a UUID so neither can be derived from `runId`. Gate feedback resumes the
+**plan** session; effort escalation resumes the **implement** session.
+
+Resuming the wrong one runs the implement prompt against the planning conversation and still
+exits `success`. **There is no error to catch**, so the phase machine must carry which session
+each phase belongs to rather than reconstructing it. `implementSessionId` is minted at gate
+approval, so a run abandoned at the gate never has one. Design §3.1 has the table.
+
 ### Ref-less tasks cannot be ticked at all — Task 13 must decide
 `tickTask(src, ref)` addresses by ref, so a `- [ ] just text` line is unreachable. Either assign
 refs on ingestion (Task 26b's drafter is the natural place) or refuse ref-less tasks with a clear

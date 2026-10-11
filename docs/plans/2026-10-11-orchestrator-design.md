@@ -134,13 +134,39 @@ Run states: `running`, `waiting(gate | question | blocked | stalled)`, `done`, `
 
 ### 3.1 Process model
 
+**A run owns two session ids, not one.** Because plan and implement are two conversations
+(below), and `--session-id` takes a UUID so it cannot be derived from the run id by suffixing,
+the run log header records three ids:
+
+| Id | Scope |
+|---|---|
+| `runId` | the run itself: the JSONL filename, the UI, the log header |
+| `planSessionId` | the plan conversation. Gate feedback resumes **this** one |
+| `implementSessionId` | the implement conversation. Effort escalation resumes **this** one |
+
+`implementSessionId` is minted when the gate is approved, not at run start, so a run abandoned at
+the gate never has one. When `resumePlanSession` is true there is one conversation and
+`implementSessionId` is absent.
+
 The plan phase runs as its own process:
 
 ```
 CLAUDE_CONFIG_DIR=<project.configDir> \
 claude -p --input-format stream-json --output-format stream-json --verbose \
-       --session-id <runId> --permission-mode bypassPermissions --model <model>
+       --permission-mode bypassPermissions \
+       --session-id <planSessionId> \
+       --model <project.planModel> --effort <project.planEffort> \
+       --max-budget-usd <ceiling - spent>
 ```
+
+The implement phase is the same shape with `--session-id <implementSessionId>`,
+`project.implementModel` and `project.implementEffort`. Resuming either swaps `--session-id` for
+`--resume <thatSessionId>`; an escalation additionally raises `--effort`.
+
+**Getting the wrong session id is silent.** Resuming the plan session for an implement turn would
+run the implement prompt against the planning conversation and still exit `success`. There is no
+error to catch, so the phase machine must carry which session each phase belongs to rather than
+reconstructing it.
 
 It writes `docs/plans/<date>-<task-slug>.md` at a path the server dictates, then exits. **The
 gate holds no child process.** On approval the server respawns with `--resume <runId>` and the
