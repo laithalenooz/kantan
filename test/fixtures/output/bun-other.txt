@@ -1,0 +1,39 @@
+kantan-fixture v1 exit=1
+--8<-- stdout --8<--
+bun test v1.4.3 (c6da4a4d3)
+--8<-- stderr --8<--
+
+test/calc.test.ts:
+13 |   expect(add(2, 2)).toBe(CASE === "msg" ? 7 : 5)
+14 | })
+15 | 
+16 | test("logs the line the supervisor greps for", () => {
+17 |   if (CASE === "pass") { expect(1).toBe(1); return }
+18 |   expect(readyLine(spool, process.pid, port)).toBe("[kantan] ready pid=1 url=http://127.0.0.1:8080 spool=/srv/spool")
+                                                   ^
+error: expect(received).toBe(expected)
+
+Expected: "[kantan] ready pid=1 url=http://127.0.0.1:8080 spool=/srv/spool"
+Received: "[kantan] ready pid=711323 url=http://127.0.0.1:31323 spool=/tmp/tmp.Wdz6J78x5q/kantan-xMvz0i"
+
+      at <anonymous> (/tmp/kfx/bun/a/test/calc.test.ts:18:47)
+(fail) logs the line the supervisor greps for [0.19ms]
+18 |   expect(readyLine(spool, process.pid, port)).toBe("[kantan] ready pid=1 url=http://127.0.0.1:8080 spool=/srv/spool")
+19 | })
+20 | 
+21 | test("subtracts two numbers", () => {
+22 |   if (CASE !== "other") { expect(add(5, -3)).toBe(2); return }
+23 |   expect(add(5, -3)).toBe(9)
+                          ^
+error: expect(received).toBe(expected)
+
+Expected: 9
+Received: 2
+
+      at <anonymous> (/tmp/kfx/bun/a/test/calc.test.ts:23:22)
+(fail) subtracts two numbers [0.03ms]
+
+ 1 pass
+ 2 fail
+ 3 expect() calls
+Ran 3 tests across 1 file. [5.00ms]

@@ -1,0 +1,5 @@
+kantan-fixture v1 exit=0
+--8<-- stdout --8<--
+ok  	example.com/kantanfx/calc	0.002s
+ok  	example.com/kantanfx/util	0.001s
+--8<-- stderr --8<--

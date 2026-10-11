@@ -1,0 +1,41 @@
+kantan-fixture v1 exit=101
+--8<-- stdout --8<--
+
+running 3 tests
+tests::logs_the_line_the_supervisor_greps_for --- FAILED
+tests::subtracts_two_numbers --- FAILED
+.
+failures:
+
+---- tests::logs_the_line_the_supervisor_greps_for stdout ----
+
+thread 'tests::logs_the_line_the_supervisor_greps_for' (738352) panicked at src/lib.rs:36:9:
+assertion `left == right` failed
+  left: "[kantan] ready pid=738350 url=http://127.0.0.1:30350 spool=/tmp/tmp.NW24KYtGVr/kantan-738350"
+ right: "[kantan] ready pid=1 url=http://127.0.0.1:8080 spool=/srv/spool"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- tests::subtracts_two_numbers stdout ----
+
+thread 'tests::subtracts_two_numbers' (738353) panicked at src/lib.rs:47:9:
+assertion `left == right` failed
+  left: 2
+ right: 9
+
+
+failures:
+    tests::logs_the_line_the_supervisor_greps_for
+    tests::subtracts_two_numbers
+
+test result: FAILED. 1 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+--8<-- stderr --8<--
+warning: function `kase` is never used
+  --> src/lib.rs:11:4
+   |
+11 | fn kase() -> String {
+   |    ^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+error: test failed, to rerun pass `--lib`

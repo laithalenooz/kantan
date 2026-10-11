@@ -1,0 +1,41 @@
+kantan-fixture v1 exit=1
+--8<-- stdout --8<--
+[1m============================= test session starts ==============================[0m
+platform linux -- Python 3.14.2, pytest-9.1.1, pluggy-1.6.0
+rootdir: /tmp/kfx/py/a
+collected 3 items
+
+test_calc.py [31mF[0m[31mF[0m[32m.[0m[31m                                                         [100%][0m
+
+=================================== FAILURES ===================================
+[31m[1m____________________________ test_adds_two_numbers _____________________________[0m
+
+    [0m[94mdef[39;49;00m[90m [39;49;00m[92mtest_adds_two_numbers[39;49;00m():[90m[39;49;00m
+        [94mif[39;49;00m CASE [95min[39;49;00m ([33m"[39;49;00m[33mother[39;49;00m[33m"[39;49;00m, [33m"[39;49;00m[33mone[39;49;00m[33m"[39;49;00m, [33m"[39;49;00m[33mpass[39;49;00m[33m"[39;49;00m):[90m[39;49;00m
+            [94massert[39;49;00m add([94m2[39;49;00m, [94m2[39;49;00m) == [94m4[39;49;00m[90m[39;49;00m
+            [94mreturn[39;49;00m[90m[39;49;00m
+>       [94massert[39;49;00m add([94m2[39;49;00m, [94m2[39;49;00m) == ([94m7[39;49;00m [94mif[39;49;00m CASE == [33m"[39;49;00m[33mmsg[39;49;00m[33m"[39;49;00m [94melse[39;49;00m [94m5[39;49;00m)[90m[39;49;00m
+[1m[31mE       assert 4 == 5[0m
+[1m[31mE        +  where 4 = add(2, 2)[0m
+
+[1m[31mtest_calc.py[0m:15: AssertionError
+[31m[1m_________________ test_logs_the_line_the_supervisor_greps_for __________________[0m
+
+    [0m[94mdef[39;49;00m[90m [39;49;00m[92mtest_logs_the_line_the_supervisor_greps_for[39;49;00m():[90m[39;49;00m
+        [94mif[39;49;00m CASE == [33m"[39;49;00m[33mpass[39;49;00m[33m"[39;49;00m:[90m[39;49;00m
+            [94mreturn[39;49;00m[90m[39;49;00m
+>       [94massert[39;49;00m ready_line(SPOOL, os.getpid(), PORT) == ([90m[39;49;00m
+            [33m"[39;49;00m[33m[kantan] ready pid=1 url=http://127.0.0.1:8080 spool=/srv/spool[39;49;00m[33m"[39;49;00m[90m[39;49;00m
+        )[90m[39;49;00m
+[1m[31mE       AssertionError: assert '[kantan] rea...ntan-fz3mcywt' == '[kantan] rea...ol=/srv/spool'[0m
+[1m[31mE         [0m
+[1m[31mE         [0m[91m- [kantan] ready pid=1 url=http://127.0.0.1:8080 spool=/srv/spool[39;49;00m[90m[39;49;00m[0m
+[1m[31mE         [92m+ [kantan] ready pid=772641 url=http://127.0.0.1:30641 spool=/tmp/tmp.7SGfkH3O8B/kantan-fz3mcywt[39;49;00m[90m[39;49;00m[0m
+
+[1m[31mtest_calc.py[0m:21: AssertionError
+----------------- generated xml file: /tmp/kfx/py/a/junit.xml ------------------
+[36m[1m=========================== short test summary info ============================[0m
+[31mFAILED[0m test_calc.py::[1mtest_adds_two_numbers[0m - assert 4 == 5
+[31mFAILED[0m test_calc.py::[1mtest_logs_the_line_the_supervisor_greps_for[0m - AssertionError: assert '[kantan] rea...ntan-fz3mcywt' == '[kantan] rea...ol...
+[31m========================= [31m[1m2 failed[0m, [32m1 passed[0m[31m in 0.04s[0m[31m ==========================[0m
+--8<-- stderr --8<--

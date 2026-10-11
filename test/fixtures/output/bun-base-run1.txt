@@ -1,0 +1,39 @@
+kantan-fixture v1 exit=1
+--8<-- stdout --8<--
+bun test v1.4.3 (c6da4a4d3)
+--8<-- stderr --8<--
+
+test/calc.test.ts:
+ 8 | const spool = mkdtempSync(join(tmpdir(), "kantan-"))
+ 9 | const port = 30000 + (process.pid % 2000)
+10 | 
+11 | test("adds two numbers", () => {
+12 |   if (CASE === "other" || CASE === "one" || CASE === "pass") { expect(add(2, 2)).toBe(4); return }
+13 |   expect(add(2, 2)).toBe(CASE === "msg" ? 7 : 5)
+                         ^
+error: expect(received).toBe(expected)
+
+Expected: 5
+Received: 4
+
+      at <anonymous> (/tmp/kfx/bun/a/test/calc.test.ts:13:21)
+(fail) adds two numbers [0.26ms]
+13 |   expect(add(2, 2)).toBe(CASE === "msg" ? 7 : 5)
+14 | })
+15 | 
+16 | test("logs the line the supervisor greps for", () => {
+17 |   if (CASE === "pass") { expect(1).toBe(1); return }
+18 |   expect(readyLine(spool, process.pid, port)).toBe("[kantan] ready pid=1 url=http://127.0.0.1:8080 spool=/srv/spool")
+                                                   ^
+error: expect(received).toBe(expected)
+
+Expected: "[kantan] ready pid=1 url=http://127.0.0.1:8080 spool=/srv/spool"
+Received: "[kantan] ready pid=711291 url=http://127.0.0.1:31291 spool=/tmp/tmp.GjRL1fl42h/kantan-wnFLPb"
+
+      at <anonymous> (/tmp/kfx/bun/a/test/calc.test.ts:18:47)
+(fail) logs the line the supervisor greps for [0.60ms]
+
+ 1 pass
+ 2 fail
+ 3 expect() calls
+Ran 3 tests across 1 file. [6.00ms]

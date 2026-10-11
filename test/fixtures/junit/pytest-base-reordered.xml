@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="3" time="0.020" timestamp="2026-10-11T14:55:55.388211+03:00" hostname="redacted-host"><testcase classname="test_calc" name="test_subtracts_two_numbers" time="0.000" /><testcase classname="test_calc" name="test_logs_the_line_the_supervisor_greps_for" time="0.000"><failure message="AssertionError: assert '[kantan] rea...ntan-r1res3g7' == '[kantan] rea...ol=/srv/spool'&#10;  &#10;  - [kantan] ready pid=1 url=http://127.0.0.1:8080 spool=/srv/spool&#10;  + [kantan] ready pid=772707 url=http://127.0.0.1:30707 spool=/tmp/tmp.VsIh3l7Ui7/kantan-r1res3g7">def test_logs_the_line_the_supervisor_greps_for():
+        if CASE == "pass":
+            return
+&gt;       assert ready_line(SPOOL, os.getpid(), PORT) == (
+            "[kantan] ready pid=1 url=http://127.0.0.1:8080 spool=/srv/spool"
+        )
+E       AssertionError: assert '[kantan] rea...ntan-r1res3g7' == '[kantan] rea...ol=/srv/spool'
+E         
+E         - [kantan] ready pid=1 url=http://127.0.0.1:8080 spool=/srv/spool
+E         + [kantan] ready pid=772707 url=http://127.0.0.1:30707 spool=/tmp/tmp.VsIh3l7Ui7/kantan-r1res3g7
+
+test_calc.py:22: AssertionError</failure></testcase><testcase classname="test_calc" name="test_adds_two_numbers" time="0.000"><failure message="assert 4 == 5&#10; +  where 4 = add(2, 2)">def test_adds_two_numbers():
+        if CASE in ("other", "one", "pass"):
+            assert add(2, 2) == 4
+            return
+&gt;       assert add(2, 2) == (7 if CASE == "msg" else 5)
+E       assert 4 == 5
+E        +  where 4 = add(2, 2)
+
+test_calc.py:31: AssertionError</failure></testcase></testsuite></testsuites>

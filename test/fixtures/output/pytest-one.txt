@@ -1,0 +1,29 @@
+kantan-fixture v1 exit=1
+--8<-- stdout --8<--
+============================= test session starts ==============================
+platform linux -- Python 3.14.2, pytest-9.1.1, pluggy-1.6.0
+rootdir: /tmp/kfx/py/a
+collected 3 items
+
+test_calc.py .F.                                                         [100%]
+
+=================================== FAILURES ===================================
+_________________ test_logs_the_line_the_supervisor_greps_for __________________
+
+    def test_logs_the_line_the_supervisor_greps_for():
+        if CASE == "pass":
+            return
+>       assert ready_line(SPOOL, os.getpid(), PORT) == (
+            "[kantan] ready pid=1 url=http://127.0.0.1:8080 spool=/srv/spool"
+        )
+E       AssertionError: assert '[kantan] rea...ntan-ujoiiv22' == '[kantan] rea...ol=/srv/spool'
+E         
+E         - [kantan] ready pid=1 url=http://127.0.0.1:8080 spool=/srv/spool
+E         + [kantan] ready pid=772665 url=http://127.0.0.1:30665 spool=/tmp/tmp.wzO7smTcvC/kantan-ujoiiv22
+
+test_calc.py:21: AssertionError
+----------------- generated xml file: /tmp/kfx/py/a/junit.xml ------------------
+=========================== short test summary info ============================
+FAILED test_calc.py::test_logs_the_line_the_supervisor_greps_for - AssertionE...
+========================= 1 failed, 2 passed in 0.02s ==========================
+--8<-- stderr --8<--

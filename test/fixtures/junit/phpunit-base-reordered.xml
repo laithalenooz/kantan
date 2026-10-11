@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="/tmp/kfx/php/a/phpunit.xml" tests="3" assertions="3" errors="0" failures="2" skipped="0" time="0.001209">
+    <testsuite name="kantan" tests="3" assertions="3" errors="0" failures="2" skipped="0" time="0.001209">
+      <testsuite name="CalcTest" file="/tmp/kfx/php/a/tests/CalcTest.php" tests="3" assertions="3" errors="0" failures="2" skipped="0" time="0.001209">
+        <testcase name="testSubtractsTwoNumbers" file="/tmp/kfx/php/a/tests/CalcTest.php" line="7" class="CalcTest" classname="CalcTest" assertions="1" time="0.000219"/>
+        <testcase name="testLogsTheLineTheSupervisorGrepsFor" file="/tmp/kfx/php/a/tests/CalcTest.php" line="16" class="CalcTest" classname="CalcTest" assertions="1" time="0.000812">
+          <failure type="PHPUnit\Framework\ExpectationFailedException">CalcTest::testLogsTheLineTheSupervisorGrepsFor
+Failed asserting that two strings are identical.
+--- Expected
++++ Actual
+@@ @@
+-'[kantan] ready pid=1 url=http://127.0.0.1:8080 spool=/srv/spool'
++'[kantan] ready pid=754042 url=http://127.0.0.1:30042 spool=/tmp/tmp.7VoaDdpAzw/kantan-754042'
+
+/tmp/kfx/php/a/tests/CalcTest.php:24</failure>
+        </testcase>
+        <testcase name="testAddsTwoNumbers" file="/tmp/kfx/php/a/tests/CalcTest.php" line="30" class="CalcTest" classname="CalcTest" assertions="1" time="0.000177">
+          <failure type="PHPUnit\Framework\ExpectationFailedException">CalcTest::testAddsTwoNumbers
+Failed asserting that 4 is identical to 5.
+
+/tmp/kfx/php/a/tests/CalcTest.php:37</failure>
+        </testcase>
+      </testsuite>
+    </testsuite>
+  </testsuite>
+</testsuites>

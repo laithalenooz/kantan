@@ -1,0 +1,11 @@
+kantan-fixture v1 exit=1
+--8<-- stdout --8<--
+--- FAIL: TestAddsTwoNumbers (0.00s)
+    calc_test.go:25: Add(2, 2) = 4, want 5
+--- FAIL: TestLogsTheLineTheSupervisorGrepsFor (0.00s)
+    calc_test.go:38: ReadyLine() = "[kantan] ready pid=733938 url=http://127.0.0.1:31938 spool=/tmp/tmp.7xCnIXKpjj/TestLogsTheLineTheSupervisorGrepsFor911119411/001", want "[kantan] ready pid=1 url=http://127.0.0.1:8080 spool=/srv/spool"
+FAIL
+FAIL	example.com/kantanfx/calc	0.002s
+ok  	example.com/kantanfx/util	(cached)
+FAIL
+--8<-- stderr --8<--

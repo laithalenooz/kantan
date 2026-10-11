@@ -12,6 +12,33 @@ Stable project-wide rules live in `CLAUDE.md`, not here. This file is only the m
 
 ## Open: things later tasks must handle
 
+### A stale `reportPath` makes `failureSignature` report a false stall — Task 13
+`src/stall.ts` prefers `project.reportPath` and cannot tell a fresh report from the previous
+attempt's. A run that crashed, or was killed by `runTests`' timeout before flushing, leaves the
+old XML on disk, where it parses perfectly and names the **previous** attempt's failures. Two
+attempts then hash equal, and the detector escalates effort — and finally interrupts a human —
+against a run that may have been converging. This is the expensive direction.
+
+`src/testrun.ts` does not touch the file. **Whoever spawns `testCmd` must delete
+`project.reportPath` first**, because only that code knows when the run began; an mtime check
+inside `failureSignature` would still need to be handed that moment. Nothing in `TestOutcome`
+dates the file, so there is no way to catch this later.
+
+### Two different `TestOutcome` types exist, and they are compatible by luck — Task 13
+`src/testrun.ts` and `src/stall.ts` each export an interface of that name. `runTests`' result is
+structurally assignable to the signature's, so `failureSignature(await runTests(p))` compiles —
+excess property checks only bite on fresh object literals. But `reportPath` lives only on the
+`stall.ts` one, so the report branch is **dead unless the caller spreads it in**:
+`failureSignature({ ...outcome, reportPath })`. Forget it and every signature silently comes from
+the parsed output, which still works and is simply weaker. There is no error to catch.
+
+### `failureSignature`'s window must stay well under `MAX_OUTPUT_BYTES` — anyone tuning either
+`src/testrun.ts` keeps the last 1 MiB of each stream; `src/stall.ts` hashes the last 256 KiB of
+that. If the two ever meet, the signature reaches bytes that a chatty run had already dropped and
+a quiet one still had, and one failure hashes two ways depending on how much the suite printed.
+The marker `testrun.ts` prepends is normalized in `stall.ts` as well, so the byte counts in it
+cannot reach the digest even if the windows do change.
+
 ### `CLAUDE_BIN` binds at module load — anything spawning
 `src/version.ts` resolves `process.env.ORCH_CLAUDE_BIN` **once, when the module is imported**.
 Setting `process.env` inside a test body is a no-op. Any test that substitutes the binary must set

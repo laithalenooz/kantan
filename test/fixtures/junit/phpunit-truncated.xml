@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="/tmp/kfx/php/a/phpunit.xml" tests="3" assertions="3" errors="0" failures="2" skipped="0" time="0.002005">
+    <testsuite name="kantan" tests="3" assertions="3" errors="0" failures="2" skipped="0" time="0.002005">
+      <testsuite name="CalcTest" file="/tmp/kfx/php/a/tests/CalcTest.php" tests="3" assertions="3" errors="0" failures="2" skipped="0" time="0.002005">
+        <testcase name="testAddsTwoNumbers" file="/tmp/kfx/php/a/tests/CalcTest.php" line="7" class="CalcTest" classname="CalcTest" assertions="1" time="0.001563">
+          <failure type="PHPUnit\Framework\ExpectationFailedException">CalcTest::testAddsTwoNumbers
+Failed asserting that 4 is identical to 5.
+
+/tmp/kfx/php/a/tests/CalcTest.php:14</failure>
+        </testcase>
+        <testcase name="testLogsTheLineTheSupervisorGrepsFor" file="/tmp/kfx/php/a/tests/CalcTest.php" line="17" class="CalcTest" classname="CalcTest" assertions="1" tim

@@ -1,0 +1,9 @@
+kantan-fixture v1 exit=0
+--8<-- stdout --8<--
+bun test v1.4.3 (c6da4a4d3)
+--8<-- stderr --8<--
+
+ 3 pass
+ 0 fail
+ 3 expect() calls
+Ran 3 tests across 1 file. [5.00ms]

@@ -1,0 +1,41 @@
+kantan-fixture v1 exit=101
+--8<-- stdout --8<--
+
+running 3 tests
+tests::adds_two_numbers --- FAILED
+tests::logs_the_line_the_supervisor_greps_for --- FAILED
+.
+failures:
+
+---- tests::adds_two_numbers stdout ----
+
+thread 'tests::adds_two_numbers' (738116) panicked at src/lib.rs:26:9:
+assertion `left == right` failed
+  left: 4
+ right: 5
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- tests::logs_the_line_the_supervisor_greps_for stdout ----
+
+thread 'tests::logs_the_line_the_supervisor_greps_for' (738117) panicked at src/lib.rs:36:9:
+assertion `left == right` failed
+  left: "[kantan] ready pid=738115 url=http://127.0.0.1:30115 spool=/tmp/tmp.plZYFnk92N/kantan-738115"
+ right: "[kantan] ready pid=1 url=http://127.0.0.1:8080 spool=/srv/spool"
+
+
+failures:
+    tests::adds_two_numbers
+    tests::logs_the_line_the_supervisor_greps_for
+
+test result: FAILED. 1 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+--8<-- stderr --8<--
+[1m[33mwarning[0m[1m: function `kase` is never used[0m
+  [1m[94m--> [0msrc/lib.rs:11:4
+   [1m[94m|[0m
+[1m[94m11[0m [1m[94m|[0m fn kase() -> String {
+   [1m[94m|[0m    [1m[33m^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+[1m[91merror[0m: test failed, to rerun pass `--lib`

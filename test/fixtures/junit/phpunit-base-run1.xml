@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="/tmp/kfx/php/a/phpunit.xml" tests="3" assertions="3" errors="0" failures="2" skipped="0" time="0.002005">
+    <testsuite name="kantan" tests="3" assertions="3" errors="0" failures="2" skipped="0" time="0.002005">
+      <testsuite name="CalcTest" file="/tmp/kfx/php/a/tests/CalcTest.php" tests="3" assertions="3" errors="0" failures="2" skipped="0" time="0.002005">
+        <testcase name="testAddsTwoNumbers" file="/tmp/kfx/php/a/tests/CalcTest.php" line="7" class="CalcTest" classname="CalcTest" assertions="1" time="0.001563">
+          <failure type="PHPUnit\Framework\ExpectationFailedException">CalcTest::testAddsTwoNumbers
+Failed asserting that 4 is identical to 5.
+
+/tmp/kfx/php/a/tests/CalcTest.php:14</failure>
+        </testcase>
+        <testcase name="testLogsTheLineTheSupervisorGrepsFor" file="/tmp/kfx/php/a/tests/CalcTest.php" line="17" class="CalcTest" classname="CalcTest" assertions="1" time="0.000305">
+          <failure type="PHPUnit\Framework\ExpectationFailedException">CalcTest::testLogsTheLineTheSupervisorGrepsFor
+Failed asserting that two strings are identical.
+--- Expected
++++ Actual
+@@ @@
+-'[kantan] ready pid=1 url=http://127.0.0.1:8080 spool=/srv/spool'
++'[kantan] ready pid=745549 url=http://127.0.0.1:31549 spool=/tmp/tmp.ZZ1Wf7fXYD/kantan-745549'
+
+/tmp/kfx/php/a/tests/CalcTest.php:25</failure>
+        </testcase>
+        <testcase name="testSubtractsTwoNumbers" file="/tmp/kfx/php/a/tests/CalcTest.php" line="31" class="CalcTest" classname="CalcTest" assertions="1" time="0.000136"/>
+      </testsuite>
+    </testsuite>
+  </testsuite>
+</testsuites>

@@ -1,0 +1,5 @@
+kantan-fixture v1 exit=0
+--8<-- stdout --8<--
+ok  	example.com/kantanfx/calc	(cached)
+ok  	example.com/kantanfx/util	(cached)
+--8<-- stderr --8<--

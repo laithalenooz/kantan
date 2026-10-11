@@ -1,0 +1,39 @@
+kantan-fixture v1 exit=1
+--8<-- stdout --8<--
+[0m[1mbun test [0m[2mv1.4.3 (c6da4a4d3)[0m
+--8<-- stderr --8<--
+[0m
+test/calc.test.ts:
+ [0m[1m8 |[0m [0m[35mconst[0m spool = mkdtempSync(join(tmpdir(), [0m[32m"kantan-"[0m))
+ [0m[1m9 |[0m [0m[35mconst[0m port = [0m[33m30000[0m + (process.pid % [0m[33m2000[0m)
+[0m[1m10 |[0m 
+[0m[1m11 |[0m test([0m[32m"adds two numbers"[0m, () => {
+[0m[1m12 |[0m   [0m[35mif[0m (CASE === [0m[32m"other"[0m || CASE === [0m[32m"one"[0m || CASE === [0m[32m"pass"[0m) { expect(add([0m[33m2[0m, [0m[33m2[0m))[0m[3m[1m.toBe[0m([0m[33m4[0m)[0m[2m;[0m [0m[35mreturn[0m }
+[0m[1m13 |[0m   expect(add([0m[33m2[0m, [0m[33m2[0m))[0m[3m[1m.toBe[0m(CASE === [0m[32m"msg"[0m ? [0m[33m7[0m : [0m[33m5[0m)
+                         [31m[1m^[0m
+[0m[31merror[0m[2m:[0m [1m[2mexpect([0m[31mreceived[0m[2m).[0mtoBe[2m([0m[32mexpected[0m[2m)[0m
+
+Expected: [32m5[0m
+Received: [31m4[0m
+[0m
+[0m      [2mat [0m[0m[2m<anonymous>[0m[2m ([0m[0m[36m[2m/tmp/kfx/bun/a/[0m[36mtest/calc.test.ts[0m[2m:[0m[33m13[0m[2m:[33m21[0m[2m)[0m
+[0m[31m✗[0m[0m[1m adds two numbers[0m [0m[2m[0.26ms[0m[2m][0m
+[0m[1m13 |[0m   expect(add([0m[33m2[0m, [0m[33m2[0m))[0m[3m[1m.toBe[0m(CASE === [0m[32m"msg"[0m ? [0m[33m7[0m : [0m[33m5[0m)
+[0m[1m14 |[0m })
+[0m[1m15 |[0m 
+[0m[1m16 |[0m test([0m[32m"logs the line the supervisor greps for"[0m, () => {
+[0m[1m17 |[0m   [0m[35mif[0m (CASE === [0m[32m"pass"[0m) { expect([0m[33m1[0m)[0m[3m[1m.toBe[0m([0m[33m1[0m)[0m[2m;[0m [0m[35mreturn[0m }
+[0m[1m18 |[0m   expect(readyLine(spool, process.pid, port))[0m[3m[1m.toBe[0m([0m[32m"[kantan] ready pid=1 url=http://127.0.0.1:8080 spool=/srv/spool"[0m)
+                                                   [31m[1m^[0m
+[0m[31merror[0m[2m:[0m [1m[2mexpect([0m[31mreceived[0m[2m).[0mtoBe[2m([0m[32mexpected[0m[2m)[0m
+
+Expected: [0m[32m"[kantan] ready pid=[0m[32m1[0m[32m url=http://127.0.0.1:[0m[32m8080[0m[32m spool=/[0m[32msrv/spool[0m[32m"[0m
+Received: [0m[31m"[kantan] ready pid=[0m[31m769266[0m[31m url=http://127.0.0.1:[0m[31m31266[0m[31m spool=/[0m[31mtmp/tmp.r8vtKLYyTy/kantan-gKSUNc[0m[31m"[0m
+[0m
+[0m      [2mat [0m[0m[2m<anonymous>[0m[2m ([0m[0m[36m[2m/tmp/kfx/bun/a/[0m[36mtest/calc.test.ts[0m[2m:[0m[33m18[0m[2m:[33m47[0m[2m)[0m
+[0m[31m✗[0m[0m[1m logs the line the supervisor greps for[0m [0m[2m[0.15ms[0m[2m][0m
+
+[0m[32m 1 pass[0m
+[0m[31m 2 fail[0m
+ 3 expect() calls
+Ran 3 tests across 1 file. [0m[2m[[1m6.00ms[0m[2m][0m

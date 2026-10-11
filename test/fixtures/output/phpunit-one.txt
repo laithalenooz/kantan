@@ -1,0 +1,26 @@
+kantan-fixture v1 exit=1
+--8<-- stdout --8<--
+PHPUnit 12.5.38 by Sebastian Bergmann and contributors.
+
+Runtime:       PHP 8.4.25
+Configuration: /tmp/kfx/php/a/phpunit.xml
+
+.F.                                                                 3 / 3 (100%)
+
+Time: 00:00.001, Memory: 14.00 MB
+
+There was 1 failure:
+
+1) CalcTest::testLogsTheLineTheSupervisorGrepsFor
+Failed asserting that two strings are identical.
+--- Expected
++++ Actual
+@@ @@
+-'[kantan] ready pid=1 url=http://127.0.0.1:8080 spool=/srv/spool'
++'[kantan] ready pid=745804 url=http://127.0.0.1:31804 spool=/tmp/tmp.6tS8jMIxUL/kantan-745804'
+
+/tmp/kfx/php/a/tests/CalcTest.php:25
+
+FAILURES!
+Tests: 3, Assertions: 3, Failures: 1.
+--8<-- stderr --8<--
