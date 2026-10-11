@@ -1,0 +1,16 @@
+{
+  "name": "orchestrator",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test",
+    "server": "bun run src/server.ts",
+    "ui": "vite",
+    "typecheck": "tsc --noEmit",
+    "check": "bun run typecheck && bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.2",
+    "typescript": "^7.0.2"
+  }
+}
