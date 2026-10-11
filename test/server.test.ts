@@ -13,14 +13,19 @@ import {
 } from "node:fs/promises"
 import { connect } from "node:net"
 import { networkInterfaces, tmpdir } from "node:os"
-import { join, sep } from "node:path"
-import { requireCleanTreeForNewRun, requireUsableRepo } from "../src/git"
-import { loadProjects } from "../src/projects"
+import { dirname, join, sep } from "node:path"
+import { requireCleanTreeForNewRun, requireUsableRepo, taskBranchName } from "../src/git"
+import { addProject, defaults, loadProjects } from "../src/projects"
 import type { Project } from "../src/projects"
+import { taskKey } from "../src/runindex"
 import { createRunLog, runLogPath } from "../src/runlog"
 import type { RunHeader, RunLog, RunRecord } from "../src/runlog"
 import { ROUTES, TOKEN_EXEMPT, createServer, type Launch, type RouteContext } from "../src/server"
 import type { Acted, Runner, StartRequest, Started } from "../src/server"
+/* Type-only, so nothing of the component - React included - is loaded by this
+ * suite or by the server. The payload is the component's own type, borrowed
+ * rather than restated, so a renamed field is a compile error here. */
+import type { TreeProject } from "../src/ui/Tree.tsx"
 
 // These endpoints hand arbitrary text to an agent with file-write and shell
 // access, so the guards below are the project's only security boundary.
@@ -1268,6 +1273,7 @@ test("an id runLogPath refuses becomes a 400, not an unhandled rejection", async
     streamKeepAliveMs: 1000,
     runner: null,
     projectsFile: null,
+    liveRunIds: null,
   }
 
   // Both `:id` reads, not only the stream: the plan route refuses an id the
@@ -1311,12 +1317,15 @@ const FEEDBACK = "POST /api/runs/:id/feedback"
  * is false for an agent waiting on an answer, and the two replies go into
  * different prompts and continue different conversations. */
 const ANSWER = "POST /api/runs/:id/answer"
+/** The new ceiling for a run parked at a human. The only action whose argument
+ * is a number, so it owns a 400 no other action has. */
+const RAISE = "POST /api/runs/:id/raise"
 const STOP = "POST /api/runs/:id/stop"
-const ACTION_ROUTES = [START, APPROVE, FEEDBACK, ANSWER, STOP]
+const ACTION_ROUTES = [START, APPROVE, FEEDBACK, ANSWER, RAISE, STOP]
 
 /** One call the server made on the machine, in arrival order. */
 interface RunnerCall {
-  name: "start" | "approve" | "feedback" | "answer" | "stop"
+  name: "start" | "approve" | "feedback" | "answer" | "raise" | "stop"
   /** Present on `start`, as the server built it from the body. */
   request?: StartRequest
   /** Present on the four `:id` actions, exactly as the URL spelled it. */
@@ -1324,6 +1333,9 @@ interface RunnerCall {
   /** Present on `feedback` and `answer`. Compared byte for byte: this is the
    * human's own text. */
   text?: string
+  /** Present on `raise`, as the number the body carried. The only action
+   * argument that is not a string. */
+  budgetUsd?: number
 }
 
 interface Fake {
@@ -1353,6 +1365,10 @@ function fakeRunner(over: Partial<Runner> = {}): Fake {
     async answer(runId, text) {
       calls.push({ name: "answer", runId, text })
       return over.answer === undefined ? { ok: true } : await over.answer(runId, text)
+    },
+    async raise(runId, budgetUsd) {
+      calls.push({ name: "raise", runId, budgetUsd })
+      return over.raise === undefined ? { ok: true } : await over.raise(runId, budgetUsd)
     },
     async stop(runId) {
       calls.push({ name: "stop", runId })
@@ -1426,15 +1442,25 @@ test("nothing that acts is reachable by GET or HEAD, so no local page can drive 
   const posts = Object.keys(ROUTES).filter((key) => key.startsWith("POST "))
   expect(posts.length).toBeGreaterThanOrEqual(ACTION_ROUTES.length)
 
-  for (const path of posts.map((key) => actionPath(key))) {
+  for (const key of posts) {
+    const path = actionPath(key)
     for (const method of ["GET", "HEAD"]) {
       // No Origin either, which is what those requests send.
       const res = await call(l, { path, method, origin: null })
-      expect(res.status, `${method} ${path}`).toBe(404)
+      // A 404, unless that exact `METHOD /path` is a route in its own right:
+      // the project tree is served by `GET /api/projects`, which is the path
+      // registration POSTs to. The claim is not "this path has no GET" - it is
+      // that a GET never reaches a **POST** handler, and the double plus the
+      // store that was never created below are what prove it.
+      const own = Object.keys(ROUTES).includes(`${method} ${path}`)
+      if (own) expect(res.status, `${method} ${path}`).not.toBe(404)
+      else expect(res.status, `${method} ${path}`).toBe(404)
     }
   }
   expect(fake.calls).toEqual([])
-  expect(await loadProjects(store)).toEqual([])
+  // The directory, not `loadProjects`: an absent store also loads as `[]`, so
+  // the assertion that distinguishes "wrote nothing" is that no file is there.
+  expect(await readdir(dirname(store))).toEqual([])
 })
 
 // --- Start ------------------------------------------------------------------
@@ -1591,9 +1617,11 @@ test("stop answers 200 on a live run and 409 on one that is already over", async
 })
 
 /** The body an action needs to get past validation, keyed by its route. The
- * two text actions need one; the rest must have none. */
+ * two text actions need one, a raise needs its figure; the rest must have none. */
 function actionBody(key: string): string | undefined {
-  return key === FEEDBACK || key === ANSWER ? JSON.stringify({ text: "again please" }) : undefined
+  if (key === FEEDBACK || key === ANSWER) return JSON.stringify({ text: "again please" })
+  if (key === RAISE) return JSON.stringify({ budgetUsd: 75 })
+  return undefined
 }
 
 test("an unknown run id is a 404 on every action, not a 500", async () => {
@@ -1608,6 +1636,9 @@ test("an unknown run id is a 404 on every action, not a 500", async () => {
         return unknown
       },
       async answer() {
+        return unknown
+      },
+      async raise() {
         return unknown
       },
       async stop() {
@@ -1668,9 +1699,10 @@ test("an id runLogPath refuses is a 4xx and never reaches the machine", async ()
     streamKeepAliveMs: 1000,
     runner: fake.runner,
     projectsFile: null,
+    liveRunIds: null,
   }
 
-  for (const key of [APPROVE, FEEDBACK, ANSWER, STOP]) {
+  for (const key of [APPROVE, FEEDBACK, ANSWER, RAISE, STOP]) {
     const handler = ROUTES[key]
     if (handler === undefined) throw new Error(`${key} is not registered`)
     for (const id of ["..", ".", "", "a/b", "a\\b", "a\0b"]) {
@@ -2553,7 +2585,633 @@ test("a malformed registration body is refused before anything is written", asyn
 })
 
 // ---------------------------------------------------------------------------
-// 13. The launch itself: `bun run src/server.ts`
+// 13. The project tree
+// ---------------------------------------------------------------------------
+
+// Nothing served the tree, so `src/ui/App.tsx` rendered fixtures. HANDOFF's
+// "the tree cannot address a single route" is the contract: `Tree.tsx` hands
+// its caller a `TaskId` - the triple - and every `:id` route is keyed by run
+// id, so a selection resolved to nothing the HTTP port would accept. The fix is
+// not a `runId` on `TreeTaskRun`: the component is presentational, and
+// `src/runindex.ts` already owns the task-to-run mapping and already exports
+// the key function for it. So the mapping travels **beside** the tree, keyed by
+// `taskKey`, and the shell joins them.
+//
+// `taskKey` separates with `NUL`, the one byte a path cannot contain, which
+// survives JSON as `\u0000`. There is deliberately no second key format.
+//
+// The payload is `TreeProject[]` field for field as `src/ui/Tree.tsx` declares
+// it, and the type is imported from there rather than restated: a type-only
+// import is erased at runtime (verified - `bun build --target=bun` of
+// `src/server.ts` pulls in no `jsx-runtime` and no `ui/Tree`), so the server
+// never loads React, while a field renamed in the component becomes a compile
+// error here instead of a row that quietly renders as something else.
+
+const TREE = "GET /api/projects"
+
+/** The tree body, loosely typed where it is about the wire and exactly typed
+ * where it is about the component: `projects` is `TreeProject[]`, so a field
+ * this route stops producing is a compile error in these tests. */
+interface TreeBody {
+  ok?: boolean
+  projects?: TreeProject[]
+  runs?: Record<string, { runId: string; costUsd: number; attempts: number }>
+  warnings?: string[]
+  error?: string
+}
+
+async function getTree(l: Launch): Promise<{ status: number; body: TreeBody; raw: string; headers: Headers }> {
+  const res = await call(l, { path: "/api/projects" })
+  return { status: res.status, body: JSON.parse(res.body) as TreeBody, raw: res.body, headers: res.headers }
+}
+
+/** A launch over `store` and a runs directory of its own, with no machine: the
+ * tree needs none, and leaving it out proves it. */
+async function withTree(store: string, opts: Parameters<typeof createServer>[0] = {}): Promise<Launch> {
+  return serve({ runsDir: await runsDir(), projectsFile: store, ...opts })
+}
+
+/** `repo` registered in a store of its own, through the store's own writer so
+ * the records are ones `loadProjects` accepts. */
+async function storeOf(...repos: string[]): Promise<string> {
+  const store = await storeFile()
+  for (const path of repos) await addProject(store, defaults({ path, testCmd: "bun test" }))
+  return store
+}
+
+const FEATURE = `# Importer
+
+- [ ] T1 Read the CSV
+- [x] T2 Write the rows
+- [ ] A line with no ref
+`
+
+/** `repo`, with `docs/features/<name>` written. */
+async function withFeature(repo: string, name: string, markdown: string | Uint8Array): Promise<string> {
+  await mkdir(join(repo, "docs", "features"), { recursive: true })
+  const path = join(repo, "docs", "features", name)
+  await writeFile(path, markdown)
+  return path
+}
+
+/** A finished run of `taskRef` in `featureFile`, as a real log in `dir`. */
+async function taskLog(
+  dir: string,
+  id: string,
+  over: { projectPath: string; featureFile: string; taskRef: string; startedAt?: string },
+  end: { state: "done" | "failed"; costUsd: number } | null = { state: "done", costUsd: 1.25 },
+): Promise<void> {
+  const log = await createRunLog(runLogPath(id, dir), header({ runId: id, ...over }))
+  await log.append({ kind: "phase", phase: "implement", state: "running", sessionId: "33333333-3333-4333-8333-333333333333" })
+  if (end !== null) await log.append({ kind: "end", state: end.state, costUsd: end.costUsd })
+  await log.close()
+}
+
+test("the tree route is a GET registered in ROUTES, behind the guards, and not token-exempt", () => {
+  // A GET, and it must stay side-effect-free: `SameSite=Strict` ignores ports,
+  // so a page on any other localhost port can make this request with our
+  // cookie. It cannot read the answer, but it must not be able to *cause*
+  // anything - which is also why the raise beside it is a POST.
+  expect(Object.keys(ROUTES)).toContain(TREE)
+  expect(TOKEN_EXEMPT.has(TREE)).toBe(false)
+  expect([...TOKEN_EXEMPT].sort()).toEqual(["GET /", "GET /api/session"])
+})
+
+test("a fresh install is an empty tree rather than a 404, and is never cached", async () => {
+  // An absent store is what a fresh install is, and `loadProjects` reads it as
+  // no projects. The design's empty state offers "Add a repository" for exactly
+  // this answer, so a 404 here would be the UI's own bootstrap failing.
+  const l = await withTree(await storeFile())
+  const { status, body, headers } = await getTree(l)
+
+  expect(status).toBe(200)
+  expect(body).toEqual({ ok: true, projects: [], runs: {}, warnings: [] })
+  // Nothing here is cached: a run moves between page loads, and a cached tree
+  // would show the previous one's state.
+  expect(headers.get("cache-control")).toBe("no-store")
+})
+
+test("a server launched without a store answers 503, not an empty tree", async () => {
+  // The same answer registration gives, and for the same reason: `projectsFile`
+  // has no default on purpose, so "no store" is a launch that cannot answer
+  // rather than an install with no projects.
+  const res = await call(serve({ runsDir: await runsDir() }), { path: "/api/projects" })
+  expect(res.status).toBe(503)
+  expect(JSON.parse(res.body).error).toContain("project store")
+})
+
+test("a registered repo comes back as a TreeProject, field for field, with its tasks", async () => {
+  const repo = await cleanRepo()
+  await withFeature(repo, "importer.md", FEATURE)
+  const l = await withTree(await storeOf(repo))
+
+  const { status, body } = await getTree(l)
+  expect(status).toBe(200)
+  // `toEqual` over the whole payload, not a field at a time: the point is that
+  // the shell can hand this straight to the component, so an extra key is a
+  // defect as much as a missing one. `line` from `parseFeature` must not be
+  // here - it indexes a string the client does not have.
+  expect(body.projects).toEqual([
+    {
+      path: repo,
+      // Required on every project, and `unknown` on every one of them: nothing
+      // in `Project` says personal or work - it carries a `configDir`, which
+      // selects a profile - and a silent default of "personal" is the exact
+      // failure the chip exists to prevent (HANDOFF).
+      account: { kind: "unknown" },
+      testCmd: "bun test",
+      features: [
+        {
+          path: "docs/features/importer.md",
+          tasks: [
+            { ref: "T1", text: "Read the CSV", done: false },
+            { ref: "T2", text: "Write the rows", done: true },
+            { ref: null, text: "A line with no ref", done: false },
+          ],
+        },
+      ],
+    },
+  ])
+  expect(body.runs).toEqual({})
+  // No account label either: the chip's own default is "account unknown", and a
+  // second copy of that sentence here would be a second place for it to drift.
+  expect("label" in (body.projects?.[0]?.account ?? {})).toBe(false)
+})
+
+test("the feature path is the repo-relative string a run header records, which is what the join needs", async () => {
+  // HANDOFF: `TreeFeature.path` must be the **exact** string the header carries
+  // as `featureFile`, which `src/run.ts` makes relative to `project.path` **as
+  // registered** rather than to git's resolved root. If the join misses, a
+  // `done, unmerged` task reads as `open` and `canStart` returns true - a
+  // silent re-run of finished work the tree cannot detect.
+  const real = await cleanRepo()
+  await withFeature(real, "x.md", "- [ ] T1 Only task\n")
+  const link = join(await scratch("orch-link-"), "repo")
+  await symlink(real, link)
+
+  // Registered through the symlinked spelling, which is the case that breaks a
+  // route that relative-ises against a realpath.
+  const store = await storeFile()
+  await addProject(store, defaults({ path: link, testCmd: "bun test" }))
+  const l = await withTree(store)
+
+  const { body } = await getTree(l)
+  expect(body.projects?.[0]?.path).toBe(link)
+  expect(body.projects?.[0]?.features?.[0]?.path).toBe("docs/features/x.md")
+})
+
+test("the newest run of a task joins it by taskKey, and the run ids travel beside the tree", async () => {
+  const repo = await cleanRepo()
+  await withFeature(repo, "x.md", "- [ ] T1 Only task\n")
+  const store = await storeOf(repo)
+  const dir = await runsDir()
+  const l = serve({ runsDir: dir, projectsFile: store })
+
+  const task = { projectPath: repo, featureFile: "docs/features/x.md", taskRef: "T1" }
+  await taskLog(dir, "aaaaaaaa-1111-4111-8111-111111111111", { ...task, startedAt: "2026-10-10T09:00:00.000Z" }, {
+    state: "failed",
+    costUsd: 0.5,
+  })
+  await taskLog(dir, "bbbbbbbb-2222-4222-8222-222222222222", { ...task, startedAt: "2026-10-11T09:00:00.000Z" }, {
+    state: "done",
+    costUsd: 1.25,
+  })
+
+  const { body, raw } = await getTree(l)
+  const only = body.projects?.[0]?.features?.[0]?.tasks?.[0]
+  // `state` and `branch` are `TaskStatus`'s own fields, so a change there is a
+  // compile error in `Tree.tsx` and a changed row here. `merged: false` is the
+  // honest answer: no merge predicate is passed, for reasons in the comment on
+  // the next test.
+  expect(only?.run).toEqual({
+    state: { kind: "done", merged: false },
+    branch: taskBranchName({ feature: "docs/features/x.md", ref: "T1" }),
+  })
+
+  // The mapping, keyed by the function `runindex.ts` exports and nothing else.
+  const key = taskKey(task)
+  expect(body.runs?.[key]).toEqual({
+    runId: "bbbbbbbb-2222-4222-8222-222222222222",
+    // The newest run's cost, not the sum: a retry does not erase the attempt
+    // before it, which is what `attempts` counts.
+    costUsd: 1.25,
+    attempts: 2,
+  })
+  // The NUL survives the wire as `\u0000`, which is the whole reason the key is
+  // safe to put in a JSON object.
+  expect(key).toContain("\u0000")
+  expect(raw).toContain("\\u0000")
+})
+
+test("testAttempts and exitCode are absent keys, never zeros", async () => {
+  // Both are optional on purpose. `runindex.ts` deliberately folds no `test`
+  // record - an exit code does not move a run - so neither number is available
+  // here, and design §"what must survive" requires exit codes printed and never
+  // paraphrased, which also forbids inventing one. A zero would render as
+  // "exited 0", which is a pass that was never observed.
+  const repo = await cleanRepo()
+  await withFeature(repo, "x.md", "- [ ] T1 Only task\n- [ ] T2 Never run\n")
+  const dir = await runsDir()
+  const l = serve({ runsDir: dir, projectsFile: await storeOf(repo) })
+  await taskLog(dir, "cccccccc-3333-4333-8333-333333333333", {
+    projectPath: repo,
+    featureFile: "docs/features/x.md",
+    taskRef: "T1",
+  })
+
+  const { body, raw } = await getTree(l)
+  const [ran, never] = body.projects?.[0]?.features?.[0]?.tasks ?? []
+  expect(ran?.run).toBeDefined()
+  expect("testAttempts" in (ran?.run ?? {})).toBe(false)
+  expect("exitCode" in (ran?.run ?? {})).toBe(false)
+  expect(raw).not.toContain("testAttempts")
+  expect(raw).not.toContain("exitCode")
+
+  // And a task that never ran omits `run` entirely rather than carrying an
+  // empty one: `taskStateOf` reads a missing `run` as open or passed, and an
+  // empty object would make it read the checkbox's opposite.
+  expect("run" in (never ?? {})).toBe(false)
+})
+
+test("a run the server knows is live reads as running; without that it reads as interrupted", async () => {
+  // Liveness is not in the log and cannot be: a log with no `end` record is a
+  // run that is going or a server that died, and only the process knows which.
+  // `liveRunIds()` in `src/run.ts` is the other half of `indexRuns`, so the
+  // launch passes it - otherwise every active run in the tree reads as
+  // interrupted, and `running` is unreachable.
+  const repo = await cleanRepo()
+  await withFeature(repo, "x.md", "- [ ] T1 Only task\n")
+  const store = await storeOf(repo)
+  const dir = await runsDir()
+  const id = "dddddddd-4444-4444-8444-444444444444"
+  await taskLog(dir, id, { projectPath: repo, featureFile: "docs/features/x.md", taskRef: "T1" }, null)
+
+  const live = serve({ runsDir: dir, projectsFile: store, liveRunIds: () => [id] })
+  const dead = serve({ runsDir: dir, projectsFile: store })
+
+  expect((await getTree(live)).body.projects?.[0]?.features?.[0]?.tasks?.[0]?.run?.state).toEqual({
+    kind: "running",
+    phase: "implement",
+  })
+  expect((await getTree(dead)).body.projects?.[0]?.features?.[0]?.tasks?.[0]?.run?.state).toEqual({
+    kind: "interrupted",
+    resumeFrom: "implement",
+  })
+})
+
+// --- The feature files are read from disk, so this route has the plan's leak --
+
+// The same exposure `GET /api/runs/:id/plan` has, and the same guard answers
+// it: `stat` and `readFile` both follow symlinks, so a `docs/features/x.md`
+// linked to `~/.ssh/id_rsa` - or a `docs/features` directory that is such a
+// link - would be opened and parsed, and any line of it shaped like a task
+// bullet would render in the tree. The agent kantan runs has shell access in
+// that repo, so the link is one command away.
+//
+// `readFeature` is therefore **not** what reads these: it uses a plain
+// `readFile`, with no containment check, no size cap and no `O_NOFOLLOW`. This
+// route composes `parseFeature` with the same guarded read the plan uses.
+//
+// The dimension is the outcome of trying to read one candidate, and its values
+// are enumerated below: a plain file, a link that stays inside the repo, a link
+// out of it, a directory in the way, a FIFO, bytes that are not UTF-8, and a
+// file past the cap. What a wrong guess costs is not symmetric. Rendering a
+// file from outside the repo is a leak with no recovery, so that direction
+// refuses. Dropping a file the user really has makes a real backlog invisible,
+// which is the failure `listFeatureFiles` itself calls the worse one - so a
+// file that cannot be read is **omitted and said out loud** in `warnings`,
+// never listed with `tasks: []`, because an empty task list is exactly what a
+// mid-draft feature looks like and the two must stay distinguishable.
+
+test("a feature file linked inside the repo is read; one linked out of it is dropped and said out loud", async () => {
+  const repo = await cleanRepo()
+  const secret = join(await scratch("orch-secret-"), "id_rsa")
+  await writeFile(secret, "-----BEGIN OPENSSH PRIVATE KEY-----\n- [ ] T9 leaked\n")
+
+  await withFeature(repo, "plain.md", "- [ ] T1 Plain\n")
+  await writeFile(join(repo, "docs", "shared.md"), "- [ ] T2 Linked inside\n")
+  await symlink(join(repo, "docs", "shared.md"), join(repo, "docs", "features", "inside.md"))
+  await symlink(secret, join(repo, "docs", "features", "outside.md"))
+
+  const l = await withTree(await storeOf(repo))
+  const { status, body, raw } = await getTree(l)
+
+  expect(status).toBe(200)
+  expect(body.projects?.[0]?.features?.map((f) => f.path)).toEqual([
+    "docs/features/inside.md",
+    "docs/features/plain.md",
+  ])
+  expect(body.projects?.[0]?.features?.[0]?.tasks).toEqual([{ ref: "T2", text: "Linked inside", done: false }])
+  // Nothing of the secret anywhere in the body, by any route.
+  expect(raw).not.toContain("PRIVATE KEY")
+  expect(raw).not.toContain("leaked")
+  // And the drop is visible rather than silent: a backlog that vanished with no
+  // explanation is a bug report about the parser.
+  expect(body.warnings?.join("\n")).toContain("docs/features/outside.md")
+})
+
+test("a docs/features directory that is itself a link out of the repo yields no features", async () => {
+  // The other half of the same vector: every path under it resolves outside,
+  // and the string checks on the names cannot see that.
+  const repo = await cleanRepo()
+  const elsewhere = await scratch("orch-elsewhere-")
+  await writeFile(join(elsewhere, "notes.md"), "- [ ] T1 Private notes\n")
+  await mkdir(join(repo, "docs"), { recursive: true })
+  await symlink(elsewhere, join(repo, "docs", "features"))
+
+  const { body, raw } = await getTree(await withTree(await storeOf(repo)))
+  expect(body.projects?.[0]?.features).toEqual([])
+  expect(raw).not.toContain("Private notes")
+  expect(body.warnings?.join("\n")).toContain("docs/features/notes.md")
+})
+
+test("a feature file that is not UTF-8, is past the cap, or is a FIFO leaves the rest of the tree standing", async () => {
+  // A FIFO is the row that matters most: a blocking read on one would hang
+  // every page load, and this route is hit on each of them. A directory named
+  // `x.md` is dropped before this route sees it, by `listFeatureFiles`.
+  const repo = await cleanRepo()
+  await withFeature(repo, "good.md", "- [ ] T1 Good\n")
+  // A lone 0x80 is not valid UTF-8; decoding it lossily would put U+FFFD into
+  // a task's text.
+  await withFeature(repo, "latin1.md", Buffer.from([0x2d, 0x20, 0x5b, 0x20, 0x5d, 0x20, 0x54, 0x31, 0x20, 0x80]))
+  await withFeature(repo, "huge.md", `- [ ] T1 ${"x".repeat(1024 * 1024)}\n`)
+  await mkdir(join(repo, "docs", "features", "a-directory.md"), { recursive: true })
+  const fifo = Bun.spawn(["mkfifo", join(repo, "docs", "features", "pipe.md")])
+  expect(await fifo.exited).toBe(0)
+
+  const { status, body } = await getTree(await withTree(await storeOf(repo)))
+  expect(status).toBe(200)
+  expect(body.projects?.[0]?.features).toEqual([
+    { path: "docs/features/good.md", tasks: [{ ref: "T1", text: "Good", done: false }] },
+  ])
+  const said = body.warnings?.join("\n") ?? ""
+  expect(said).toContain("docs/features/latin1.md")
+  expect(said).toContain("docs/features/huge.md")
+}, 15_000)
+
+test("one unusable project does not blank the tree", async () => {
+  // The store is a file people hand-edit, and `projects.json` validates only
+  // that `path` is an absolute string - so a project can name a directory that
+  // has been deleted, or a plain file. `listFeatureFiles` throws on anything
+  // but ENOENT, and one throw would otherwise be a 500 for every project at
+  // once.
+  const good = await cleanRepo()
+  await withFeature(good, "x.md", "- [ ] T1 Good\n")
+  const gone = await scratch("orch-gone-")
+  const notADir = join(await scratch("orch-file-"), "a-file")
+  await writeFile(notADir, "not a repo\n")
+  const store = await storeFile()
+  for (const path of [gone, notADir, good]) await addProject(store, defaults({ path, testCmd: "bun test" }))
+  await rm(gone, { recursive: true, force: true })
+
+  const { status, body } = await getTree(await withTree(store))
+  expect(status).toBe(200)
+  expect(body.projects?.map((p) => p.path)).toEqual([gone, notADir, good])
+  expect(body.projects?.[0]?.features).toEqual([])
+  expect(body.projects?.[1]?.features).toEqual([])
+  expect(body.projects?.[2]?.features).toEqual([
+    { path: "docs/features/x.md", tasks: [{ ref: "T1", text: "Good", done: false }] },
+  ])
+})
+
+test("a damaged projects.json is a 500 that forwards its reason, not an empty tree", async () => {
+  // The same answer registration gives it, and the one 5xx that forwards its
+  // message: the store is the only state no repository can rebuild, it names
+  // the file, the record and the field, and an editor fixes what a message
+  // points at. An empty tree would read as a fresh install and invite the user
+  // to register everything again.
+  const store = await storeFile()
+  await writeFile(store, '[{"path":"/repo","testCmd":"bun test","nonsense":1}]')
+  const res = await call(await withTree(store), { path: "/api/projects" })
+  expect(res.status).toBe(500)
+  expect(JSON.parse(res.body).error).toContain("nonsense")
+})
+
+test("a log whose header names an absolute feature path is listed without a branch, not dropped", async () => {
+  // `taskBranchName` throws on an absolute feature path, and a header can carry
+  // one: `TaskStatus.branch` is then `""`, meaning the task was **not** checked
+  // for a merge. `indexRuns` keeps the row rather than dropping it, because a
+  // dropped row looks like a task that was never run - which is how a second
+  // run gets started against work already written. The route forwards it the
+  // same way, and says so.
+  const repo = await cleanRepo()
+  await withFeature(repo, "x.md", "- [ ] T1 Only task\n")
+  const dir = await runsDir()
+  const l = serve({ runsDir: dir, projectsFile: await storeOf(repo) })
+  await taskLog(dir, "eeeeeeee-5555-4555-8555-555555555555", {
+    projectPath: repo,
+    featureFile: join(repo, "docs", "features", "x.md"),
+    taskRef: "T1",
+  })
+
+  const { status, body } = await getTree(l)
+  expect(status).toBe(200)
+  // The row is in the mapping, under the key its own header spells, and joins
+  // no tree task - the tree's paths are repo-relative, as the header's should
+  // have been.
+  expect(
+    body.runs?.[taskKey({ projectPath: repo, featureFile: join(repo, "docs", "features", "x.md"), taskRef: "T1" })],
+  ).toEqual({ runId: "eeeeeeee-5555-4555-8555-555555555555", costUsd: 1.25, attempts: 1 })
+  expect("run" in (body.projects?.[0]?.features?.[0]?.tasks?.[0] ?? {})).toBe(false)
+  expect(body.warnings?.join("\n")).toContain("no usable branch name")
+})
+
+test("reading the tree changes nothing on disk, because a local page can make this request", async () => {
+  // HANDOFF: `GET` must have no side effects. A page on any other localhost
+  // port is same-site, so its no-cors GETs carry our cookie and send no
+  // `Origin`; this request is one of those, and it must still be inert.
+  const repo = await cleanRepo()
+  const path = await withFeature(repo, "x.md", FEATURE)
+  // Committed, so the tree starts clean and the check below is about this
+  // request rather than about the fixture: an untracked `docs/` is itself dirt.
+  await gitIn(repo, "add", "docs")
+  await gitIn(repo, "commit", "-m", "backlog")
+  const before = await readFile(path)
+  const dir = await runsDir()
+  const l = serve({ runsDir: dir, projectsFile: await storeOf(repo) })
+
+  const res = await call(l, { path: "/api/projects", origin: null })
+  expect(res.status).toBe(200)
+
+  expect(await readFile(path)).toEqual(before)
+  expect(await readdir(dir)).toEqual([])
+  // No branch was created either: the tree asks git nothing, which is also why
+  // no merge predicate is passed. `isMerged` costs about 5ms a row awaited one
+  // at a time - 2733ms over 500 logs, measured (HANDOFF) - and there is no base
+  // branch to ask about: `isMergedIntoBase` needs one, and nothing in `git.ts`
+  // or `run.ts` resolves a project's base outside a run. So every finished task
+  // reads `done-unmerged`, which `Tree.tsx` treats as a calm end state and
+  // which keeps `canStart` false: the recoverable direction.
+  await requireCleanTreeForNewRun(await requireUsableRepo(repo))
+})
+
+// ---------------------------------------------------------------------------
+// 14. Raising a run's ceiling
+// ---------------------------------------------------------------------------
+
+// `createRunner` has exposed `raise(runId, budgetUsd)` since Task 14 and nothing
+// served it, so an exhausted run was unreachable over HTTP: feedback and an
+// answer are both refused for want of funds *before* the text is taken, approve
+// re-parks, and stop only ends it. The raise is the one action that moves it.
+//
+// It is also the only action whose argument is a number, so it owns a 400 no
+// other route has. The dimension is the value of `budgetUsd` **as JSON delivers
+// it**, and the matrix below enumerates it rather than sampling: absent, null,
+// a numeric string, a boolean, an array, an object, `NaN` (which is not JSON at
+// all, and which `JSON.stringify` turns into `null`), both infinities (which
+// arrive as `1e999`), negative zero, zero and a negative figure. The CLI
+// rejects a non-positive `--max-budget-usd` (probed, 2026-10-11), so a figure
+// let through here fails at the spawn, where the UI cannot attribute the
+// failure to the input that caused it.
+//
+// What the route deliberately does **not** check is whether the figure is a
+// raise. `requireRaise` in `src/run.ts` demands a finite figure above **both**
+// the current ceiling and the spend, and neither is known here - the ceiling
+// lives in the run's own log after a raise, not in `projects.json`. So "not
+// above the ceiling" is the machine's `wrong-state`, which is a 409 carrying
+// its prose, and the route's 400 is only for a figure that could never fund
+// anything.
+
+const RAISE_PATH = "/api/runs/abc/raise"
+
+test("a raise carries the figure to the machine and answers 200", async () => {
+  // The whole new ceiling, not a delta: `raiseBudget` writes
+  // `{"kind":"human","action":"raise","budgetUsd":<figure>}` and `foldForResume`
+  // takes the last usable one, so a delta would have to be folded against a
+  // ceiling the caller cannot see.
+  const { l, fake } = await withRunner()
+  const res = await post(l, RAISE_PATH, JSON.stringify({ budgetUsd: 12.5 }))
+
+  expect(res.status).toBe(200)
+  expect(JSON.parse(res.body)).toEqual({ ok: true })
+  expect(fake.calls).toEqual([{ name: "raise", runId: "abc", budgetUsd: 12.5 }])
+})
+
+test("a figure that is not above the ceiling and the spend is the machine's 409, not the route's 400", async () => {
+  // The semantics `Runner.raise` actually has, read rather than guessed from
+  // the name: a figure at or under either one is refused as `wrong-state`,
+  // because it would lower the ceiling or stop the run again on arrival. The
+  // message is what a human is left with, so it travels.
+  const { l, fake } = await withRunner({
+    async raise() {
+      return {
+        ok: false,
+        refusal: "wrong-state",
+        message:
+          "$1 is not a usable ceiling for run abc: it has a $50.00 ceiling and has spent $49.9980, so a raise has to be a finite figure above both - anything else either lowers the ceiling or stops the run again on arrival.",
+      }
+    },
+  })
+  const res = await post(l, RAISE_PATH, JSON.stringify({ budgetUsd: 1 }))
+
+  expect(res.status).toBe(409)
+  const body = JSON.parse(res.body) as { error: string; refusal: string }
+  expect(body.refusal).toBe("wrong-state")
+  expect(body.error).toContain("above both")
+  // It reached the machine: the route does not second-guess the ceiling.
+  expect(fake.calls).toEqual([{ name: "raise", runId: "abc", budgetUsd: 1 }])
+})
+
+/** Every value `budgetUsd` can arrive as, with the status it earns. `body` is
+ * the raw bytes on purpose: `JSON.stringify` cannot express `NaN`, `Infinity`
+ * or `-0`, which are three of the rows that matter. */
+interface RaiseRow {
+  body?: string
+  status: number
+  why: string
+}
+
+const raiseRows: RaiseRow[] = [
+  // The figures that fund something.
+  { body: '{"budgetUsd":75}', status: 200, why: "a whole number of dollars" },
+  { body: '{"budgetUsd":12.5}', status: 200, why: "and a fractional one" },
+  { body: '{"budgetUsd":0.0001}', status: 200, why: "a tiny but positive figure is the machine's call, not the route's" },
+  { body: '{"budgetUsd":1e308}', status: 200, why: "no upper bound: an arbitrary cap is a cap nobody asked for, and the human typed this" },
+
+  // No figure at all. An absent body and an empty one are indistinguishable on
+  // the wire (probed: Bun declares Content-Length: 0 for both).
+  { status: 400, why: "a raise with no figure raises nothing" },
+  { body: "", status: 400, why: "an empty body carries no figure" },
+  { body: "{}", status: 400, why: "nor does an object with no keys" },
+  { body: " \n ", status: 400, why: "nor whitespace, which reads as an absent body" },
+
+  // Not JSON, or JSON that is not a record.
+  { body: "not json", status: 400, why: "the body must parse as JSON" },
+  { body: '{"budgetUsd":NaN}', status: 400, why: "the literal NaN is not JSON at all, so this never reaches the figure check" },
+  { body: "null", status: 400, why: "typeof null is object, which is the trap this row pins" },
+  { body: "[]", status: 400, why: "an array is not a record" },
+  { body: "75", status: 400, why: "nor is a bare number the body" },
+
+  // Present, and not a number.
+  { body: '{"budgetUsd":null}', status: 400, why: "what JSON.stringify({budgetUsd: NaN}) actually sends" },
+  { body: '{"budgetUsd":"75"}', status: 400, why: "a numeric string is the shape a text input produces, and is not a number" },
+  { body: '{"budgetUsd":""}', status: 400, why: "nor is an empty string, which Number() would read as zero" },
+  { body: '{"budgetUsd":true}', status: 400, why: "a boolean is not a figure" },
+  { body: '{"budgetUsd":[75]}', status: 400, why: "nor an array holding one" },
+  { body: '{"budgetUsd":{}}', status: 400, why: "nor an object" },
+
+  // A number, and not one that can fund a turn.
+  { body: '{"budgetUsd":1e999}', status: 400, why: "how Infinity actually arrives, since JSON has no literal for it" },
+  { body: '{"budgetUsd":-1e999}', status: 400, why: "and -Infinity" },
+  { body: '{"budgetUsd":0}', status: 400, why: "a zero ceiling funds nothing and the CLI refuses it" },
+  { body: '{"budgetUsd":-0}', status: 400, why: "negative zero parses, and is still not above zero" },
+  { body: '{"budgetUsd":-123.456}', status: 400, why: "a negative ceiling is not a ceiling" },
+
+  // Keys, with the same strictness every other action has.
+  { body: '{"budgetUsd":75,"extra":1}', status: 400, why: "an unknown key is the caller's typo, and a dropped setting is how one hides" },
+  { body: '{"budgetusd":75}', status: 400, why: "the near-miss spelling, which is the case the strictness exists for" },
+  { body: '{"budget":75}', status: 400, why: "nor a plausible shorter name" },
+  { body: '{"text":"raise it"}', status: 400, why: "and a raise is not feedback" },
+]
+
+for (const row of raiseRows) {
+  const label = row.body === undefined ? "no body" : row.body
+  test(`POST ${RAISE_PATH} with ${label} -> ${row.status} (${row.why})`, async () => {
+    const { l, fake, dir } = await withRunner()
+    const res = await call(l, { path: RAISE_PATH, method: "POST", ...(row.body === undefined ? {} : { body: row.body }) })
+
+    expect(res.status).toBe(row.status)
+    if (row.status === 200) {
+      expect(fake.calls.map((c) => c.name)).toEqual(["raise"])
+    } else {
+      // A refused figure must not reach the machine: the machine is what spends
+      // money, and a ceiling it cannot use would stop the run on arrival.
+      expect(fake.calls).toEqual([])
+      expect(JSON.parse(res.body).error).toContain("budgetUsd")
+    }
+    // No action writes to the runs directory: the machine is the only writer of
+    // a run log.
+    expect(await readdir(dir)).toEqual([])
+  })
+}
+
+test("the 400 names the problem without echoing the figure back", async () => {
+  // `refuse` quotes nothing the caller chose. The figure is the caller's text
+  // as far as this route is concerned, and the two messages have to be
+  // different: "that is not a number" and "that number cannot fund a turn" are
+  // different mistakes with different fixes.
+  const { l } = await withRunner()
+  const notANumber = await post(l, RAISE_PATH, JSON.stringify({ budgetUsd: "99999" }))
+  const notPositive = await post(l, RAISE_PATH, "{\"budgetUsd\":-123.456}")
+
+  expect(notANumber.status).toBe(400)
+  expect(notPositive.status).toBe(400)
+  expect(notANumber.body).not.toContain("99999")
+  expect(notPositive.body).not.toContain("123.456")
+  expect(JSON.parse(notANumber.body).error).not.toBe(JSON.parse(notPositive.body).error)
+  // And each says which way it is wrong.
+  expect(JSON.parse(notANumber.body).error).toContain("number")
+  expect(JSON.parse(notPositive.body).error).toContain("above zero")
+})
+
+test("a raise on a server with no machine is a 503, not a 500", async () => {
+  const noMachine = serve({ runsDir: await runsDir() })
+  const res = await post(noMachine, RAISE_PATH, JSON.stringify({ budgetUsd: 75 }))
+  expect(res.status).toBe(503)
+})
+
+// ---------------------------------------------------------------------------
+// 15. The launch itself: `bun run src/server.ts`
 // ---------------------------------------------------------------------------
 
 // Everything above injects its dependencies, which is what makes the tests

@@ -1,13 +1,34 @@
 import { randomBytes, timingSafeEqual } from "node:crypto"
 import { constants } from "node:fs"
 import { open, realpath, stat } from "node:fs/promises"
-import { isAbsolute, resolve, sep } from "node:path"
+import { isAbsolute, relative, resolve, sep } from "node:path"
 import type { Server } from "bun"
-import { requireUsableRepo } from "./git"
+import { parseFeature } from "./backlog"
+import type { Task } from "./backlog"
+import { listFeatureFiles } from "./featurefile"
+import { requireUsableRepo, taskBranchName } from "./git"
 import { addProject, defaults, loadProjects } from "./projects"
 import type { Project } from "./projects"
+import { indexRuns, taskKey } from "./runindex"
+import type { TaskStatus } from "./runindex"
 import { defaultRunsDir, replay, runLogPath } from "./runlog"
 import type { RunRecord } from "./runlog"
+/**
+ * The tree's shapes, borrowed from the component rather than restated here.
+ *
+ * **Type-only, and that is what keeps React out of the server.**
+ * `verbatimModuleSyntax` is on, so this form is erased rather than preserved as
+ * a side-effect import - the inline `import { type X }` spelling would leave
+ * `import {} from "./ui/Tree.tsx"` behind and load the component, `react/jsx-runtime`
+ * and `motion` into the server process. Verified, not assumed: a
+ * `bun build --target=bun` of this file pulls in neither `jsx-runtime` nor
+ * `ui/Tree`, and the server boots and answers with no React in its graph.
+ *
+ * Borrowed because the client feeds this payload straight into `<Tree>`: a
+ * field renamed there becomes a compile error here instead of a row that
+ * quietly renders as something else.
+ */
+import type { Account, TreeFeature, TreeProject, TreeTask } from "./ui/Tree.tsx"
 
 /**
  * The local HTTP server, and the guard chain that runs ahead of every route.
@@ -202,6 +223,31 @@ export interface Runner {
    */
   answer(runId: string, text: string): Promise<Acted>
   /**
+   * The new ceiling for a run parked at a human, **in full rather than as a
+   * delta**, and a run that stopped on its budget continues from it.
+   *
+   * In full because the figure is recorded as a `human` record on the run's own
+   * log and folded back by `foldForResume`, which takes the last usable one: a
+   * delta would have to be folded against a ceiling nobody over HTTP can see.
+   * `projects.json` is the *next* run's default, not a live control, so a run
+   * started with a per-run ceiling has none to re-derive and one edit to the
+   * store would raise every unfinished run of that project at once.
+   *
+   * **A raise has to exceed both the ceiling and the spend**, and that rule is
+   * the machine's: anything at or under either one lowers the ceiling or parks
+   * the run again on arrival, and it refuses that as `wrong-state`. Neither
+   * figure is known here, so the route's own 400 is only for a figure that
+   * could never fund anything - absent, not a number, not finite, or not above
+   * zero. The CLI rejects a non-positive `--max-budget-usd` (probed,
+   * 2026-10-11), so a figure let through would fail at the spawn, where the UI
+   * cannot attribute the failure to the input that caused it.
+   *
+   * Like `answer`, this exists because without it an exhausted run is
+   * unreachable: feedback and an answer are both refused for want of funds
+   * *before* the text is taken, approve re-parks, and stop only ends it.
+   */
+  raise(runId: string, budgetUsd: number): Promise<Acted>
+  /**
    * Stops the run and leaves it **resumable**: SIGTERM the child, per
    * `src/spawn.ts`'s `terminate`, which deliberately does not close stdin or
    * clean up, because the session resumes from the same id and stopping
@@ -243,6 +289,22 @@ export interface ServerOptions {
    * projects in the developer's own `~/.orch/projects.json`.
    */
   projectsFile?: string
+  /**
+   * The run ids the machine holds a process for **right now**, asked at the
+   * moment the tree is rendered.
+   *
+   * A function and not a list, because liveness is a fact about this instant: a
+   * list captured at launch would be empty forever. `liveRunIds()` in
+   * `src/run.ts` is what the entry point passes.
+   *
+   * Without it `indexRuns` reads every run with no `end` record as
+   * `interrupted` - liveness is not in the log and cannot be - so the tree
+   * would show a run that is going as one the server died in the middle of, and
+   * `running` would be unreachable. Deliberately not a method on `Runner`:
+   * `createRunner` does not expose one, and adding it to that port would make
+   * the machine's own object no longer satisfy it.
+   */
+  liveRunIds?: () => Iterable<string>
 }
 
 export interface Launch {
@@ -276,6 +338,10 @@ export interface RouteContext {
    * `ServerOptions.projectsFile`, which has no default on purpose. Nullable for
    * the same reason as `runner`. */
   projectsFile: string | null
+  /** Who is running right now, or `null` when the launch can not say - in which
+   * case every unfinished run reads as `interrupted`. Nullable rather than
+   * optional, for the same reason as the two above. */
+  liveRunIds: (() => Iterable<string>) | null
 }
 
 /**
@@ -335,6 +401,11 @@ export const ROUTES: Record<string, RouteHandler> = {
    * but it must not be able to *cause* anything. */
   "GET /api/runs/:id/plan": (_req, ctx, params) => readPlan(ctx, params?.["id"] ?? ""),
 
+  /** The task tree, and the run id of each task's newest run beside it. A
+   * `GET`, side-effect-free for the same reason the plan is: see `readProjects`
+   * for why the ids travel beside the tree rather than inside it. */
+  "GET /api/projects": (_req, ctx) => readProjects(ctx),
+
   // The run actions, design §4.4. POST, never GET: see the module header.
   "POST /api/runs": (req, ctx) => startRun(req, ctx),
   "POST /api/runs/:id/approve": (req, ctx, params) => approveRun(req, ctx, params?.["id"] ?? ""),
@@ -342,6 +413,10 @@ export const ROUTES: Record<string, RouteHandler> = {
   /** The reply to a run that asked a question, which no other route can move.
    * Not `feedback`: see `Runner.answer`. */
   "POST /api/runs/:id/answer": (req, ctx, params) => answerRun(req, ctx, params?.["id"] ?? ""),
+  /** The new ceiling for a run parked at a human. The only action carrying a
+   * number, so it owns a 400 no other route has - and a `POST`, like every
+   * other action, because `SameSite=Strict` ignores ports. */
+  "POST /api/runs/:id/raise": (req, ctx, params) => raiseRun(req, ctx, params?.["id"] ?? ""),
   "POST /api/runs/:id/stop": (req, ctx, params) => stopRun(req, ctx, params?.["id"] ?? ""),
 
   /** Registering a repository, which is what the design's empty state offers
@@ -927,8 +1002,8 @@ async function readPlan(ctx: RouteContext, id: string): Promise<Response> {
   // than attempted. Loud - a 400 - because a log recording a path outside its
   // own repository is either hand-edited or a bug, and neither should read as
   // "the plan is missing".
-  const relative = plannedPath(planPath)
-  if (relative === null || projectPath === null) return refuse(400, PLAN_OUTSIDE_REPO)
+  const dictated = plannedPath(planPath)
+  if (dictated === null || projectPath === null) return refuse(400, PLAN_OUTSIDE_REPO)
 
   // git's own answer for the root, so a project registered through a symlink
   // resolves to the directory the plan was actually written in, and so the
@@ -943,49 +1018,102 @@ async function readPlan(ctx: RouteContext, id: string): Promise<Response> {
     return planAnswer(unreadable(planPath, (cause as Error).message))
   }
 
-  const joined = resolve(root, relative)
+  const joined = resolve(root, dictated)
   // Unreachable given `plannedPath`, and kept because the two read different
   // things: that one reads the recorded string, this one the result of joining
   // it. A future edit that loosened either alone would still meet this.
   if (!inside(joined, root)) return refuse(400, PLAN_OUTSIDE_REPO)
 
-  /**
-   * **The string checks above are not enough, and this is the line that makes
-   * the route safe.** `stat` and `readFile` follow symlinks, so a
-   * `docs/plans/x.md` that links to `~/.ssh/id_rsa` - or a `docs/plans`
-   * directory that does - passes every check on the path and still reads the
-   * key. The agent that writes plans has shell access in that repo, so the link
-   * is one command away.
-   *
-   * Resolved once, and then **opened** with `O_NOFOLLOW` and read through that
-   * one handle: the window between resolving and reading is a window the same
-   * agent can swap the final component in, and a handle-based `stat` and read
-   * cannot be pointed at a second file after the size was checked. Only the
-   * final component is covered, which is the realistic case; an intermediate
-   * directory swapped mid-request would need `openat` on every segment, which
-   * is a different piece of machinery than this route should carry.
-   */
-  let real: string
-  try {
-    real = await realpath(joined)
-  } catch (cause) {
-    const code = (cause as NodeJS.ErrnoException).code
-    // The common case, and the one HANDOFF predicted: the agent answered
-    // `ORCH: done` without writing the plan it was told to write. `ENOTDIR` is
-    // the same answer one level up - a path component that is a file.
-    if (code === "ENOENT" || code === "ENOTDIR") {
+  const read = await readInside(root, joined, MAX_PLAN_BYTES)
+  if (read.ok) return planAnswer({ status: "loaded", path: planPath, markdown: read.text })
+  switch (read.why) {
+    case "outside":
+      // Loud, like the string check above: a log recording a path outside its
+      // own repository is either hand-edited or a bug.
+      return refuse(400, PLAN_OUTSIDE_REPO)
+    case "missing":
+      // The common case, and the one HANDOFF predicted: the agent answered
+      // `ORCH: done` without writing the plan it was told to write.
       return planAnswer(
         unreadable(
           planPath,
           `${planPath} is the plan path this run dictated, and there is no file there. The agent ended its planning turn without writing one.`,
         ),
       )
-    }
-    return planAnswer(unreadable(planPath, (cause as Error).message))
+    case "not-a-file":
+      return planAnswer(unreadable(planPath, `${planPath} is not a file, so there is no plan to read.`))
+    case "too-large":
+      return planAnswer(
+        unreadable(
+          planPath,
+          read.size === null
+            ? `${planPath} is past the ${MAX_PLAN_BYTES} bytes a plan may be, so it is not rendered here.`
+            : `${planPath} is ${read.size} bytes, past the ${MAX_PLAN_BYTES} a plan may be, so it is not rendered here. It is still on disk.`,
+        ),
+      )
+    case "failed":
+      return planAnswer(unreadable(planPath, read.message))
   }
-  if (!inside(real, root)) return refuse(400, PLAN_OUTSIDE_REPO)
+}
 
-  // `O_NONBLOCK` as well, so a FIFO swapped in where the plan was does not hang
+/**
+ * What one guarded read answered: the text, or which way it would not give it.
+ *
+ * A code rather than prose, because the two callers say different things about
+ * the same outcome - the gate owns "the agent ended its planning turn without
+ * writing one", and the tree owns a warning naming a backlog it could not list.
+ * `size` is present when the refusal came from the `fstat` and `null` when the
+ * bounded read is what found it, which is the difference between a message that
+ * can name the size and one that cannot.
+ */
+type FileRead =
+  | { ok: true; text: string }
+  /** Nothing at that path, or a path component that is a file. */
+  | { ok: false; why: "missing" }
+  /** It resolves outside `root`, so a link is pointing out of the repository. */
+  | { ok: false; why: "outside" }
+  | { ok: false; why: "not-a-file" }
+  | { ok: false; why: "too-large"; size: number | null }
+  /** Anything else, with the cause's own message: a permission error, an
+   * `ELOOP`, or bytes that are not UTF-8. */
+  | { ok: false; why: "failed"; message: string }
+
+/**
+ * `joined`'s contents as text, if and only if it really sits inside `root`.
+ *
+ * **The string checks a caller makes on a path are not enough, and this is the
+ * function that makes a route safe.** `stat` and `readFile` follow symlinks, so
+ * a `docs/plans/x.md` or a `docs/features/x.md` that links to `~/.ssh/id_rsa` -
+ * or a `docs/plans` directory that does - passes every check on the path and
+ * still reads the key. The agent kantan runs has shell access in that repo, so
+ * the link is one command away.
+ *
+ * Resolved once, and then **opened** with `O_NOFOLLOW` and read through that
+ * one handle: the window between resolving and reading is a window the same
+ * agent can swap the final component in, and a handle-based `stat` and read
+ * cannot be pointed at a second file after the size was checked. Only the final
+ * component is covered, which is the realistic case; an intermediate directory
+ * swapped mid-request would need `openat` on every segment, which is a
+ * different piece of machinery than an HTTP route should carry.
+ *
+ * `root` must already be canonical - both sides of the containment check are
+ * compared as resolved paths, and a `root` that is itself a symlinked spelling
+ * would refuse every file under it.
+ */
+async function readInside(root: string, joined: string, maxBytes: number): Promise<FileRead> {
+  let real: string
+  try {
+    real = await realpath(joined)
+  } catch (cause) {
+    const code = (cause as NodeJS.ErrnoException).code
+    // `ENOTDIR` is the same answer one level up: a path component that is a
+    // file. `ENOENT` is also a dangling symlink, which has nothing to read.
+    if (code === "ENOENT" || code === "ENOTDIR") return { ok: false, why: "missing" }
+    return { ok: false, why: "failed", message: (cause as Error).message }
+  }
+  if (!inside(real, root)) return { ok: false, why: "outside" }
+
+  // `O_NONBLOCK` as well, so a FIFO swapped in where the file was does not hang
   // the request on a writer that never comes.
   let handle: Awaited<ReturnType<typeof open>>
   try {
@@ -993,50 +1121,37 @@ async function readPlan(ctx: RouteContext, id: string): Promise<Response> {
   } catch (cause) {
     // `ELOOP` is the final component having become a symlink since `realpath`
     // answered, which is the swap this flag exists to refuse.
-    return planAnswer(unreadable(planPath, (cause as Error).message))
+    return { ok: false, why: "failed", message: (cause as Error).message }
   }
   try {
     const info = await handle.stat()
-    if (!info.isFile()) {
-      return planAnswer(unreadable(planPath, `${planPath} is not a file, so there is no plan to read.`))
-    }
-    if (info.size > MAX_PLAN_BYTES) {
-      return planAnswer(
-        unreadable(
-          planPath,
-          `${planPath} is ${info.size} bytes, past the ${MAX_PLAN_BYTES} a plan may be, so it is not rendered here. It is still on disk.`,
-        ),
-      )
-    }
+    if (!info.isFile()) return { ok: false, why: "not-a-file" }
+    if (info.size > maxBytes) return { ok: false, why: "too-large", size: info.size }
     // Read through the handle the size came from, and read it **bounded**: the
     // check above is a cheap refusal that can name the size, but a file appended
     // to between the two would be read to its new end, and bounding what one
     // GET spends is the cap's only job. One byte past the cap is what makes
     // "too large" detectable here rather than silently truncated - and a short
     // read is why this loops, since dropping half of the document a human is
-    // being asked to approve is the worst thing this route could do.
-    const buffer = new Uint8Array(MAX_PLAN_BYTES + 1)
+    // being asked to approve is the worst thing a read could do.
+    const buffer = new Uint8Array(maxBytes + 1)
     let total = 0
     while (total < buffer.length) {
       const { bytesRead } = await handle.read(buffer, total, buffer.length - total, total)
       if (bytesRead === 0) break
       total += bytesRead
     }
-    if (total > MAX_PLAN_BYTES) {
-      return planAnswer(
-        unreadable(planPath, `${planPath} is past the ${MAX_PLAN_BYTES} bytes a plan may be, so it is not rendered here.`),
-      )
-    }
+    if (total > maxBytes) return { ok: false, why: "too-large", size: null }
     // Not `utf8`: a decoder that substitutes U+FFFD would show a human mangled
-    // prose and let them approve it, so invalid bytes are `unreadable` instead.
-    const markdown = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(buffer.subarray(0, total))
-    return planAnswer({ status: "loaded", path: planPath, markdown })
+    // prose and let them approve it, and would put a replacement character into
+    // a task's text, so invalid bytes refuse instead.
+    return { ok: true, text: new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(buffer.subarray(0, total)) }
   } catch (cause) {
-    return planAnswer(unreadable(planPath, (cause as Error).message))
+    return { ok: false, why: "failed", message: (cause as Error).message }
   } finally {
     // Closed because a handle left to the garbage collector is an error on bun
     // 1.4, and swallowing a close failure because the answer is already decided
-    // by then - letting it throw would turn a served plan into a 500.
+    // by then - letting it throw would turn a served file into a 500.
     await handle.close().catch((cause: unknown) => console.error(`closing ${real} failed:`, cause))
   }
 }
@@ -1058,6 +1173,287 @@ function unreadable(path: string, why: string): PlanSource {
  * human sends feedback, and a cached one would show the previous round's. */
 function planAnswer(plan: PlanSource): Response {
   return Response.json({ ok: true, plan }, { headers: { "Cache-Control": "no-store" } })
+}
+
+// --- The project tree -------------------------------------------------------
+
+/**
+ * The most a feature file may be, in bytes.
+ *
+ * Its own constant rather than the plan's, because this route reads **every**
+ * feature file of **every** registered project on each page load, so what is
+ * bounded here is the aggregate rather than one document. A megabyte is already
+ * far past a human-edited backlog - `src/backlog.ts` parses a task per line -
+ * and both directions were weighed: a tighter cap would drop a long real
+ * backlog, and no cap at all lets one file in one repo decide how much memory a
+ * page load spends.
+ */
+const MAX_FEATURE_BYTES = 1024 * 1024
+
+/**
+ * Every project, its feature files, their tasks, and each task's newest run.
+ *
+ * **The run ids travel beside the tree, not inside it.** `Tree.tsx` hands its
+ * caller a `TaskId` - the project, the feature file and the ref - while every
+ * `:id` route here is keyed by run id, so a selection in the tree resolved to
+ * nothing this port would accept (HANDOFF). The fix is not a `runId` on
+ * `TreeTaskRun`: the component is presentational and `src/runindex.ts` already
+ * owns the task-to-run mapping and already exports the key function for it. So
+ * `runs` is keyed by `taskKey`, which separates with `NUL` - the one byte a path
+ * cannot contain, and one that survives JSON as `\u0000` - and the shell joins
+ * the two. There is deliberately no second key format.
+ *
+ * What this composes, rather than reimplements: `src/projects.ts` for the
+ * registered repos, `src/featurefile.ts` for which files are a backlog,
+ * `src/backlog.ts` for the parse, and `src/runindex.ts` for the fold of the run
+ * logs.
+ *
+ * **No merge predicate is passed to `indexRuns`, and that is not only about
+ * cost.** `isMergedIntoBase` needs a base branch, and nothing in `src/git.ts`
+ * or `src/run.ts` resolves a project's base outside a run that was started from
+ * it - so there is no base to ask about here, and inventing one would make
+ * `merged` meaningless while looking right. The cost settles it the same way:
+ * measured over 500 logs, `indexRuns` reads them in 89-180ms and a 5ms-a-row
+ * predicate takes the same work to 2733ms, awaited one row at a time
+ * (HANDOFF). So every finished task reads `done-unmerged`, which `Tree.tsx`
+ * treats as its own calm end state and which keeps `canStart` false: the
+ * recoverable direction. Caching those answers is deliberately not done here -
+ * only a caller who knows when a branch can have moved can invalidate one, and
+ * a stale cache would feed wrong merge state to the guard whose whole job is
+ * refusing a second run against finished work.
+ *
+ * Nothing here throws on the user's own data. A project whose repo has been
+ * deleted, or whose `path` names a file, is listed with no features, because one
+ * unusable record must not blank the tree. A **damaged store** is the one
+ * exception and is a 500 forwarding its message, as registration does: an empty
+ * list there would read as a fresh install and invite registering everything
+ * again.
+ */
+async function readProjects(ctx: RouteContext): Promise<Response> {
+  const projectsFile = ctx.projectsFile
+  if (projectsFile === null) return noStore()
+
+  let registered: Project[]
+  try {
+    registered = await loadProjects(projectsFile)
+  } catch (cause) {
+    // The same answer, and the same reasoning, as `registerProject`'s: the
+    // store is the only state no repository can rebuild, the message names the
+    // file, the record and the field, and an editor fixes what it points at.
+    console.error(`GET /api/projects: ${projectsFile} cannot be read:`, cause)
+    return refuse(500, (cause as Error).message)
+  }
+
+  const index = await indexRuns({
+    runsDir: ctx.runsDir,
+    // Never a second implementation of the branch name: a plausible name
+    // pointing at no branch would make `merged` meaningless while looking right.
+    branchFor: taskBranchName,
+    // A log naming a project that is no longer registered is skipped with a
+    // warning: someone will delete a project, and its logs outlive it.
+    projects: registered.map((project) => project.path),
+    ...(ctx.liveRunIds === null ? {} : { liveRunIds: ctx.liveRunIds() }),
+  })
+
+  const warnings = [...index.warnings]
+  const projects: TreeProject[] = []
+  for (const project of registered) {
+    const read = await featuresOf(project, index.tasks)
+    warnings.push(...read.warnings)
+    projects.push({
+      path: project.path,
+      account: accountOf(),
+      testCmd: project.testCmd,
+      features: read.features,
+    })
+  }
+
+  return Response.json(
+    {
+      ok: true,
+      projects,
+      // Every task the logs know about, not only the ones a tree row joined: a
+      // run whose feature file has since been renamed is still a run, and
+      // filtering the mapping down to what happens to be on screen would make
+      // it unaddressable the moment the tree and the logs disagree.
+      runs: Object.fromEntries(
+        [...index.tasks].map(([key, status]) => [
+          key,
+          { runId: status.runId, costUsd: status.costUsd, attempts: status.attempts },
+        ]),
+      ),
+      // Everything that was skipped or guessed at, from the fold and from the
+      // reads below. Dropping these would make a refused backlog a silent
+      // absence, which reads as a parser bug; `indexRuns` collects its own for
+      // the same reason and never throws them.
+      warnings,
+    },
+    // Nothing here is cached: a run moves between page loads, and the design's
+    // own rule is that the UI never owns truth.
+    { headers: { "Cache-Control": "no-store" } },
+  )
+}
+
+/**
+ * Which Claude account a project's runs bill to: `unknown`, always.
+ *
+ * Not an oversight. Nothing in `Project` says "personal" or "work" - it carries
+ * a `configDir`, which selects a CLI profile - so the reading is not the
+ * server's to make, and design §5 lists a wrong account as a defect because
+ * people bill clients from one of these. A silent default of "personal" is the
+ * one failure the chip exists to prevent (HANDOFF). No `label` either: the
+ * component's own default is "account unknown", and a second copy of that
+ * sentence here would be a second place for it to drift.
+ */
+function accountOf(): Account {
+  return { kind: "unknown" }
+}
+
+/**
+ * One project's feature files, with whatever could not be read said out loud.
+ *
+ * `readFeature` is deliberately **not** what reads these. It uses a plain
+ * `readFile`, so it follows a symlink out of the repository and has no size
+ * cap, and this route hands the parsed contents to a browser - the same
+ * exposure the plan route has, answered by the same guard (`readInside`).
+ *
+ * That guard is a skipping rule, so CLAUDE.md's rule applies. The dimension is
+ * **the outcome of trying to read one candidate**, and its values are: a plain
+ * file; a symlink that stays inside the repo; a symlink out of it; a dangling
+ * one, or a file deleted between the listing and the read; something that is
+ * not a regular file; bytes that are not UTF-8; and a file past the cap. The
+ * costs are not symmetric:
+ *
+ * - **Rendering a file from outside the repository** leaks whatever a line of
+ *   it looks like a task bullet in, and there is no recovering a leaked key.
+ *   So that direction refuses, even though `listFeatureFiles` documents a
+ *   symlinked shared backlog as supported - which it still is for a run, since
+ *   `src/run.ts` reads the file itself. The two disagree, and this is the side
+ *   to be wrong on.
+ * - **Dropping a file the user really has** makes a real backlog invisible,
+ *   which `listFeatureFiles` itself calls the worse failure.
+ *
+ * So a file that cannot be read is **omitted and named in a warning**, never
+ * listed with `tasks: []`: an empty task list is exactly what a feature
+ * mid-draft looks like, and `listFeatureFiles` includes those on purpose, so the
+ * two have to stay distinguishable. A silent omission would read as a parser
+ * blind spot and send someone looking in the wrong file.
+ */
+async function featuresOf(
+  project: Project,
+  tasks: ReadonlyMap<string, TaskStatus>,
+): Promise<{ features: TreeFeature[]; warnings: string[] }> {
+  const warnings: string[] = []
+
+  // Canonical, because `readInside` compares two resolved paths: a project
+  // registered through a symlink would otherwise have every file under it read
+  // as pointing out of itself. Only for the containment check - the path the
+  // tree prints and joins on stays the registered spelling, below.
+  let root: string
+  try {
+    root = await realpath(project.path)
+  } catch (cause) {
+    warnings.push(`${project.path} cannot be resolved, so its backlog is not listed: ${(cause as Error).message}`)
+    return { features: [], warnings }
+  }
+
+  // `listFeatureFiles` reads an absent `docs/features` as no features, which is
+  // a repo's normal first state, and throws on anything else - a `path` that is
+  // a file answers ENOTDIR. One throw must not become a 500 for every project.
+  let candidates: string[]
+  try {
+    candidates = await listFeatureFiles(project.path)
+  } catch (cause) {
+    warnings.push(`${project.path} has no readable docs/features, so its backlog is not listed: ${(cause as Error).message}`)
+    return { features: [], warnings }
+  }
+
+  const features: TreeFeature[] = []
+  for (const path of candidates) {
+    const rel = featurePath(project.path, path)
+    if (rel === null) {
+      warnings.push(`${path} is not inside ${project.path}, so it is not listed as one of its feature files`)
+      continue
+    }
+    const read = await readInside(root, path, MAX_FEATURE_BYTES)
+    if (!read.ok) {
+      warnings.push(`${project.path}: ${rel} is in docs/features and was not read, so it is not in the tree: ${whyUnread(read)}`)
+      continue
+    }
+    features.push({
+      path: rel,
+      tasks: parseFeature(read.text).tasks.map((task) => treeTask(task, project.path, rel, tasks)),
+    })
+  }
+  return { features, warnings }
+}
+
+/** Prose for a refused read, naming no resolved path: where a link inside the
+ * user's repo points is not this route's to publish. */
+function whyUnread(read: Extract<FileRead, { ok: false }>): string {
+  switch (read.why) {
+    case "missing":
+      return "there is nothing at that path now; it was listed a moment ago, so it has been deleted or it is a dangling link"
+    case "outside":
+      return "it resolves to a file outside the repository, and this route does not render one - the backlog it links to is still there to read"
+    case "not-a-file":
+      return "it is not a regular file"
+    case "too-large":
+      return `it is past the ${MAX_FEATURE_BYTES} bytes a feature file may be`
+    case "failed":
+      return read.message
+  }
+}
+
+/**
+ * The feature file as the run log's header spells it, or `null`.
+ *
+ * **Relative to `project.path` as registered**, never to a resolved root, and
+ * with separators normalised the way `src/run.ts`'s `repoRelative` normalises
+ * them. HANDOFF: `TreeFeature.path` has to be the exact repo-relative string
+ * the header records as `featureFile`, because that is a third of `taskKey`. If
+ * the join misses, a `done, unmerged` task reads as `open` and `canStart`
+ * returns true - a silent re-run of finished work the tree cannot detect.
+ *
+ * The guard is unreachable while the caller is `listFeatureFiles`, which joins
+ * names from one `readdir` onto the project's own path; it is here because the
+ * two things are separable and a path that escaped the project must not be
+ * printed as one of its files.
+ */
+function featurePath(projectPath: string, absolute: string): string | null {
+  const rel = relative(resolve(projectPath), absolute)
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return null
+  return rel.split("\\").join("/")
+}
+
+/**
+ * One backlog line, with its newest run when the index has one.
+ *
+ * `line` does not travel: it indexes a string the client does not have.
+ *
+ * `run` is **absent** rather than empty for a task that has never run, because
+ * `taskStateOf` reads a missing `run` as open-or-passed from the checkbox and an
+ * empty one would make it read the checkbox's opposite. A ref-less task is not
+ * even looked up: it cannot be run, since a run is addressed by its ref.
+ *
+ * `testAttempts` and `exitCode` are **omitted**, not zeroed. `runindex.ts`
+ * deliberately folds no `test` record - an exit code does not move a run - so
+ * neither number is available here, and design §"what must survive" requires
+ * exit codes printed and never paraphrased, which also forbids inventing one. A
+ * zero would render as "exited 0": a pass nobody observed. A zero
+ * `testAttempts` would be read by `isGrinding` as a count rather than an
+ * absence.
+ *
+ * `branch` is forwarded as it comes, including `""` - which means `branchFor`
+ * threw and the task was **not** checked for a merge. The run is never dropped
+ * for it: a dropped run reads as a task that was never run, which is how a
+ * second run gets started against work already written.
+ */
+function treeTask(task: Task, projectPath: string, featureFile: string, tasks: ReadonlyMap<string, TaskStatus>): TreeTask {
+  const line: TreeTask = { ref: task.ref, text: task.text, done: task.done }
+  if (task.ref === null) return line
+  const status = tasks.get(taskKey({ projectPath, featureFile, taskRef: task.ref }))
+  return status === undefined ? line : { ...line, run: { state: status.state, branch: status.branch } }
 }
 
 // --- The actions ------------------------------------------------------------
@@ -1247,6 +1643,9 @@ const FEEDBACK_KEYS = ["text"] as const
  * routes are different actions on different conversations, and sharing the
  * literal would invite sharing the handler. */
 const ANSWER_KEYS = ["text"] as const
+/** The whole new ceiling, in dollars. One key, and a number rather than a
+ * string: see `raiseRun`. */
+const RAISE_KEYS = ["budgetUsd"] as const
 const NO_KEYS: readonly string[] = []
 /**
  * What registering a project takes, which is **not** every field a `Project`
@@ -1357,6 +1756,58 @@ async function answerRun(req: Request, ctx: RouteContext, id: string): Promise<R
     return badBody(ANSWER_KEYS, "an answer is the human's own text, and must be a non-empty string")
   }
   return acted(await gate.runner.answer(id, text))
+}
+
+/**
+ * The new ceiling for a run parked at a human.
+ *
+ * The one action whose argument is a number, so it owns a 400 no other route
+ * has. Accepting input, so CLAUDE.md's rule applies: the dimension is **the
+ * value of `budgetUsd` as JSON delivers it**, enumerated rather than sampled -
+ *
+ * - **Absent**, which includes an absent body and an empty one (probed: Bun
+ *   declares `Content-Length: 0` for both, so they are indistinguishable).
+ * - **`null`**, which is what `JSON.stringify({ budgetUsd: NaN })` sends, and
+ *   the literal `NaN`, which is not JSON at all and is refused one layer up.
+ * - **A string**, including a numeric one: that is the shape a text input
+ *   produces, and `Number("")` is 0, so coercing would turn a blank field into
+ *   a ceiling of zero.
+ * - **A boolean, an array or an object**, for the same reason.
+ * - **Both infinities**, which arrive as `1e999`: `src/spawn.ts` throws rather
+ *   than flooring a non-finite remainder, precisely so a broken total cannot be
+ *   hidden.
+ * - **Zero, negative zero and any negative figure.** The CLI rejects a
+ *   non-positive `--max-budget-usd` (probed, 2026-10-11).
+ * - **A finite figure above zero.** Forwarded, however large: an upper bound
+ *   here would be a cap nobody asked for, over a figure the human typed.
+ *
+ * What is **not** checked is whether the figure is a raise. `requireRaise`
+ * demands one above both the current ceiling and the spend, and neither is
+ * known here - after a raise the ceiling lives in the run's own log, not in
+ * `projects.json`. So "not above the ceiling" is the machine's `wrong-state`,
+ * which `acted` turns into a 409 carrying its own prose, and this 400 is only
+ * for a figure that could never fund anything. Both costs were weighed:
+ * over-accepting means the spawn fails later, where the UI cannot attribute the
+ * failure to the input that caused it; over-rejecting means a ceiling the
+ * machine would have taken is refused, which is why the bound here is only
+ * "finite and above zero" and not a guess at the run's state.
+ *
+ * Neither message echoes the figure, as no refusal in this file echoes caller
+ * text, and they are two messages rather than one: "that is not a number" and
+ * "that number cannot fund a turn" are different mistakes with different fixes.
+ */
+async function raiseRun(req: Request, ctx: RouteContext, id: string): Promise<Response> {
+  const gate = await actionGate(req, ctx, id, RAISE_KEYS)
+  if ("refused" in gate) return gate.refused
+
+  const figure = gate.fields["budgetUsd"]
+  if (typeof figure !== "number") {
+    return badBody(RAISE_KEYS, "a raise is the run's whole new ceiling and must be a number of dollars, never a string")
+  }
+  if (!Number.isFinite(figure) || figure <= 0) {
+    return badBody(RAISE_KEYS, "a ceiling must be a finite figure above zero, or it funds no turn at all and the CLI refuses it")
+  }
+  return acted(await gate.runner.raise(id, figure))
 }
 
 async function stopRun(req: Request, ctx: RouteContext, id: string): Promise<Response> {
@@ -1500,6 +1951,7 @@ export function createServer(opts: ServerOptions = {}): Launch {
     // reachable by a check and not by a TypeError.
     runner: opts.runner ?? null,
     projectsFile: opts.projectsFile ?? null,
+    liveRunIds: opts.liveRunIds ?? null,
     hosts: new Set(),
     origins: new Set(),
   }
@@ -1545,7 +1997,7 @@ if (import.meta.main) {
   // that, putting `src/run.ts` and everything it spawns from into the module
   // graph of every file that imports this one. The process entry point is the
   // one place that has to know both.
-  const { createRunner, defaultProjectsFile } = await import("./run")
+  const { createRunner, defaultProjectsFile, liveRunIds } = await import("./run")
 
   // One runs directory and one store, resolved once and given to both. Each
   // defaults on its own otherwise, so threading them is what makes
@@ -1561,6 +2013,11 @@ if (import.meta.main) {
     runsDir,
     projectsFile,
     runner: createRunner({ projectsFile, runsDir }),
+    // The other half of `indexRuns`: liveness is not in a log and cannot be, so
+    // without this every run the machine is driving right now reads as
+    // `interrupted` in the tree. It is a module-level function rather than
+    // anything on the `Runner` port, which is why it is threaded as an option.
+    liveRunIds,
   })
   // The token is not printed: it belongs in the cookie, and a terminal is a
   // place things get pasted from.
