@@ -77,3 +77,53 @@ Task 13 must carry which session each phase belongs to rather than reconstructin
 Task 13 will take several rounds, and that is the design working rather than failing. Going wide
 trades late seam discovery for parallel progress; the trade was made deliberately and the cost
 lands here.
+
+## Task 18 ↔ Task 13: the `Runner` seam, and three mismatches already visible
+
+`src/run.ts` did not exist when the actions were written, so `src/server.ts` declares what it needs
+and takes it as a constructor dependency (`ServerOptions.runner`, `RouteContext.runner`), with the
+tests injecting a double. Absent means a server that serves pages and streams logs but answers
+**503** on every action — which is what `bun run src/server.ts` is until someone wires a machine in
+`import.meta.main`.
+
+```ts
+interface Runner {
+  start(request: { projectPath: string; featureFile: string; taskRef: string }): Promise<Started>
+  approve(runId: string): Promise<Acted>
+  feedback(runId: string, text: string): Promise<Acted>
+  stop(runId: string): Promise<Acted>
+}
+type Started = { ok: true; runId: string } | Refused
+type Acted = { ok: true } | Refused
+interface Refused { ok: false; refusal: Refusal; message: string }
+type Refusal =
+  | "unknown-project" | "unknown-feature" | "unknown-task" | "unknown-run"  // 404
+  | "busy" | "dirty" | "wrong-state"                                        // 409
+```
+
+Four promises the interface makes, which the server depends on: an expected refusal is a **tagged
+result and not a throw** (a throw is a fault, logged, 500); each call resolves **once the
+transition is accepted**, not when the phase finishes; the machine owns the state rule, so the
+server never reads the log or the index to decide a 409; and the machine is the **only writer** of
+a run log, so the server appends no `human` record.
+
+`src/run.ts` as it stands exports `startRun(StartRunOptions)`, `approveGate(ActionOptions)` and
+`sendFeedback(ActionOptions & {feedback})`. Three gaps between that and the above — none of them a
+defect in either side, and all three cheaper to resolve now than at the wiring:
+
+| Mismatch | Why it matters | Where it is cheapest to fix |
+|---|---|---|
+| **Entry points resolve only when the run parks.** `run.ts`'s own header says so: "every entry point here returns only once the run is parked at a human, finished, or interrupted". | A plan phase runs for minutes and an HTTP request cannot wait for one — probed, Bun cuts a connection idle for 10s, and everything after the transition reaches the client on the run stream anyway. So the adapter must **not** await the promise before answering. But "accepted" is not observable from it: `dirty` and `busy` are decided inside, after the request would have been answered. | `run.ts`, by reporting acceptance separately from completion — e.g. resolving to `{runId, finished}` or taking an `onStarted`. `StartRunOptions.runId` already lets the caller mint the id, which is half of it. |
+| **Refusals are thrown, not tagged.** `requireRest` throws for the wrong rest state, `requireRef` for a ref-less task, `requireUsableRepo` and `requireCleanTreeForNewRun` for the repo, `rehydrate` for an unknown run. | The server needs `dirty` and `busy` to be different 409s and `unknown-run` to be a 404. Classifying by reading an `Error` message breaks the day a sentence is reworded, and that is the one failure a test written against the current wording cannot see. | `run.ts`, with one error class carrying a `Refusal` code. The messages are already the right prose; only the tag is missing. |
+| **`ActionOptions` wants a `Project` for every action**, not just for `start`. | `Runner` passes `runId` alone. Someone must map `runId → Project`, which means the run log header's `projectPath` and then `projects.json`. | The adapter, not the server: a server that read the run log to find a project would be the second place the state rule lives, and `server.ts` deliberately imports nothing from `projects.ts`. This is also where `loadProjects`' and `defaults()`' throws become a 4xx/5xx. |
+
+Two things already agree, worth recording because they were reached from opposite ends:
+`RunState.interrupted` says "The child was killed. No `end` record, so the run stays resumable" —
+which is exactly what the stream needs, since `isTerminal` stops **every** connection at `end`,
+reconnects included, so an `end` written for a stop would make a resumed run's later records
+unreachable for ever. And `sendFeedback` resumes the plan session, as `feedbackPrompt` requires.
+
+One open question neither side owns yet: `requireRest(run, ["gate"], …)` accepts **only**
+`waiting(gate)`, but design §3.2 and Task 23 route an unanswered `waiting(question)` to the same
+reply box. Either feedback accepts both rest states or the UI needs a second route; `feedbackPrompt`
+says "a human read that plan at the gate", so it is a prompt question as much as a routing one.

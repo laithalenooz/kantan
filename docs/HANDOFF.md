@@ -119,9 +119,18 @@ The strictness is deliberate: a misspelled *optional* key (`configdir`) reads as
 dropped on the next write, which a missing-field check cannot catch because the field is optional.
 Verified: it throws naming the file, record index, bad key and the full allowed set.
 
-### `defaults()` throws on unknown keys — Task 18 (HTTP actions)
-It will receive parsed request bodies. The HTTP layer must turn that throw into a **4xx, not a
-500**: it is the caller's typo, not a server fault.
+### `defaults()` throws on unknown keys — whoever adds project registration
+Reassigned from Task 18, which turned out not to be the consumer: `POST /api/runs` names a project
+by path and hands no request body to `defaults()`, so the throw is unreachable from the actions.
+The real consumer is the endpoint that *registers* a project from a form, which **no task in the
+plan builds** — Task 21's empty state ("point at a repo") needs one. When it is written: the throw
+is a **4xx, not a 500**, because it is the caller's typo rather than a server fault, and the same
+holds for `loadProjects` on a damaged store, which is a 5xx that forwards its message (it names the
+file and the field, and the user owns the file).
+
+`src/server.ts` already has the shape to copy: body validation returns a refusal rather than
+throwing, and every handler's throw is caught and logged as a 500, so a validator that throws can
+never become an unhandled rejection.
 
 ### `projects.json` has no cross-process lock — nobody, unless kantan grows a second process
 Writes are serialised in-process only, which is sound for one local server. A second process can
@@ -323,10 +332,38 @@ while `replay` does not. A record appended after `end` therefore never reaches a
 will, since a reconnect replays from byte 0 and stops there again. Nothing writes past `end` today;
 the alternative was a poller and a descriptor per tab on every finished run.
 
-### `GET` must have no side effects — Tasks 17, 18 and every UI task
+### `GET` must have no side effects — every UI task
 `SameSite=Strict` ignores **ports**, so a page on any other localhost port is same-site. Its
 no-cors GETs (`img`, `script`, navigation) carry the auth cookie and send no `Origin`. Actions
 must be `POST`. A convenience GET that starts a run is reachable from any other local page.
+
+Task 18 consumed its half: all four actions are `POST`, and a loop in `test/server.test.ts` tries
+`GET` and `HEAD` on every action path with no `Origin` and asserts both a 404 and that the phase
+machine recorded no call. Adding a `GET` spelling of an action therefore fails a test first.
+
+### What the four actions accept, so the UI does not learn it by trial — Tasks 21 to 25
+`POST /api/runs` takes `{"projectPath","featureFile","taskRef"}`, all three required non-empty
+strings, and answers **201** `{"ok":true,"runId"}`. `POST /api/runs/:id/approve` and `/stop` take
+**no body and no keys**; `/feedback` takes `{"text"}`. All three answer 200 `{"ok":true}`.
+
+- **An unknown key is a 400**, as in `projects.json`, because a near-miss spelling is a value
+  somebody typed and silence would drop it. The message names the keys the route *takes* and never
+  the key that was sent.
+- **A body on `approve` or `stop` is a 400, not ignored.** A client that put feedback text on the
+  approve route would otherwise silently approve a plan the human wanted revised.
+- **A refusal body is `{"error","refusal"}`**, where `refusal` is one of `unknown-project`,
+  `unknown-feature`, `unknown-task`, `unknown-run` (all 404), `busy`, `dirty`, `wrong-state` (all
+  409). Switch on the code, not the prose: `dirty` wants `git stash` advice shown, `busy` wants a
+  link to the run already going, and both are 409.
+- `error` is the phase machine's own sentence and is meant to be rendered as written — `src/git.ts`
+  names the dirty files and the stash that clears them. Nothing from the request is quoted back.
+- **413 over 64 KiB**, read with a running cap rather than from `Content-Length`, which a chunked
+  request does not send at all. Invalid UTF-8 is a 400 rather than U+FFFD, since the big field is
+  the human's own words.
+- Feedback text is forwarded **byte for byte**. Emptiness is judged on a trimmed copy; nothing
+  trimmed is ever sent on.
+- **503** on every action from a server launched without a phase machine, which is what
+  `bun run src/server.ts` is until Task 13 wires one in `import.meta.main`.
 
 ### Four security claims are spec-level, not observed — whoever tests with a real browser
 No real browser was involved in Task 16's suite. These are taken from the spec: browsers always
@@ -368,7 +405,7 @@ Also probed: **repo config can blind a porcelain check.** `status.showUntrackedF
 untracked files and `diff.ignoreSubmodules=all` hides submodules, so every flag is passed
 explicitly. A guard whose blindness is configurable by the repo it guards is not a guard.
 
-### Two readers of `permission_denials` now exist — Task 18, Task 24, whoever logs
+### Two readers of `permission_denials` now exist — Task 24, whoever logs
 `src/stream.ts` passes the field through as a raw `unknown[]`. `src/permissions.ts` exports
 `permissionDenials(event)` and `describeDenials(...)`, which name the refused tool. **Call those
 rather than re-reading the array**, or the "named, not swallowed" guarantee lives only in Task 8b's
@@ -378,15 +415,19 @@ tests and the UI shows a generic failure for what is actually a one-line config 
 Around line 109. The field is gone; the comment explains why a session id is recorded per phase,
 and that reason still stands without it. Left alone because Task 7b was editing that file.
 
-### Bun cuts an idle SSE stream at 10s — Task 17
-Found by Task 17 before it was paused: **Bun closes an idle response stream after about 10
-seconds**, so a keep-alive on a longer interval (15s was the first attempt) never fires and the
-browser sees the run stream drop. Any keep-alive must beat that window, and whether an *outgoing*
-write resets Bun's idle timer was the open question when the session paused — settle that first,
-because if outgoing writes do not reset it, a keep-alive cannot work at all and the stream needs a
-different mechanism.
+### Bun cuts an idle SSE stream at 10s — settled by Task 18, keep the number in sight
+Task 17's open question is answered. Probed (`bun 1.4.3`): `Bun.serve` defaults to
+`idleTimeout: 10`, cuts at about twelve seconds, and warns *"Bun.serve() timed out a request after
+10 seconds. Pass `idleTimeout` to configure."* **An outgoing write does reset the timer**: a stream
+writing a comment every 8s survived 26s, while one writing every 15s died at 12s with ECONNRESET.
+So the keep-alive mechanism works and needs no replacement — it just has to beat the window.
 
-This is the plan gate's exact failure case: a run waiting for a human sits idle for minutes.
+`DEFAULT_STREAM_KEEP_ALIVE_MS` was 15s, which never fires, so **every production run waiting at the
+gate dropped its stream every twelve seconds** — the plan gate's exact failure case. Now 5s. No
+test pins it: the shortest honest one waits the window out and costs the suite twelve seconds for a
+constant, and the suite's own tests pass an interval in milliseconds, so they prove the mechanism
+and are blind to the default. That blindness is how the 15s survived Task 17. If anyone raises it,
+or passes `idleTimeout` to `Bun.serve`, the two numbers have to move together.
 
 ### `runindex` reads a window, so `costUsd` is a floor — Task 24 and the UI
 Except for `done` and `failed`, where an `end` record gives the authoritative total. Do not render

@@ -1,11 +1,13 @@
 import { afterAll, expect, test } from "bun:test"
-import { mkdtemp, open as openFile, readdir, readlink, realpath, rm } from "node:fs/promises"
+import { mkdtemp, open as openFile, readdir, readlink, realpath, rm, writeFile } from "node:fs/promises"
 import { connect } from "node:net"
 import { networkInterfaces, tmpdir } from "node:os"
 import { join } from "node:path"
+import { requireCleanTreeForNewRun, requireUsableRepo } from "../src/git"
 import { createRunLog, runLogPath } from "../src/runlog"
 import type { RunHeader, RunLog, RunRecord } from "../src/runlog"
 import { ROUTES, TOKEN_EXEMPT, createServer, type Launch, type RouteContext } from "../src/server"
+import type { Acted, Runner, StartRequest, Started } from "../src/server"
 
 // These endpoints hand arbitrary text to an agent with file-write and shell
 // access, so the guards below are the project's only security boundary.
@@ -38,6 +40,13 @@ interface Call {
   origin?: string | null
   /** `null` omits it. Absent means the launch's own token. */
   cookie?: string | null
+  /** Absent sends no body at all, which on a POST is indistinguishable on the
+   * wire from an empty one: probed, Bun declares `Content-Length: 0` for both.
+   * A `ReadableStream` is sent chunked, with no declared length. */
+  body?: string | ReadableStream<Uint8Array>
+  /** Absent sends whatever `fetch` chooses, which for a string body is
+   * `text/plain`. Nothing in the server reads it; see the body enumeration. */
+  contentType?: string
 }
 
 async function call(l: Launch, c: Call = {}): Promise<{ status: number; headers: Headers; body: string }> {
@@ -46,11 +55,14 @@ async function call(l: Launch, c: Call = {}): Promise<{ status: number; headers:
   if (origin !== null) headers.set("Origin", origin)
   const cookie = c.cookie === undefined ? `orch_token=${l.token}` : c.cookie
   if (cookie !== null) headers.set("Cookie", cookie)
+  if (c.contentType !== undefined) headers.set("Content-Type", c.contentType)
 
   const res = await fetch(`http://127.0.0.1:${l.port}${c.path ?? "/api/health"}`, {
     method: c.method ?? "GET",
     headers,
     redirect: "manual",
+    // `duplex` is required for a stream body and is not in the DOM typings.
+    ...(c.body === undefined ? {} : ({ body: c.body, duplex: "half" } as RequestInit)),
   })
   return { status: res.status, headers: res.headers, body: await res.text() }
 }
@@ -1243,6 +1255,7 @@ test("an id runLogPath refuses becomes a 400, not an unhandled rejection", async
     runsDir: dir,
     streamPollMs: 2,
     streamKeepAliveMs: 1000,
+    runner: null,
   }
 
   for (const id of ["..", ".", "", "a/b", "a\\b", "a\0b"]) {
@@ -1253,3 +1266,560 @@ test("an id runLogPath refuses becomes a 400, not an unhandled rejection", async
   }
   expect(await readdir(dir)).toEqual([])
 })
+
+// ---------------------------------------------------------------------------
+// 10. Actions: start, approve, feedback, stop
+// ---------------------------------------------------------------------------
+
+// Design §4.4: SSE carries the run stream, plain POST carries the actions. All
+// four are POSTs and none of them is a GET, because `SameSite=Strict` ignores
+// **ports**: a page on any other localhost port is same-site, so its no-cors
+// GETs - an `img`, a `script`, a navigation - carry the auth cookie and send no
+// `Origin`. A convenience GET that started a run would be reachable from every
+// other local page on this machine.
+//
+// The phase machine (`src/run.ts`, Task 13) is not written yet, so the server
+// takes it as a dependency and these tests inject a double. That is the seam,
+// not a convenience: a guessed import would couple this file to a shape that is
+// still moving, and the double is what lets the status mapping be tested at all
+// - a real machine cannot be made to refuse on demand.
+
+const START = "POST /api/runs"
+const APPROVE = "POST /api/runs/:id/approve"
+const FEEDBACK = "POST /api/runs/:id/feedback"
+const STOP = "POST /api/runs/:id/stop"
+const ACTION_ROUTES = [START, APPROVE, FEEDBACK, STOP]
+
+/** One call the server made on the machine, in arrival order. */
+interface RunnerCall {
+  name: "start" | "approve" | "feedback" | "stop"
+  /** Present on `start`, as the server built it from the body. */
+  request?: StartRequest
+  /** Present on the three `:id` actions, exactly as the URL spelled it. */
+  runId?: string
+  /** Present on `feedback`. Compared byte for byte: this is the human's text. */
+  text?: string
+}
+
+interface Fake {
+  runner: Runner
+  calls: RunnerCall[]
+}
+
+/**
+ * A recording machine double. Every method answers `ok` unless `over` replaces
+ * it, so a test states only the answer it is about.
+ */
+function fakeRunner(over: Partial<Runner> = {}): Fake {
+  const calls: RunnerCall[] = []
+  const runner: Runner = {
+    async start(request) {
+      calls.push({ name: "start", request })
+      return over.start === undefined ? { ok: true, runId: "run-1" } : await over.start(request)
+    },
+    async approve(runId) {
+      calls.push({ name: "approve", runId })
+      return over.approve === undefined ? { ok: true } : await over.approve(runId)
+    },
+    async feedback(runId, text) {
+      calls.push({ name: "feedback", runId, text })
+      return over.feedback === undefined ? { ok: true } : await over.feedback(runId, text)
+    },
+    async stop(runId) {
+      calls.push({ name: "stop", runId })
+      return over.stop === undefined ? { ok: true } : await over.stop(runId)
+    },
+  }
+  return { runner, calls }
+}
+
+const TASK: StartRequest = { projectPath: "/repo", featureFile: "docs/features/x.md", taskRef: "T7" }
+
+/** A started-run launch with its double, on a runs directory of its own so the
+ * "wrote no record" assertions have something to read. */
+async function withRunner(over: Partial<Runner> = {}): Promise<{ l: Launch; fake: Fake; dir: string }> {
+  const dir = await runsDir()
+  const fake = fakeRunner(over)
+  return { l: serve({ runsDir: dir, runner: fake.runner }), fake, dir }
+}
+
+function post(l: Launch, path: string, body?: string): Promise<{ status: number; headers: Headers; body: string }> {
+  return call(l, body === undefined ? { path, method: "POST" } : { path, method: "POST", body })
+}
+
+// --- The route surface ------------------------------------------------------
+
+test("all four actions are POSTs registered in ROUTES, and none is token-exempt", () => {
+  for (const key of ACTION_ROUTES) {
+    expect(Object.keys(ROUTES)).toContain(key)
+    expect(key).toStartWith("POST ")
+    expect(TOKEN_EXEMPT.has(key)).toBe(false)
+  }
+  // Section 7's loop then covers all three guards for each of them, and
+  // widening the exempt set stays a deliberate edit that fails a test first.
+  expect([...TOKEN_EXEMPT].sort()).toEqual(["GET /", "GET /api/session"])
+})
+
+test("no action is reachable by GET or HEAD, so no local page can drive a run with an img tag", async () => {
+  // Structural, not a sample: every action path is tried with every method a
+  // no-cors cross-site request can use, and the double proves nothing ran.
+  const { l, fake } = await withRunner()
+  const paths = ["/api/runs", "/api/runs/run-1/approve", "/api/runs/run-1/feedback", "/api/runs/run-1/stop"]
+  for (const path of paths) {
+    for (const method of ["GET", "HEAD"]) {
+      // No Origin either, which is what those requests send.
+      const res = await call(l, { path, method, origin: null })
+      expect(res.status, `${method} ${path}`).toBe(404)
+    }
+  }
+  expect(fake.calls).toEqual([])
+})
+
+// --- Start ------------------------------------------------------------------
+
+test("start passes the task through and answers 201 with the run id", async () => {
+  const { l, fake } = await withRunner()
+  const res = await post(l, "/api/runs", JSON.stringify(TASK))
+
+  expect(res.status).toBe(201)
+  expect(JSON.parse(res.body)).toEqual({ ok: true, runId: "run-1" })
+  expect(fake.calls).toEqual([{ name: "start", request: TASK }])
+  expect(res.body).not.toContain(l.token)
+})
+
+test("start refuses on a dirty repo, and git's own listing of the files reaches the client", async () => {
+  // The double calls the real guards, so this proves the message src/git.ts
+  // writes survives the whole way into the HTTP body. A bare "repo is dirty"
+  // is a bad experience when the fix is one `git stash`.
+  const repo = await dirtyRepo()
+  const { l } = await withRunner({
+    async start(request) {
+      try {
+        await requireCleanTreeForNewRun(await requireUsableRepo(request.projectPath))
+      } catch (e) {
+        return { ok: false, refusal: "dirty", message: (e as Error).message }
+      }
+      return { ok: true, runId: "run-1" }
+    },
+  })
+
+  const res = await post(l, "/api/runs", JSON.stringify({ ...TASK, projectPath: repo }))
+
+  expect(res.status).toBe(409)
+  const body = JSON.parse(res.body) as { error: string; refusal: string }
+  expect(body.refusal).toBe("dirty")
+  expect(body.error).toContain("app.txt")
+  expect(body.error).toContain("git stash")
+})
+
+test("start refuses when the project already has an active run, which is the collision guard", async () => {
+  const { l } = await withRunner({
+    async start() {
+      return { ok: false, refusal: "busy", message: "/repo already has an active run: run-1" }
+    },
+  })
+  const res = await post(l, "/api/runs", JSON.stringify(TASK))
+  expect(res.status).toBe(409)
+  expect(JSON.parse(res.body)).toEqual({
+    error: "/repo already has an active run: run-1",
+    refusal: "busy",
+  })
+})
+
+test("start on a project, feature or task the machine does not know is a 404", async () => {
+  for (const refusal of ["unknown-project", "unknown-feature", "unknown-task"] as const) {
+    const { l } = await withRunner({
+      async start() {
+        return { ok: false, refusal, message: `no such thing: ${refusal}` }
+      },
+    })
+    const res = await post(l, "/api/runs", JSON.stringify(TASK))
+    expect(res.status, refusal).toBe(404)
+    expect(JSON.parse(res.body).refusal).toBe(refusal)
+  }
+})
+
+// --- Approve, feedback, stop ------------------------------------------------
+
+test("approve names the run it approved and answers 200", async () => {
+  const { l, fake } = await withRunner()
+  const res = await post(l, "/api/runs/abc/approve")
+  expect(res.status).toBe(200)
+  expect(JSON.parse(res.body)).toEqual({ ok: true })
+  expect(fake.calls).toEqual([{ name: "approve", runId: "abc" }])
+})
+
+test("approve on a run that is not at the gate is a 409, not a 500", async () => {
+  const { l } = await withRunner({
+    async approve() {
+      return { ok: false, refusal: "wrong-state", message: "run abc is running, so there is nothing to approve" }
+    },
+  })
+  const res = await post(l, "/api/runs/abc/approve")
+  expect(res.status).toBe(409)
+  expect(JSON.parse(res.body).refusal).toBe("wrong-state")
+})
+
+test("feedback carries the human's text through byte for byte, including whitespace it is padded with", async () => {
+  // The text goes into `feedbackPrompt`, so trimming or collapsing it here
+  // would change what the human said to the agent. Emptiness is judged on a
+  // trimmed copy; nothing trimmed is ever forwarded.
+  const { l, fake } = await withRunner()
+  const text = ' Use the "existing" parser.\n\n\tSee src/a\\b.ts - café ✓ 🙂 '
+  const res = await post(l, "/api/runs/abc/feedback", JSON.stringify({ text }))
+
+  expect(res.status).toBe(200)
+  expect(fake.calls).toEqual([{ name: "feedback", runId: "abc", text }])
+})
+
+test("stop answers 200 on a live run and 409 on one that is already over", async () => {
+  const { l, fake } = await withRunner()
+  expect((await post(l, "/api/runs/abc/stop")).status).toBe(200)
+  expect(fake.calls).toEqual([{ name: "stop", runId: "abc" }])
+
+  const over = await withRunner({
+    async stop() {
+      return { ok: false, refusal: "wrong-state", message: "run abc has already finished" }
+    },
+  })
+  const res = await post(over.l, "/api/runs/abc/stop")
+  expect(res.status).toBe(409)
+  expect(JSON.parse(res.body).refusal).toBe("wrong-state")
+})
+
+test("an unknown run id is a 404 on every action, not a 500", async () => {
+  for (const path of ["approve", "feedback", "stop"]) {
+    const { l } = await withRunner({
+      async approve() {
+        return { ok: false, refusal: "unknown-run", message: "no such run" }
+      },
+      async feedback() {
+        return { ok: false, refusal: "unknown-run", message: "no such run" }
+      },
+      async stop() {
+        return { ok: false, refusal: "unknown-run", message: "no such run" }
+      },
+    })
+    const body = path === "feedback" ? JSON.stringify({ text: "again please" }) : undefined
+    const res = await post(l, `/api/runs/11111111-1111-4111-8111-111111111111/${path}`, body)
+    expect(res.status, path).toBe(404)
+    expect(JSON.parse(res.body).refusal).toBe("unknown-run")
+  }
+})
+
+test("the actions write nothing to the runs directory: the machine is the only writer of a run log", async () => {
+  const { l, dir } = await withRunner()
+  await post(l, "/api/runs", JSON.stringify(TASK))
+  await post(l, "/api/runs/abc/approve")
+  await post(l, "/api/runs/abc/feedback", JSON.stringify({ text: "no" }))
+  await post(l, "/api/runs/abc/stop")
+  expect(await readdir(dir)).toEqual([])
+})
+
+// --- Run ids the actions must refuse ----------------------------------------
+
+test("a percent-encoded traversal in an action's run id reaches the machine whole, and is unknown", async () => {
+  // Nothing decodes the segment, so `..%2F` is part of a filename rather than a
+  // path. It is therefore an ordinary unknown id, which is a 404 - the same
+  // answer Task 17's stream gives it.
+  const { l, fake } = await withRunner({
+    async stop() {
+      return { ok: false, refusal: "unknown-run", message: "no such run" }
+    },
+  })
+  const res = await post(l, "/api/runs/..%2F..%2F.ssh%2Fauthorized_keys/stop")
+  expect(res.status).toBe(404)
+  expect(fake.calls[0]?.runId).toBe("..%2F..%2F.ssh%2Fauthorized_keys")
+})
+
+test("an id runLogPath refuses is a 4xx and never reaches the machine", async () => {
+  // Nothing in a URL reaches this today - the parser resolves `..` and `.`, a
+  // backslash becomes a slash, and an empty segment does not match the pattern
+  // - so it is asserted through the exported handlers. The alternative to a 400
+  // is the machine being handed an id it would pass to `runLogPath` itself,
+  // where the throw becomes a rejected promise inside a route: a 500 saying
+  // nothing.
+  const dir = await runsDir()
+  const fake = fakeRunner()
+  const ctx: RouteContext = {
+    token: "unused",
+    port: 3100,
+    dev: false,
+    devPort: 5173,
+    hosts: new Set(),
+    origins: new Set(),
+    runsDir: dir,
+    streamPollMs: 2,
+    streamKeepAliveMs: 1000,
+    runner: fake.runner,
+  }
+
+  for (const key of [APPROVE, FEEDBACK, STOP]) {
+    const handler = ROUTES[key]
+    if (handler === undefined) throw new Error(`${key} is not registered`)
+    for (const id of ["..", ".", "", "a/b", "a\\b", "a\0b"]) {
+      const req = new Request("http://127.0.0.1:3100/api/runs/x/stop", {
+        method: "POST",
+        body: JSON.stringify({ text: "hello" }),
+      })
+      const res = await handler(req, ctx, { id })
+      expect(res.status, `${key} with id ${JSON.stringify(id)}`).toBe(400)
+      expect(res.headers.get("content-type")).toStartWith("application/json")
+      await res.body?.cancel()
+    }
+  }
+  expect(fake.calls).toEqual([])
+  expect(await readdir(dir)).toEqual([])
+})
+
+// --- The request body, enumerated ------------------------------------------
+
+// Body validation is a guard that accepts input, so CLAUDE.md's rule applies
+// and the costs invert from the usual: over-accepting hands malformed state to
+// a run that spends money, over-rejecting means the UI cannot drive the tool.
+// The dimension is the bytes of the body, and every shape it can take is a row
+// here rather than a sample.
+
+interface BodyRow {
+  path: string
+  body?: string
+  contentType?: string
+  status: number
+  why: string
+}
+
+const START_PATH = "/api/runs"
+const APPROVE_PATH = "/api/runs/abc/approve"
+const FEEDBACK_PATH = "/api/runs/abc/feedback"
+const STOP_PATH = "/api/runs/abc/stop"
+
+const bodyRows: BodyRow[] = [
+  // The controls.
+  { path: START_PATH, body: JSON.stringify(TASK), status: 201, why: "the three keys a run needs" },
+  { path: FEEDBACK_PATH, body: JSON.stringify({ text: "narrow it" }), status: 200, why: "the one key feedback needs" },
+  { path: APPROVE_PATH, status: 200, why: "approve has nothing to say, so no body is the normal case" },
+  { path: STOP_PATH, status: 200, why: "nor has stop" },
+
+  // Absent and empty, which the wire cannot tell apart: probed, Bun declares
+  // Content-Length: 0 for both.
+  { path: START_PATH, status: 400, why: "a run cannot be started without naming one" },
+  { path: START_PATH, body: "", status: 400, why: "an empty body names no project, feature or task" },
+  { path: FEEDBACK_PATH, status: 400, why: "feedback with nothing said would spend a planning turn on silence" },
+  { path: APPROVE_PATH, body: "", status: 200, why: "empty reads as absent, which is what approve expects" },
+  { path: APPROVE_PATH, body: "{}", status: 200, why: "an empty object says nothing either" },
+  { path: STOP_PATH, body: "{}", status: 200, why: "the same for stop" },
+
+  // Not JSON at all, or JSON that is not an object.
+  { path: START_PATH, body: "not json", status: 400, why: "the body must parse as JSON" },
+  { path: START_PATH, body: "{", status: 400, why: "truncated JSON is the same answer" },
+  { path: START_PATH, body: "null", status: 400, why: "typeof null is object, which is the trap this row pins" },
+  { path: START_PATH, body: "[]", status: 400, why: "an array is an object to typeof, and is not a record" },
+  { path: START_PATH, body: JSON.stringify([TASK]), status: 400, why: "nor is an array that holds the right record" },
+  { path: START_PATH, body: "5", status: 400, why: "a JSON scalar is not a record" },
+  { path: START_PATH, body: '"T7"', status: 400, why: "nor a bare string" },
+  { path: START_PATH, body: "true", status: 400, why: "nor a bare boolean" },
+  { path: APPROVE_PATH, body: "null", status: 400, why: "approve takes no keys, and null is still not a record" },
+  { path: APPROVE_PATH, body: "[]", status: 400, why: "nor is an array" },
+
+  // Keys: missing, wrong type, empty, unknown.
+  { path: START_PATH, body: "{}", status: 400, why: "an object missing every required key" },
+  { path: START_PATH, body: JSON.stringify({ projectPath: "/repo" }), status: 400, why: "missing featureFile and taskRef" },
+  { path: START_PATH, body: JSON.stringify({ ...TASK, taskRef: undefined }), status: 400, why: "JSON drops an undefined value, so the key is absent" },
+  { path: START_PATH, body: JSON.stringify({ ...TASK, taskRef: null }), status: 400, why: "present but null is not a task ref" },
+  { path: START_PATH, body: JSON.stringify({ ...TASK, taskRef: 7 }), status: 400, why: "a number is not a task ref" },
+  { path: START_PATH, body: JSON.stringify({ ...TASK, taskRef: ["T7"] }), status: 400, why: "nor an array of one" },
+  { path: START_PATH, body: JSON.stringify({ ...TASK, taskRef: "" }), status: 400, why: "a task is addressed by ref, so an empty one addresses nothing" },
+  { path: START_PATH, body: JSON.stringify({ ...TASK, projectPath: "" }), status: 400, why: "and an empty project path names no repo" },
+  { path: START_PATH, body: JSON.stringify({ ...TASK, extra: 1 }), status: 400, why: "an unknown key is the caller's typo, and a dropped setting is how one hides" },
+  { path: START_PATH, body: JSON.stringify({ ...TASK, taskref: "T7" }), status: 400, why: "the near-miss spelling, which is the case the strictness exists for" },
+  { path: FEEDBACK_PATH, body: JSON.stringify({ text: "x", extra: 1 }), status: 400, why: "the same strictness on feedback" },
+  { path: FEEDBACK_PATH, body: JSON.stringify({ text: 123 }), status: 400, why: "a number is not the human's text" },
+  { path: FEEDBACK_PATH, body: JSON.stringify({ text: "" }), status: 400, why: "empty feedback would re-plan with nothing said" },
+  { path: FEEDBACK_PATH, body: JSON.stringify({ text: " \t\n " }), status: 400, why: "whitespace-only is empty, judged on a trimmed copy" },
+  { path: FEEDBACK_PATH, body: JSON.stringify({ text: " x " }), status: 200, why: "padding around real text is the human's, and is kept" },
+
+  // A body on a route that takes none. Ignoring it is the dangerous direction:
+  // a client that put feedback text on the approve route would silently approve
+  // a plan the human wanted revised.
+  { path: APPROVE_PATH, body: JSON.stringify({ text: "no, narrow it" }), status: 400, why: "approve must not silently swallow feedback" },
+  { path: STOP_PATH, body: JSON.stringify({ reason: "mistake" }), status: 400, why: "stop takes no keys either" },
+  { path: APPROVE_PATH, body: JSON.stringify(TASK), status: 400, why: "nor a start request" },
+
+  // Oddities that are still well-formed.
+  { path: START_PATH, body: `{"projectPath":"/repo","featureFile":"docs/features/x.md","taskRef":"T1","taskRef":"T7"}`, status: 201, why: "a duplicated key: JSON.parse keeps the last, and one parser reads the body so there is no second opinion to exploit" },
+  { path: START_PATH, body: JSON.stringify(TASK), contentType: "application/json", status: 201, why: "the content type nobody is required to send" },
+  { path: START_PATH, body: JSON.stringify(TASK), contentType: "text/plain;charset=UTF-8", status: 201, why: "what fetch sends for a string body; the Origin guard is what stops a cross-site form, not a type check" },
+  { path: START_PATH, body: `  ${JSON.stringify(TASK)}  `, status: 201, why: "JSON.parse ignores surrounding whitespace, and so may we" },
+  { path: START_PATH, body: " \n ", status: 400, why: "whitespace alone carries no keys, so it reads as an absent body and still names no task" },
+  { path: APPROVE_PATH, body: " \n ", status: 200, why: "and on a route that needs no keys, reading it as absent is the same answer a client sending nothing gets" },
+  { path: FEEDBACK_PATH, body: JSON.stringify({ text: "a\u0000b" }), status: 200, why: "a NUL is valid JSON and reaches the child inside a JSON string on stdin, never in argv, so there is nothing here to truncate" },
+]
+
+for (const row of bodyRows) {
+  const label = row.body === undefined ? "no body" : row.body.length > 60 ? `${row.body.slice(0, 57)}...` : row.body
+  test(`POST ${row.path} with ${label} -> ${row.status} (${row.why})`, async () => {
+    const { l, fake } = await withRunner()
+    const res = await call(l, {
+      path: row.path,
+      method: "POST",
+      ...(row.body === undefined ? {} : { body: row.body }),
+      ...(row.contentType === undefined ? {} : { contentType: row.contentType }),
+    })
+    expect(res.status).toBe(row.status)
+    // A refused body never reaches the machine, so a malformed request cannot
+    // half-start a run.
+    if (row.status >= 400) expect(fake.calls).toEqual([])
+    else expect(fake.calls).toHaveLength(1)
+  })
+}
+
+test("a refused body names the keys the route accepts, and never echoes what the caller sent", async () => {
+  // `refuse` never reflects caller-chosen text. The dirty listing is forwarded
+  // because src/git.ts wrote it; a key name from a request body is the caller's
+  // own string and stays out of the response.
+  const { l } = await withRunner()
+  const res = await post(l, "/api/runs", JSON.stringify({ ...TASK, surprise: "<script>" }))
+  expect(res.status).toBe(400)
+  expect(res.body).toContain("projectPath")
+  expect(res.body).toContain("featureFile")
+  expect(res.body).toContain("taskRef")
+  expect(res.body).not.toContain("surprise")
+  expect(res.body).not.toContain("<script>")
+})
+
+test("the duplicated key really is the last one, so the row above is not passing vacuously", async () => {
+  const { l, fake } = await withRunner()
+  await post(l, "/api/runs", `{"projectPath":"/repo","featureFile":"f.md","taskRef":"T1","taskRef":"T7"}`)
+  expect(fake.calls[0]?.request?.taskRef).toBe("T7")
+})
+
+// --- How big a body may be --------------------------------------------------
+
+/** 64 KiB. The only field that can be large is the gate feedback a human types,
+ * and 64 KiB is roughly ten thousand words: an order of magnitude past anything
+ * typed into a textarea, and still room for a pasted stack trace or diff, which
+ * is a legitimate thing to paste at a gate. The cap exists because the body is
+ * buffered before anything can be validated, so without one a single
+ * authenticated request decides how much memory the server spends. */
+const MAX_BODY = 64 * 1024
+
+/** A feedback body of exactly `total` bytes. `{"text":"` is 9 and `"}` is 2. */
+function feedbackOf(total: number): string {
+  return `{"text":"${"a".repeat(total - 11)}"}`
+}
+
+test("a body of exactly the cap is accepted, and one byte more is 413", async () => {
+  const { l, fake } = await withRunner()
+  const at = feedbackOf(MAX_BODY)
+  expect(at).toHaveLength(MAX_BODY)
+  expect((await post(l, FEEDBACK_PATH, at)).status).toBe(200)
+  expect(fake.calls[0]?.text).toHaveLength(MAX_BODY - 11)
+
+  const over = await withRunner()
+  const res = await post(over.l, FEEDBACK_PATH, feedbackOf(MAX_BODY + 1))
+  expect(res.status).toBe(413)
+  expect(over.fake.calls).toEqual([])
+})
+
+test("a body that is not UTF-8 is refused rather than silently mended into U+FFFD", async () => {
+  // The large field here is the human's own words. A lone 0x80 would decode to
+  // a replacement character and reach the agent as one, so the bytes are
+  // refused instead; no browser sends anything but UTF-8, so refusing costs
+  // nothing. Sent as raw bytes, because a JS string cannot hold invalid UTF-8.
+  const { l, fake } = await withRunner()
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('{"text":"caf'))
+      controller.enqueue(new Uint8Array([0xe9])) // latin-1 é: not valid UTF-8
+      controller.enqueue(new TextEncoder().encode('"}'))
+      controller.close()
+    },
+  })
+  const res = await call(l, { path: FEEDBACK_PATH, method: "POST", body })
+  expect(res.status).toBe(400)
+  expect(res.body.toLowerCase()).toContain("utf-8")
+  expect(fake.calls).toEqual([])
+})
+
+test("a chunked body with no declared length is capped while it is read, not after", async () => {
+  // Probed: a ReadableStream body is sent `Transfer-Encoding: chunked` with no
+  // Content-Length at all, so a guard that only read the header would let this
+  // through - and `req.text()` would have buffered every byte of it first.
+  const { l, fake } = await withRunner()
+  let enqueued = 0
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (let i = 0; i < 200; i++) {
+        controller.enqueue(new Uint8Array(1024).fill(97))
+        enqueued += 1024
+      }
+      controller.close()
+    },
+  })
+  const res = await call(l, { path: FEEDBACK_PATH, method: "POST", body })
+  expect(res.status).toBe(413)
+  expect(fake.calls).toEqual([])
+  expect(enqueued).toBeGreaterThan(MAX_BODY)
+})
+
+// --- Faults: a 5xx that says so, rather than an unhandled rejection ---------
+
+test("a machine that throws is a 500 with nothing leaked, not an unhandled rejection", async () => {
+  const { l } = await withRunner({
+    async start() {
+      throw new Error("the phase machine fell over at /home/someone/secret")
+    },
+  })
+  const res = await post(l, "/api/runs", JSON.stringify(TASK))
+  expect(res.status).toBe(500)
+  // The reason belongs in the server's own terminal, not in a response body.
+  expect(res.body).not.toContain("/home/someone/secret")
+  expect(JSON.parse(res.body).error).toBeTypeOf("string")
+})
+
+test("a server launched with no machine answers 503 on every action, and still streams and serves pages", async () => {
+  // `createServer()` has to work before Task 13 exists, and "the runner is not
+  // wired" is an honest answer rather than a 500 or a route that is missing.
+  const l = serve({ runner: undefined })
+  for (const [path, body] of [
+    [START_PATH, JSON.stringify(TASK)],
+    [APPROVE_PATH, undefined],
+    [FEEDBACK_PATH, JSON.stringify({ text: "x" })],
+    [STOP_PATH, undefined],
+  ] as const) {
+    const res = await post(l, path, body)
+    expect(res.status, path).toBe(503)
+  }
+  expect((await call(l, { path: "/api/health" })).status).toBe(200)
+})
+
+// --- A repo that is dirty, for real -----------------------------------------
+
+/** A repo with one commit and one modified tracked file, returning its path.
+ * The dirt is a tracked modification rather than an untracked file, because a
+ * developer's global `core.excludesFile` can hide the latter and the test would
+ * pass for the wrong reason. */
+async function dirtyRepo(): Promise<string> {
+  const dir = await realpath(await mkdtemp(join(tmpdir(), "orch-repo-")))
+  scratchDirs.push(dir)
+  const env = {
+    ...process.env,
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_SYSTEM: "/dev/null",
+    GIT_AUTHOR_NAME: "kantan test",
+    GIT_AUTHOR_EMAIL: "test@example.invalid",
+    GIT_COMMITTER_NAME: "kantan test",
+    GIT_COMMITTER_EMAIL: "test@example.invalid",
+  }
+  const git = async (...args: string[]) => {
+    const p = Bun.spawn(["git", "-C", dir, ...args], { env, stdout: "pipe", stderr: "pipe" })
+    const code = await p.exited
+    if (code !== 0) throw new Error(`git ${args.join(" ")} failed: ${await new Response(p.stderr).text()}`)
+  }
+  await git("init")
+  await writeFile(join(dir, "app.txt"), "one\n")
+  await git("add", "app.txt")
+  await git("commit", "-m", "first")
+  await writeFile(join(dir, "app.txt"), "two\n")
+  return dir
+}
