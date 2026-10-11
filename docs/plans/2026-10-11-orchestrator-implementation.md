@@ -619,6 +619,7 @@ A header line goes first. It carries everything needed to interpret the rest **a
 | `profile` | which `configDir`, so you can tell which account paid |
 | `planModel`, `implementModel`, `planEffort`, `implementEffort` | effort changes during a run; record the starting values and let the stream show escalations |
 | `projectPath`, `featureFile`, `taskRef` | what was being worked on |
+| `featureFileHash` | the feature file's bytes at parse time. **Without it the mid-run-edit warning is unreachable after a restart**, because a resumed run re-reads immediately before writing and has nothing to compare against |
 | `budgetUsd` | the ceiling this run was given |
 | `startedAt` | absolute, ISO 8601 |
 

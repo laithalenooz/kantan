@@ -162,6 +162,25 @@ commits, or reports "ticked" must compare `out !== src`** rather than assume a w
 ### `Task.line` is valid only for the string it came from — Task 6b (file I/O), Task 13
 `tickTask` re-resolves by ref on purpose. No caller may splice by a cached line number.
 
+### The mid-run-edit warning is unreachable unless you hold the parse-time bytes — Task 13
+`tickTaskInFile(file, ref)` returns `{ written, src, warning }`. `written: false` means the task
+was already ticked, with **no disk access**, so mtime is untouched too — compare `written`, never
+guess from bytes.
+
+But `warning` only catches edits made since the `readFeature` whose `FeatureFile` you pass. **Call
+`readFeature` immediately before ticking and the warning can never fire**, which is exactly what a
+resumed run does after a restart. So Task 13 must hold the run's parse-time `FeatureFile`, and the
+run log header carries `featureFileHash` so it survives a restart.
+
+Also: an error on an **unchanged** file passes straight through from `tickTask` without the file's
+path. Only the changed-file error names it, so Task 13 should add the path when it surfaces one.
+
+### `TextDecoder` strips the BOM by default — anyone decoding a user's file
+`ignoreBOM` defaults to `false`, which **removes** the BOM rather than ignoring it. `featurefile.ts`
+passes `{ fatal: true, ignoreBOM: true }`; flipping it back made the BOM test fail, so the default
+would have silently deleted a BOM on the first tick. `fatal: true` also refuses a non-UTF-8 file
+rather than decoding a byte to U+FFFD and writing the replacement back.
+
 ### A run has TWO session ids and using the wrong one fails silently — Task 13
 `runId` names the run. `planSessionId` and `implementSessionId` are separate conversations, and
 `--session-id` takes a UUID so neither can be derived from `runId`. Gate feedback resumes the
@@ -181,12 +200,6 @@ message. Silently skipping them is the one option that is not acceptable.
 Inside the task-list region, a `#` comment in a fence ends the region and hides every task after
 it, and a column-zero `- [ ] T7` in a fence parses as a real task and can be ticked. A feature
 file is unlikely to fence a checkbox. Revisit only if it bites.
-
-### Byte preservation ends at the string boundary — Task 6b (file I/O)
-`src/backlog.ts` guarantees exact bytes in and out as **strings**. Carrying that to disk is
-Task 6b's job: no newline normalization, no CRLF conversion, no BOM stripping, no trailing-newline
-insertion, atomic write via temp-file-plus-rename, and a re-read compare immediately before
-writing because the human may have edited the file mid-run.
 
 ### Known cosmetic gap in `parseFeature`, accepted — nobody
 A document opening with `---` as a thematic break, whose title sits after the task list, reports

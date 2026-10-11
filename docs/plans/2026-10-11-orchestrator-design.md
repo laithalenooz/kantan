@@ -572,7 +572,7 @@ About ten lines of server code, and not optional.
 | Browser closed | by design | The run continues. SSE replays from JSONL |
 | Repo dirty when a run starts | expected | Refuse, and say why. Never stash someone's work silently |
 | Second run requested for a busy project | expected | Refuse. One active run per project |
-| Human edits the feature markdown mid-run | expected | Re-read before write, last write wins, warn |
+| Human edits the feature markdown mid-run | expected | Re-read before write, last write wins, warn. **The warning needs the parse-time bytes to compare against**, so the run log header records a hash of the feature file. Without it a resumed run re-reads immediately before writing and the warning can never fire, which is the restart case exactly |
 | `claude` exits non-zero | expected | Mark failed, keep stderr in the log |
 | Output truncated at the token cap | expected | Treat as a failed attempt, not a retry at the same cap |
 | Wrong account on a project | expected | Show the account on every row and run header |
