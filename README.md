@@ -6,7 +6,7 @@ A local web UI that drives the real `claude` CLI through one coding task at a ti
 plan, you approve, then implement and test until the tests pass.
 
 > **Status: early.** The design is finished and evidence-backed. The implementation is
-> five tasks of thirty, at 99 tests. If you came for working software, come back later. If you came
+> five tasks of thirty-one, at 99 tests. If you came for working software, come back later. If you came
 > for the hard-won facts about `claude -p`, those are in [`docs/probes/`](docs/probes/) and
 > they are the best part of this repo today.
 
@@ -85,7 +85,7 @@ with tool access.
 ## Design
 
 - [Design](docs/plans/2026-10-11-orchestrator-design.md), with every probed claim marked.
-- [Implementation plan](docs/plans/2026-10-11-orchestrator-implementation.md), 30 TDD tasks.
+- [Implementation plan](docs/plans/2026-10-11-orchestrator-implementation.md), 31 TDD tasks.
 
 ## Licence
 

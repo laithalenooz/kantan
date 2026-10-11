@@ -59,8 +59,31 @@ version-dependent, and the fixtures and parser encode it.
 The backlog is markdown in the target repo. Claude edits it with ordinary `Edit` calls, so the
 tool needs no MCP server, no schema, and no sync logic. Git history is the audit log.
 
-The run log is the raw stream-json, appended verbatim. It serves as both the live feed and the
-permanent history. Delete `~/.orch` and you lose history, nothing else.
+The run log is **raw stream-json plus the orchestrator's own lifecycle records**, appended in the
+order they happened. It serves as the live feed, the permanent history, and the only source of
+run state.
+
+The raw events cannot carry state on their own: the CLI has no concept of `waiting(gate)` or
+"tests failed with this signature". Those are the orchestrator's decisions, so it writes them
+down. Every line is one JSON object with a `kind` field:
+
+| `kind` | Written by | Carries |
+|---|---|---|
+| `header` | orchestrator, once, first | §3.1's ids, the profile, models, efforts, budget, task ref |
+| `cli` | orchestrator, verbatim | one untouched stream-json event, nested under `event` |
+| `phase` | orchestrator | a transition: `plan -> waiting(gate)`, `implement -> running` |
+| `test` | orchestrator | exit code, failure signature, which attempt |
+| `human` | orchestrator | `approve`, or `feedback` with the text |
+| `end` | orchestrator, last | terminal state and total cost |
+
+**A run's state is the fold of its log**, which is what makes crash recovery and the task tree
+the same problem rather than two. A log with no `end` record is an interrupted run, and its last
+`phase` record says where to resume.
+
+Keeping the `cli` payloads untouched matters: they are the replay source for a future parser, so
+filtering on write would make old logs unreadable by new code. Filtering is a display concern.
+
+Delete `~/.orch` and you lose history, nothing else.
 
 **The UI renders and remote-controls. It never owns truth.**
 

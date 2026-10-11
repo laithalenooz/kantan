@@ -624,10 +624,67 @@ A header line goes first. It carries everything needed to interpret the rest **a
 
 Reading the profile is not uniform: the default profile's identity lives in `~/.claude.json`, **not** `~/.claude/.claude.json`, and only a non-default `CLAUDE_CONFIG_DIR` keeps it inside the directory.
 
-Tests: a header is written once; raw lines append unmodified; `replay()` yields the whole file then tails appended lines; `replay()` on a partially written final line does not emit a broken event; two concurrent readers both see every line.
+Every line is one `kind`-tagged JSON object per design §2: `header`, `cli` (one untouched stream-json event nested under `event`), `phase`, `test`, `human`, `end`.
+
+Tests: a header is written once and is the first line; a `cli` record nests its event **byte-identically**, so a future parser can replay it; `phase`, `test` and `human` records round-trip; `replay()` yields the whole file then tails appended lines; `replay()` on a partially written final line does not emit a broken event; two concurrent readers both see every line; a log with no `end` record is readable (that is the crash case Task 7b folds).
 
 ```bash
 git add -A && git commit -m "feat: append-only run log with replay and tail"
+```
+
+---
+
+## Task 7b: The run index
+
+**Files:** `src/runindex.ts`; tests alongside
+
+Nothing yet answers the question both the UI and the git guard need: **what state is this task in?**
+
+Design §3.6 requires the tree to read task state from the run logs rather than only from the
+working tree, because a task's tick lives on `orch/<task-slug>` until merged, so the checked-out
+markdown reads it as open. Task 12 needs "a task done-but-unmerged cannot be started again", and
+that guard has nothing to consult without this.
+
+**A run's state is the fold of its log** (design §2). Reduce the `kind`-tagged records:
+
+```ts
+export type RunState =
+  | { kind: "running"; phase: string }
+  | { kind: "waiting"; reason: "gate" | "question" | "blocked" | "stalled" }
+  | { kind: "done"; merged: boolean }
+  | { kind: "failed"; why: string }
+  | { kind: "interrupted"; resumeFrom: string }   // no `end` record: the server died
+
+export interface TaskStatus {
+  taskRef: string
+  state: RunState
+  runId: string
+  branch: string
+  costUsd: number
+  attempts: number
+}
+```
+
+Tests:
+
+- A log with `header` then `phase: waiting(gate)` folds to `waiting(gate)`.
+- A log with an `end` record folds to that terminal state.
+- **A log with no `end` record folds to `interrupted`, carrying where to resume.** This is the
+  crashed-server case and the reason the fold exists.
+- A truncated final line is ignored rather than throwing: the server may have died mid-write.
+- Several runs for one task ref: the **newest** wins, and earlier ones are still listed as
+  attempts.
+- A `done` run whose branch is unmerged reports `merged: false`, and Task 12's guard can refuse it.
+- An empty `~/.orch/runs` yields an empty index rather than throwing.
+- A log whose `header` names a project that is no longer registered is skipped with a warning, not
+  a crash. Someone will delete a project from `projects.json`.
+
+**Cost matters here.** The tree re-renders often. Read what you need and no more: the `header` is
+line one and the terminal records are at the tail, so a full parse of every log on every render is
+the wrong shape. Measure it against 500 synthetic logs and say what it costs.
+
+```bash
+git add -A && git commit -m "feat: fold run logs into per-task state"
 ```
 
 ---
