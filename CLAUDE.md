@@ -103,8 +103,11 @@ matters because kantan's own design rejects worktree proliferation in favour of 
 
 ## Motion's `useReducedMotion()` cannot be trusted alone
 
-Probed independently by two agents: it caches the media query in a **module global on first
-call**, and answered `false` with `prefers-reduced-motion: reduce` actually set. A component that
+Probed independently by **three** agents: its preference is a **module-level singleton
+initialised at the first call anywhere in the process**, and it answered `false` with
+`prefers-reduced-motion: reduce` actually set. One agent saw `<MotionConfig reducedMotion="user">`
+fail to suppress even a *transform* animation, because a co-resident sibling test had already
+initialised that singleton. A component that
 relies on it alone keeps animating for a user who asked it not to.
 
 OR it with a live read:

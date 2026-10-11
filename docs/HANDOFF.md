@@ -473,6 +473,29 @@ only if you took it, or your suite pulls the document out from under the others 
 order. `test/ui/Tree.test.tsx` has the pattern.
 
 
+### Stream row ids must be deterministic per log line — whoever wires `App.tsx`
+`run id + record index`, never a counter or a generated id. **The SSE replays from byte 0 on
+every connect and carries no replay-versus-live marker**, so on a reconnect a non-deterministic id
+re-animates the entire log, collapses every expanded row, and discards the measurement cache.
+Tested both ways in `test/ui/Stream.test.tsx`.
+
+The missing marker is the underlying gap: nothing in the protocol distinguishes a replayed record
+from a live one. Deterministic ids make the UI correct without it, but a later task may want the
+marker for its own reasons.
+
+Also: key `<Stream>` by run id when the run changes, or `following` and the expanded set carry
+over to the next run.
+
+### `errors` must be copied from the raw result line — whoever feeds the UI
+`src/stream.ts` drops it, and on `error_max_budget_usd` **it is the only prose explanation there
+is** (the `result` text is absent, not empty). A failure row fed only the parsed event shows
+nothing.
+
+Two related absences: `CliRecord` has no timestamp, so the clock column stays blank unless arrival
+time is stamped on write; and `TestRecord` carries no output or summary, so test rows cannot
+expand unless the server ships `TestOutcome`'s stdout and stderr.
+
+
 ## Settled: decisions with non-obvious reasons
 
 | Decision | Why it is not the obvious thing |
