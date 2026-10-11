@@ -44,8 +44,9 @@ hints at this.
 stream's `cancel` (Bun fires both on disconnect, probed), and the stream also stops at the `end`
 record so a tab on a finished run leaves nothing polling. Proven rather than assumed: removing the
 abort wiring fails `test/server.test.ts`'s descriptor test, and forcing `isTerminal` to `false`
-fails three more. Anything else that follows a run log — Task 18's stop, a future log viewer — owes
-the same abort.
+fails three more. Anything else that follows a run log — a future log viewer — owes the same abort.
+**Task 18's actions do not**: none of them reads a run log at all, which is the same reason the
+server appends no `human` record.
 
 ## The run-log header is load-bearing in ways its type does not show
 
@@ -117,11 +118,21 @@ defect in either side, and all three cheaper to resolve now than at the wiring:
 | **Refusals are thrown, not tagged.** `requireRest` throws for the wrong rest state, `requireRef` for a ref-less task, `requireUsableRepo` and `requireCleanTreeForNewRun` for the repo, `rehydrate` for an unknown run. | The server needs `dirty` and `busy` to be different 409s and `unknown-run` to be a 404. Classifying by reading an `Error` message breaks the day a sentence is reworded, and that is the one failure a test written against the current wording cannot see. | `run.ts`, with one error class carrying a `Refusal` code. The messages are already the right prose; only the tag is missing. |
 | **`ActionOptions` wants a `Project` for every action**, not just for `start`. | `Runner` passes `runId` alone. Someone must map `runId → Project`, which means the run log header's `projectPath` and then `projects.json`. | The adapter, not the server: a server that read the run log to find a project would be the second place the state rule lives, and `server.ts` deliberately imports nothing from `projects.ts`. This is also where `loadProjects`' and `defaults()`' throws become a 4xx/5xx. |
 
-Two things already agree, worth recording because they were reached from opposite ends:
-`RunState.interrupted` says "The child was killed. No `end` record, so the run stays resumable" —
-which is exactly what the stream needs, since `isTerminal` stops **every** connection at `end`,
-reconnects included, so an `end` written for a stop would make a resumed run's later records
-unreachable for ever. And `sendFeedback` resumes the plan session, as `feedbackPrompt` requires.
+Four things already agree, worth recording because they were reached from opposite ends:
+
+- `RunState.interrupted` says "The child was killed. No `end` record, so the run stays resumable" —
+  exactly what the stream needs, since `isTerminal` stops **every** connection at `end`, reconnects
+  included, so an `end` written for a stop would make a resumed run's later records unreachable for
+  ever.
+- `test/run.test.ts` has "stopping at the gate releases the lock and leaves the run resumable",
+  which answers the one question `Runner.stop`'s doc comment left open: what stopping means for a
+  run that holds no process. The project stops being `busy` because the lock goes.
+- `sendFeedback` resumes the plan session, as `feedbackPrompt` requires.
+- **The `featureFile` escape is checked where the seam says it must be.** `StartRequest` is a path
+  from a request body that `tickTask` later writes through, and the server deliberately does not
+  judge it. `repoRelative` in `src/run.ts` resolves it against `project.path` and refuses `""`, a
+  `..` escape and an absolute path outside the repo, naming the file. It **throws**, so it needs the
+  tag from mismatch two above or an escaping path is a 500 rather than the 404 it should be.
 
 One open question neither side owns yet: `requireRest(run, ["gate"], …)` accepts **only**
 `waiting(gate)`, but design §3.2 and Task 23 route an unanswered `waiting(question)` to the same

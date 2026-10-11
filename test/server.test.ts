@@ -1764,17 +1764,39 @@ test("a chunked body with no declared length is capped while it is read, not aft
 
 // --- Faults: a 5xx that says so, rather than an unhandled rejection ---------
 
-test("a machine that throws is a 500 with nothing leaked, not an unhandled rejection", async () => {
+test("a machine that throws is a 500 that names the route on the terminal and leaks nothing to the client", async () => {
   const { l } = await withRunner({
     async start() {
       throw new Error("the phase machine fell over at /home/someone/secret")
     },
   })
-  const res = await post(l, "/api/runs", JSON.stringify(TASK))
+
+  // The terminal is captured, which earns its place twice: the reason going
+  // there is half of the behaviour under test and was otherwise unasserted, and
+  // letting it through prints a stack trace into every shared `bun run check`
+  // for a test that is passing. Done by hand rather than with `spyOn`, because
+  // `spyOn(console, "error").mockImplementation(...)` silences the channel here
+  // but records no calls (observed on bun 1.4.3), which would have made the
+  // assertion below quietly unprovable.
+  const said: unknown[][] = []
+  const original = console.error
+  console.error = (...args: unknown[]) => void said.push(args)
+  let res: { status: number; body: string }
+  try {
+    res = await post(l, "/api/runs", JSON.stringify(TASK))
+  } finally {
+    console.error = original
+  }
+
   expect(res.status).toBe(500)
   // The reason belongs in the server's own terminal, not in a response body.
   expect(res.body).not.toContain("/home/someone/secret")
   expect(JSON.parse(res.body).error).toBeTypeOf("string")
+
+  // Named by route, so a terminal full of faults says which one.
+  expect(said).toHaveLength(1)
+  expect(String(said[0]?.[0])).toContain("POST /api/runs")
+  expect(String(said[0]?.[1])).toContain("/home/someone/secret")
 })
 
 test("a server launched with no machine answers 503 on every action, and still streams and serves pages", async () => {
