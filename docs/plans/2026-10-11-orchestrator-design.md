@@ -292,6 +292,23 @@ accepts the agent's claim that tests pass. This enforces
 `superpowers:verification-before-completion` from outside the agent, where no prompt can talk
 its way around it.
 
+**The exit code needs one correction to be trustworthy.** A watch-mode runner that traps SIGTERM
+**exits 0 when killed**, so a suite that never finished would report as one that passed, and the
+whole verification claim would quietly fail in the one case it most needs to hold. So a timeout
+reports **124** regardless of what the process returned, and a signal death reports `128 + signal`.
+`exitCode` is never 0 unless the command itself exited 0.
+
+Two more properties the exit code depends on:
+
+- **The command runs in its own process group and the group is killed**, not just the child.
+  With `sh -c` the survivor is the shell's pid rather than the one the spawner holds, so a
+  per-child kill leaves an orphan holding the output pipe and the run never completes.
+- **Output is capped at 1 MiB per stream, keeping the tail**, because §3.4 hashes the tail and
+  every runner prints its summary last. A head cap would hand the stall detector the same opening
+  banner for every failure. The cap bounds memory but never stops the command: killing a
+  verbose-but-legitimate failing suite would leave it permanently unverifiable, while reading
+  past the cap costs only time the timeout already bounds.
+
 ### 3.4 Bounds: progress and money, not attempt counts
 
 An attempt cap stops legitimate grinding and fails to stop real loops. Three bounds instead.

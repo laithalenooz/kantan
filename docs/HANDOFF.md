@@ -181,6 +181,23 @@ passes `{ fatal: true, ignoreBOM: true }`; flipping it back made the BOM test fa
 would have silently deleted a BOM on the first tick. `fatal: true` also refuses a non-UTF-8 file
 rather than decoding a byte to U+FFFD and writing the replacement back.
 
+### `runTests` rejects for a misconfigured project, resolves for a failing one — Task 13
+A missing or non-directory `project.path` **rejects**, because that is a misconfigured project
+rather than a failing test, and feeding it to the agent as a failure would spend the budget
+fixing tests in a directory that does not exist. Everything else resolves, **including exit 127
+for a missing command**. So Task 13 needs one try/catch around it, and Task 12's repo pre-flight
+should normally catch that case first.
+
+`exitCode` is never 0 unless the command exited 0: a timeout is `124` (exported as
+`TIMEOUT_EXIT_CODE`), a signal death is `128 + signal`. Branch on `exitCode !== 0` alone and treat
+`timedOut` as presentation.
+
+### `reportPath` can be absent OR STALE after a timeout — Task 10, Task 13
+The timeout kill is SIGTERM then SIGKILL two seconds later, so a runner gets a flush window but no
+guarantee. A **leftover XML from the previous run parses fine and reports the wrong failures**,
+which is worse than an absent one. The stall signature must fall back to output when the XML is
+absent, empty, or stale.
+
 ### A run has TWO session ids and using the wrong one fails silently — Task 13
 `runId` names the run. `planSessionId` and `implementSessionId` are separate conversations, and
 `--session-id` takes a UUID so neither can be derived from `runId`. Gate feedback resumes the
