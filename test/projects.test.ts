@@ -16,7 +16,6 @@ test("a new project gets the design's model and effort defaults", () => {
   expect(p.implementModel).toBe("claude-sonnet-5-5")
   expect(p.planEffort).toBe("high")
   expect(p.implementEffort).toBe("medium")
-  expect(p.resumePlanSession).toBe(false)
   expect(p.configDir).toBeUndefined()
 })
 
@@ -53,17 +52,41 @@ async function handWritten(records: unknown[]): Promise<{ dir: string; file: str
   return s
 }
 
+/**
+ * The message `loadProjects` throws for a store holding `records`, or `""`
+ * when it loaded.
+ *
+ * Used where a field name alone cannot tell two failures apart: the unknown-
+ * field message lists every known field, so `rejects.toThrow(/allowedTools/)`
+ * also passes for a version that does not model `allowedTools` at all. These
+ * assertions name the rule that fired.
+ */
+async function loadError(records: unknown[]): Promise<string> {
+  const { file } = await handWritten(records)
+  try {
+    await loadProjects(file)
+    return ""
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e)
+  }
+}
+
 const SAMPLE: Project = {
   path: "/repo",
   testCmd: "npm test",
   reportPath: "build/junit.xml",
   configDir: "/home/me/.claude-work",
+  // Explicit rather than null on purpose: "a null configDir reads as the
+  // default profile" asserts the written file holds no `null` at all, and a
+  // derived (null) allowedTools is written as null by design. Keeping this
+  // record's list explicit leaves that assertion meaning what it says.
+  permissionMode: "acceptEdits",
+  allowedTools: ["Read", "Bash(git *)"],
   budgetUsd: 12.5,
   planModel: "claude-opus-5-5",
   implementModel: "claude-sonnet-5-5",
   planEffort: "high",
   implementEffort: "medium",
-  resumePlanSession: false,
 }
 
 /** Root ignores the permission bits these tests rely on, so the two
@@ -146,9 +169,9 @@ test("a record missing a required field throws naming the field", async () => {
   const c = await handWritten([noBudget])
   await expect(loadProjects(c.file)).rejects.toThrow(/budgetUsd/)
 
-  const { resumePlanSession: _drop4, ...noResume } = SAMPLE
-  const d = await handWritten([noResume])
-  await expect(loadProjects(d.file)).rejects.toThrow(/resumePlanSession/)
+  const { planModel: _drop4, ...noModel } = SAMPLE
+  const d = await handWritten([noModel])
+  await expect(loadProjects(d.file)).rejects.toThrow(/planModel/)
 })
 
 test("an unknown field throws instead of being quietly dropped", async () => {
@@ -187,12 +210,162 @@ test("every effort the design allows round-trips", async () => {
   }
 })
 
+// --- Permissions (design §2.2) ----------------------------------------------
+// Two fields a stranger's safety depends on: the mode the run spawns with, and
+// the allowlist that makes the restrictive mode usable. The store's job is to
+// keep both unambiguous; src/permissions.ts derives and spends them.
+
+test("a new project gets the restrictive permission default", () => {
+  // bypassPermissions is right on the author's machine and wrong as a shipped
+  // default for someone pointing this at a repo they care about. null means
+  // "derive the allowlist", which is what makes acceptEdits usable at all.
+  const p = defaults({ path: "/repo", testCmd: "npm test" })
+  expect(p.permissionMode).toBe("acceptEdits")
+  expect(p.allowedTools).toBeNull()
+})
+
+test("an unknown permissionMode throws and lists what is allowed", async () => {
+  // The CLI has six modes; the design supports two. A mode this tool does not
+  // model is refused rather than forwarded to the flag, because "plan" and
+  // "dontAsk" would both run a phase that cannot do its job, and the run would
+  // fail for a reason no message connects to this line of config.
+  for (const permissionMode of ["yolo", "plan", "dontAsk", "default", "auto", "manual", ""]) {
+    const message = await loadError([{ ...SAMPLE, permissionMode }])
+    expect(message).toMatch(/permissionMode must be one of/)
+    expect(message).toMatch(/acceptEdits, bypassPermissions/)
+    expect(() => defaults({ ...SAMPLE, permissionMode } as never)).toThrow(/permissionMode/)
+  }
+})
+
+test("both permission modes the design supports round-trip", async () => {
+  for (const permissionMode of ["acceptEdits", "bypassPermissions"] as const) {
+    const { file } = await store()
+    await addProject(file, defaults({ ...SAMPLE, permissionMode }))
+    expect((await loadProjects(file))[0]!.permissionMode).toBe(permissionMode)
+  }
+})
+
+test("an explicit allowedTools round-trips exactly, order included", async () => {
+  // "only these" is the whole point of the field, so the store must not sort,
+  // dedupe or merge it with anything.
+  const list = ["Bash(git *)", "Read", "Edit", "Read"]
+  const { file } = await store()
+  await addProject(file, defaults({ ...SAMPLE, allowedTools: list }))
+  expect((await loadProjects(file))[0]!.allowedTools).toEqual(list)
+})
+
+test("allowedTools is copied, so a form object reused for the next save cannot mutate the record", () => {
+  const list = ["Read"]
+  const p = defaults({ ...SAMPLE, allowedTools: list })
+  list.push("Bash(rm -rf *)")
+  expect(p.allowedTools).toEqual(["Read"])
+})
+
+test("an allowedTools that is not a list of tool rules throws", async () => {
+  // A single string is the likely hand edit ("Bash(git *)" instead of a list),
+  // and it would reach the CLI as a list of its characters.
+  for (const allowedTools of ["Bash(git *)", 42, true, {}, [1], ["Read", ""], ["  "], [null]]) {
+    expect(await loadError([{ ...SAMPLE, allowedTools }])).toMatch(/allowedTools.* must be/)
+    expect(() => defaults({ ...SAMPLE, allowedTools } as never)).toThrow(/allowedTools/)
+  }
+})
+
+test("an empty allowedTools throws rather than reading as derive", async () => {
+  // [] is an unfinished edit, not a choice: under acceptEdits a run with no
+  // tools can neither edit nor run the suite, and in headless mode every
+  // prompt is auto-denied, so the task fails at verification with nothing to
+  // point at. null is how "derive" is spelled, and the message says so.
+  const message = await loadError([{ ...SAMPLE, allowedTools: [] }])
+  expect(message).toMatch(/allowedTools/)
+  expect(message).toMatch(/null/)
+  expect(() => defaults({ ...SAMPLE, allowedTools: [] })).toThrow(/allowedTools/)
+})
+
+test("a null allowedTools is written as null, not dropped like configDir", async () => {
+  // configDir spells "the default profile" as null or absent, so the store
+  // settles on absent. null here is the design's own spelling of "compute it",
+  // and writing it keeps the knob visible in a file people hand-edit: it is
+  // how someone discovers they can narrow the allowlist at all.
+  const { file } = await store()
+  await addProject(file, defaults({ path: "/repo", testCmd: "npm test" }))
+  const raw = await readFile(file, "utf8")
+  expect(raw).toContain('"allowedTools": null')
+  expect(raw).toContain('"permissionMode": "acceptEdits"')
+  expect((await loadProjects(file))[0]!.allowedTools).toBeNull()
+})
+
+test("a store written before these fields existed still loads", async () => {
+  // The decision, stated so the next field-adder can copy or reject it: a
+  // field younger than the store defaults on absence, and the default is the
+  // restrictive direction. Guessing wrong here can only produce a denial named
+  // in permission_denials - one line of config - never a silent escalation to
+  // bypassPermissions. The strictness that protects a typed value is unknown-
+  // field rejection, and a field the user never knew about cannot have been
+  // typed. Throwing instead would brick every store the tool wrote itself, to
+  // ask for the value it was going to pick anyway.
+  const { permissionMode: _mode, allowedTools: _tools, ...older } = SAMPLE
+  const { file } = await handWritten([older])
+  const all = await loadProjects(file)
+  expect(all[0]!.permissionMode).toBe("acceptEdits")
+  expect(all[0]!.allowedTools).toBeNull()
+
+  // And one save makes the store self-describing, so this is a migration that
+  // happens once rather than a default that stays invisible.
+  await addProject(file, all[0]!)
+  expect(await readFile(file, "utf8")).toContain('"permissionMode": "acceptEdits"')
+})
+
+test("a store still naming a retired field loads, and the next write drops it", async () => {
+  // The mirror image of the question above, and the answer has to be
+  // consistent with it. `resumePlanSession` was removed once Task 15 showed it
+  // would make two lines of the implement prompt false. A key this version no
+  // longer honours is not a typo: there is no setting left to lose, and
+  // refusing to start would punish the user for our change. So it loads, and
+  // it evaporates from the file on the next write - visible in the diff of a
+  // file that is hand-edited and read in diffs.
+  const { file } = await handWritten([{ ...SAMPLE, resumePlanSession: true }])
+  const all = await loadProjects(file)
+  expect(all).toHaveLength(1)
+  expect(all[0]).toEqual(SAMPLE)
+  expect(Object.keys(all[0]!)).not.toContain("resumePlanSession")
+
+  await addProject(file, all[0]!)
+  expect(await readFile(file, "utf8")).not.toContain("resumePlanSession")
+
+  // And the same record still goes through the write path that validates.
+  expect(() => defaults({ ...SAMPLE, resumePlanSession: false } as never)).not.toThrow()
+})
+
+test("a misspelling of a retired field is still refused", async () => {
+  // Retiring a name forgives that exact name, nothing near it. "resumeplan"
+  // is a key this tool has never had, so it is the same lost line as any
+  // other typo and is named and refused.
+  const { file } = await handWritten([{ ...SAMPLE, resumeplan: true }])
+  await expect(loadProjects(file)).rejects.toThrow(/resumeplan/)
+})
+
+test("a misspelled permission key throws instead of falling back to the default", async () => {
+  // This is what keeps the defaulting above honest. Absent is unambiguous;
+  // misspelled is not, and a dropped "permissionmode": "bypassPermissions"
+  // would quietly run the restrictive mode - or, worse the other way, a
+  // dropped allowlist would read as "derive" while the user believed they had
+  // narrowed it. Both are named and refused.
+  const { permissionMode: _mode, ...noMode } = SAMPLE
+  const a = await handWritten([{ ...noMode, permissionmode: "bypassPermissions" }])
+  await expect(loadProjects(a.file)).rejects.toThrow(/permissionmode/)
+
+  const { allowedTools: _tools, ...noTools } = SAMPLE
+  const b = await handWritten([{ ...noTools, allowed_tools: ["Read"] }])
+  await expect(loadProjects(b.file)).rejects.toThrow(/allowed_tools/)
+  await expect(loadProjects(b.file)).rejects.toThrow(/allowedTools/) // the allowed set is listed
+})
+
 test("a field of the wrong JSON type throws rather than being coerced", async () => {
-  // "false" is the one that matters: as a string it is truthy, so a coercing
-  // reader would run plan and implement in one conversation, cold-start the
-  // cache and drop thinking blocks, with nothing in the log to explain it.
-  const a = await handWritten([{ ...SAMPLE, resumePlanSession: "false" }])
-  await expect(loadProjects(a.file)).rejects.toThrow(/resumePlanSession/)
+  // A single string where a list belongs is the one that matters now: it is
+  // what a hand edit of allowedTools looks like, and a coercing reader would
+  // forward it to the CLI as a list of its own characters.
+  const a = await handWritten([{ ...SAMPLE, allowedTools: "Bash(git *)" }])
+  await expect(loadProjects(a.file)).rejects.toThrow(/allowedTools/)
 
   const b = await handWritten([{ ...SAMPLE, budgetUsd: "12.5" }])
   await expect(loadProjects(b.file)).rejects.toThrow(/budgetUsd/)
@@ -300,8 +473,8 @@ test("addProject validates its argument before touching the file", async () => {
 // --- defaults ---------------------------------------------------------------
 
 test("defaults keeps every value it is given", () => {
-  const p = defaults({ ...SAMPLE, resumePlanSession: true, planEffort: "max" })
-  expect(p).toEqual({ ...SAMPLE, resumePlanSession: true, planEffort: "max" })
+  const p = defaults({ ...SAMPLE, planEffort: "max", permissionMode: "bypassPermissions" })
+  expect(p).toEqual({ ...SAMPLE, planEffort: "max", permissionMode: "bypassPermissions" })
 })
 
 test("defaults is idempotent", () => {
@@ -321,12 +494,14 @@ test("defaults treats an explicitly undefined field as unset", () => {
     testCmd: "npm test",
     planModel: undefined,
     planEffort: undefined,
-    resumePlanSession: undefined,
+    permissionMode: undefined,
+    allowedTools: undefined,
     configDir: undefined,
   })
   expect(p.planModel).toBe("claude-opus-5-5")
   expect(p.planEffort).toBe("high")
-  expect(p.resumePlanSession).toBe(false)
+  expect(p.permissionMode).toBe("acceptEdits")
+  expect(p.allowedTools).toBeNull()
   expect(p.configDir).toBeUndefined()
 })
 

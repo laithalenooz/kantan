@@ -4,6 +4,12 @@ import { randomUUID } from "node:crypto"
 
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max"
 
+/** The two modes the design supports, out of the six the CLI accepts. `plan`,
+ * `dontAsk`, `auto`, `manual` and `default` are refused rather than forwarded:
+ * each would spawn a phase that cannot do its job, and the run would fail for
+ * a reason nothing connects back to this line of config. */
+export type PermissionMode = "acceptEdits" | "bypassPermissions"
+
 export interface Project {
   /** Repo root, absolute. Also the record's identity in the store. */
   path: string
@@ -15,6 +21,19 @@ export interface Project {
    * profile. A profile carries its own CLAUDE.md, skills, plugins and
    * settings, not just credentials, so this is not only about which account. */
   configDir?: string
+  /** How a phase is spawned, per design §2.2. `acceptEdits` with an allowlist
+   * is the shipped default, because `bypassPermissions` is fine on the
+   * author's machine and wrong for a stranger pointing this at a repo they
+   * care about. In headless mode anything that would prompt is auto-denied, so
+   * `acceptEdits` alone - which does not cover `Bash` - would fail
+   * confusingly rather than safely: the allowlist is what makes it usable. */
+  permissionMode: PermissionMode
+  /** The exact tool rules to allow, or `null` to derive them from the repo and
+   * `testCmd` (`deriveAllowedTools` in src/permissions.ts). An explicit list is
+   * passed through untouched and never merged with the derived set, or nobody
+   * could express "only these". Meaningless under `bypassPermissions`, where
+   * the flag is not passed at all. */
+  allowedTools: string[] | null
   budgetUsd: number
   /** Planning runs on the stronger reasoner. */
   planModel: string
@@ -22,46 +41,78 @@ export interface Project {
   implementModel: string
   planEffort: Effort
   implementEffort: Effort
-  /** false = plan and implement are two conversations, which is what lets the
-   * two phases use different models: switching model inside one conversation
-   * cold-starts the prompt cache and drops thinking blocks the new model
-   * cannot read. true reverts to one conversation, on `implementModel`. */
-  resumePlanSession: boolean
 }
 
 /** Everything but the repo and its test command has a default. */
 export type NewProject = Partial<Project> & Pick<Project, "path" | "testCmd">
 
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const
+const PERMISSION_MODES = ["acceptEdits", "bypassPermissions"] as const
 
 /**
  * Every field a record may hold, in the order it is written. Serving as both
  * the allowlist and the key order means a field cannot be added to one and
  * forgotten in the other.
+ *
+ * **Adding a field moves four places together**: `Project`, this list,
+ * `DEFAULTS` and `validateProject`. Miss this list and the tool's own writes
+ * stop loading, because `rejectUnknownFields` refuses the key it just wrote.
+ * Miss `DEFAULTS` and the `satisfies` below is a compile error, which is the
+ * one mistake that catches itself.
+ *
+ * `permissionMode` and `allowedTools` were the first fields added after stores
+ * existed, so they also settle the absence policy: **a field younger than the
+ * store format defaults when it is absent**, because a value nobody could have
+ * typed cannot be lost by defaulting, and a misspelled key is still caught by
+ * `rejectUnknownFields`. A field that has always existed throws when absent,
+ * because there an absence means a damaged record rather than an older one.
  */
 const FIELDS = [
   "path",
   "testCmd",
   "reportPath",
   "configDir",
+  "permissionMode",
+  "allowedTools",
   "budgetUsd",
   "planModel",
   "implementModel",
   "planEffort",
   "implementEffort",
-  "resumePlanSession",
 ] as const
+
+/**
+ * Fields this version no longer has, which a store may still name.
+ *
+ * Removing a field is the same question as adding one, and the answer has to
+ * be consistent: a key the tool no longer honours is **not** a typo, so there
+ * is no setting left to lose and refusing to load would punish someone for our
+ * change. It loads, it is ignored, and `validateProject` rebuilds the record
+ * from `FIELDS`, so the next write drops it - visible in the diff of a file
+ * that is hand-edited and read in diffs.
+ *
+ * Only the exact retired name is forgiven. Anything near it is a key this tool
+ * has never had, which is the ordinary lost-line case and still throws.
+ *
+ * - `resumePlanSession` ran plan and implement in one conversation. Removed
+ *   once Task 15 showed that honouring it would make two lines of the implement
+ *   prompt false - it tells the agent it has not seen the conversation that
+ *   wrote the plan - and that is not worth a conditional inside the most
+ *   load-bearing strings in the project.
+ */
+const RETIRED = new Set(["resumePlanSession"])
 
 /** The design's defaults. Planning leads on code reasoning, implementing
  * leads on terminal work and has far more turns; they are two conversations,
  * so each phase can have the model that suits it. */
 const DEFAULTS = {
+  permissionMode: "acceptEdits",
+  allowedTools: null,
   budgetUsd: 50,
   planModel: "claude-opus-5-5",
   implementModel: "claude-sonnet-5-5",
   planEffort: "high",
   implementEffort: "medium",
-  resumePlanSession: false,
 } satisfies Omit<Project, "path" | "testCmd" | "reportPath" | "configDir">
 
 /**
@@ -81,12 +132,13 @@ export function defaults(partial: NewProject): Project {
       testCmd: partial.testCmd,
       reportPath: partial.reportPath,
       configDir: partial.configDir,
+      permissionMode: partial.permissionMode ?? DEFAULTS.permissionMode,
+      allowedTools: partial.allowedTools ?? DEFAULTS.allowedTools,
       budgetUsd: partial.budgetUsd ?? DEFAULTS.budgetUsd,
       planModel: partial.planModel ?? DEFAULTS.planModel,
       implementModel: partial.implementModel ?? DEFAULTS.implementModel,
       planEffort: partial.planEffort ?? DEFAULTS.planEffort,
       implementEffort: partial.implementEffort ?? DEFAULTS.implementEffort,
-      resumePlanSession: partial.resumePlanSession ?? DEFAULTS.resumePlanSession,
     },
     "project",
   )
@@ -322,17 +374,28 @@ function validateProject(value: unknown, where: string): Project {
     )
   }
 
+  // Younger than the store format, so an absent key is a store written before
+  // the field existed rather than a damaged record, and it takes the default.
+  // Only an absent key: an explicit null is an unfinished edit here, the way a
+  // blank string is everywhere else in this file. `allowedTools` is the one
+  // exception, because null is the design's own spelling of "derive it".
+  const mode =
+    r.permissionMode === undefined
+      ? DEFAULTS.permissionMode
+      : permissionMode(r.permissionMode, "permissionMode", where)
+
   return {
     path,
     testCmd,
     ...(reportPath === undefined ? {} : { reportPath }),
     ...(configDir === undefined ? {} : { configDir }),
+    permissionMode: mode,
+    allowedTools: toolRules(r.allowedTools, "allowedTools", where),
     budgetUsd,
     planModel: nonBlank(r.planModel, "planModel", where),
     implementModel: nonBlank(r.implementModel, "implementModel", where),
     planEffort: effort(r.planEffort, "planEffort", where),
     implementEffort: effort(r.implementEffort, "implementEffort", where),
-    resumePlanSession: boolean(r.resumePlanSession, "resumePlanSession", where),
   }
 }
 
@@ -352,9 +415,13 @@ function asRecord(value: unknown, where: string): Record<string, unknown> {
  * against the default profile - the wrong account - and the next write would
  * drop the line the user typed. A missing-field check cannot catch this,
  * because an optional field is allowed to be missing.
+ *
+ * A `RETIRED` key is the one exception, and for the opposite reason: the
+ * setting it named is gone, so ignoring it loses nothing a user still wants.
  */
 function rejectUnknownFields(value: object, where: string): void {
   for (const key of Object.keys(value)) {
+    if (RETIRED.has(key)) continue
     if (!(FIELDS as readonly string[]).includes(key)) {
       throw new Error(
         `${where}: unknown field ${JSON.stringify(key)}. Known fields are ${FIELDS.join(", ")}.`,
@@ -391,13 +458,53 @@ function effort(value: unknown, field: string, where: string): Effort {
   return value as Effort
 }
 
-/** Strictly a boolean. The string "false" is the reason: it is truthy, so a
- * coercing reader would silently run plan and implement in one conversation. */
-function boolean(value: unknown, field: string, where: string): boolean {
-  if (typeof value !== "boolean") {
-    throw new Error(`${where}: ${field} must be true or false, got ${describe(value)}`)
+/**
+ * One of the two modes the design supports.
+ *
+ * The CLI accepts four more, and each of them loads here as a plausible typo
+ * for a mode we do model. Forwarding one would spawn a run that cannot do its
+ * job - `plan` refuses to edit, `manual` prompts nobody - and nothing in the
+ * failure would point back at this field, so the message names the field and
+ * both allowed values instead.
+ */
+function permissionMode(value: unknown, field: string, where: string): PermissionMode {
+  if (typeof value !== "string" || !(PERMISSION_MODES as readonly string[]).includes(value)) {
+    throw new Error(
+      `${where}: ${field} must be one of ${PERMISSION_MODES.join(", ")}, got ${describe(value)}`,
+    )
   }
-  return value
+  return value as PermissionMode
+}
+
+/**
+ * An explicit allowlist, or `null` for "derive one".
+ *
+ * `null` is kept rather than collapsed to absent the way `configDir` is: it is
+ * the design's spelling of "compute it", and writing it keeps the field
+ * visible in a file people hand-edit, which is how someone discovers they can
+ * narrow the allowlist at all.
+ *
+ * An empty list is refused. Under `acceptEdits` a run allowed nothing can
+ * neither edit nor run the suite, and headless auto-denies anything that would
+ * prompt, so every task would fail at verification; that is an unfinished edit
+ * rather than a choice, and the message says which spelling means "derive".
+ *
+ * The list is copied, so a form object the UI reuses for its next save cannot
+ * reach back into a record that has already been validated.
+ */
+function toolRules(value: unknown, field: string, where: string): string[] | null {
+  if (value === undefined || value === null) return null
+  if (!Array.isArray(value)) {
+    throw new Error(
+      `${where}: ${field} must be a list of tool rules like ["Edit", "Bash(git *)"], or null to derive one from testCmd, got ${describe(value)}`,
+    )
+  }
+  if (value.length === 0) {
+    throw new Error(
+      `${where}: ${field} is an empty list, which allows nothing at all; use null to derive the default set from testCmd, or list the rules the run needs`,
+    )
+  }
+  return value.map((rule, i) => nonBlank(rule, `${field}[${i}]`, where))
 }
 
 /**
