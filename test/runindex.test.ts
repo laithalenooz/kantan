@@ -776,6 +776,50 @@ test("the branch comes from the caller, built from the feature file and the ref"
   expect([...index.tasks.values()][0]?.branch).toBe("orch/importer-t3-deadbeef")
 })
 
+test("a branch name that cannot be computed costs one row's branch, not the tree", async () => {
+  const dir = await scratchDir()
+  await logFile(
+    [headerLine({ runId: "ok", taskRef: "T1" }), { kind: "end", state: "done", costUsd: 1 }],
+    { dir, name: "ok.jsonl" },
+  )
+  await logFile(
+    [headerLine({ runId: "bad", taskRef: " " }), { kind: "end", state: "done", costUsd: 2 }],
+    { dir, name: "bad.jsonl" },
+  )
+  const asked: string[] = []
+
+  // git.ts's taskBranchName throws on a whitespace-only ref and on an absolute
+  // feature path, and a header can carry either. Dropping the row would make a
+  // done-but-unmerged task look never-run, and Task 12's guard would then let a
+  // second run start against it - the same reasoning that makes `merged`
+  // default to false.
+  const index = await indexRuns({
+    runsDir: dir,
+    branchFor: ({ ref }) => {
+      if (ref.trim() === "") throw new Error("a task with no ref cannot own a branch")
+      return `orch/x-${ref}`
+    },
+    isMerged: (q) => {
+      asked.push(q.taskRef)
+      return true
+    },
+  })
+
+  expect(index.tasks.size).toBe(2)
+  expect(index.tasks.get(taskKey(header({ taskRef: " " })))).toMatchObject({
+    branch: "",
+    state: { kind: "done", merged: false },
+    costUsd: 2,
+  })
+  expect(index.tasks.get(taskKey(header({ taskRef: "T1" })))).toMatchObject({
+    branch: "orch/x-T1",
+    state: { kind: "done", merged: true },
+  })
+  // Nothing to ask git about: there is no branch name to compare.
+  expect(asked).toEqual(["T1"])
+  expect(index.warnings.join("\n")).toMatch(/branch/)
+})
+
 test("a done run is merged only when the predicate says so", async () => {
   const dir = await scratchDir()
   await logFile([headerLine({ runId: "r" }), { kind: "end", state: "done", costUsd: 1 }], {
@@ -916,7 +960,12 @@ test("a task status carries everything the tree and the git guard need", async (
   })
 })
 
-test("500 logs fold without reading them whole", async () => {
+// Each log here is ~19 KiB, under the default window, so every one is in fact
+// read whole: what this pins is that a directory of 500 folds to 500 correct
+// rows, not what it costs. The cost evidence is the measurement over 500 logs
+// of 1.4 MiB described in `foldRunLog`, which this suite is the wrong place
+// for - it would put a 700 MiB write in every test run.
+test("a directory of 500 logs folds to 500 task statuses", async () => {
   const dir = await scratchDir()
   const noise = Array.from({ length: 40 }, (_, i) => ({
     kind: "cli" as const,

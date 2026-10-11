@@ -62,7 +62,15 @@ export interface TaskStatus {
   state: RunState
   /** The newest run. */
   runId: string
-  /** From `branchFor`, never derived here. */
+  /**
+   * From `branchFor`, never derived here.
+   *
+   * `""` means `branchFor` threw - `taskBranchName` does, for a whitespace-only
+   * ref or an absolute feature path - so this task has no usable branch name
+   * and was **not** checked for a merge. A caller passing this on to
+   * `createTaskBranch` or `isMergedIntoBase` has to guard against it; the task
+   * needs a ref it can own a branch by before either will work.
+   */
   branch: string
   /** The newest run's cost. `end.costUsd` for a run that ended; for one that
    * did not, a floor (see `RunSummary.costUsd`). */
@@ -141,9 +149,22 @@ export interface IndexOptions extends FoldOptions {
    * `src/git.ts` owns it (`isMergedIntoBase`, which needs a `Repo` and a base
    * this module has no business knowing).
    *
-   * Asked only about runs that reached `done`, so the tree's cost is not a git
-   * cost. Absent, slow-and-resolving, or throwing all end up as
-   * `merged: false`.
+   * Asked only about runs that reached `done`, and never about a task with no
+   * usable branch name - but that is a smaller saving than it sounds, and the
+   * measurement says so. Over 500 finished logs, reading them costs 89 ms;
+   * adding a predicate that takes 5 ms a row, about what
+   * `git merge-base --is-ancestor` costs on a warm repo, costs 2733 ms,
+   * because they are awaited one at a time. In steady state most rows are
+   * finished runs, so **this call, not the reading, is what a re-render
+   * costs.**
+   *
+   * Caching those answers, or running them concurrently, is deliberately the
+   * caller's decision and not this module's: only the caller knows when a
+   * branch can have moved - a merge, a push, a branch deleted - and a cache
+   * invented here would serve stale merge state to the one guard that exists
+   * to refuse a second run.
+   *
+   * Absent, slow-and-resolving, or throwing all end up as `merged: false`.
    */
   isMerged?: (query: {
     projectPath: string
@@ -708,11 +729,16 @@ function identify(
 /**
  * Every task the run logs know about, newest run per task.
  *
- * Nothing here throws on bad input. A missing directory is the first-ever
- * state, and an unreadable log is one row of the tree rather than all of it;
- * both arrive as warnings. The one thing that does throw is a `branchFor` that
- * does - a task whose branch name cannot be computed has no identity in git,
- * and that is the caller's own function failing on the caller's own rule.
+ * Nothing here throws on bad input, including a `branchFor` that throws: a
+ * missing directory is the first-ever state, an unreadable log is one row of
+ * the tree rather than all of it, and a task whose branch name cannot be
+ * computed is a row without a branch. All three arrive as warnings.
+ *
+ * Keeping the row is the point rather than tidiness. A task dropped from the
+ * index looks like a task that was never run, and Task 12's guard consults
+ * exactly this index before starting one - so dropping a `done`
+ * but unmerged task is how a second run gets started against work that is
+ * already written and not yet integrated.
  */
 export async function indexRuns(options: IndexOptions): Promise<RunIndex> {
   const dir = options.runsDir ?? defaultRunsDir()
@@ -773,12 +799,24 @@ export async function indexRuns(options: IndexOptions): Promise<RunIndex> {
     // runId breaks a tie, so two runs started in the same millisecond do not
     // leave the tree depending on directory order.
     const newest = attempts.reduce((a, b) => (startedAfter(b, a) ? b : a))
-    const branch = options.branchFor({
-      feature: newest.header.featureFile,
-      ref: newest.header.taskRef,
-    })
+    // `taskBranchName` throws on a whitespace-only ref and on an absolute
+    // feature path, and a header can carry either. The row survives it: losing
+    // it would make a done-but-unmerged task look never-run, and Task 12 would
+    // let a second run start against it.
+    let branch = ""
+    try {
+      branch = options.branchFor({
+        feature: newest.header.featureFile,
+        ref: newest.header.taskRef,
+      })
+    } catch (e) {
+      warnings.push(
+        `${newest.header.taskRef} in ${newest.header.featureFile} has no usable branch name, so it is listed without one and cannot be checked for a merge: ${describe(e)}`,
+      )
+    }
     let state = newest.state
-    if (state.kind === "done" && options.isMerged) {
+    // No branch means nothing to ask git about.
+    if (branch !== "" && state.kind === "done" && options.isMerged) {
       try {
         state = {
           kind: "done",
