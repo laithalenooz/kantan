@@ -347,6 +347,13 @@ const originRows: OriginRow[] = [
   { origin: `http://127.0.0.1:${PORT}`, status: 200, why: "our own origin" },
   { origin: `http://localhost:${PORT}`, status: 200, why: "our own origin, the other spelling" },
   { origin: `http://127.0.0.1:${PORT}`, method: "POST", path: UNROUTED, status: 404, why: "a POST from our own origin clears the guards" },
+  // The POST rows go to an unrouted path, so a cleared guard shows up as 404
+  // and a refusal as 403: the difference is the Origin check and nothing else.
+  { origin: "http://evil.example.com", method: "POST", path: UNROUTED, status: 403, why: "a POST from a foreign origin, the case the guard exists for" },
+  { origin: "http://127.0.0.1", method: "POST", path: UNROUTED, status: 403, why: "no port means port 80, which is not where we serve" },
+  { origin: `http://localhost.:${PORT}`, method: "POST", path: UNROUTED, status: 403, why: "trailing dot: a separate browser origin, so not ours" },
+  { origin: `http://[::ffff:127.0.0.1]:${PORT}`, method: "POST", path: UNROUTED, status: 403, why: "IPv4-mapped IPv6 spelling, an origin we never serve" },
+  { origin: `http://0.0.0.0:${PORT}`, method: "POST", path: UNROUTED, status: 403, why: "reachable as loopback on Linux, and still not an allowlist member" },
   { origin: "null", status: 403, why: "the literal opaque origin a sandboxed iframe or file: page sends" },
   { origin: "", status: 403, why: "present but empty is not absent, and matches nothing" },
   { origin: "http://evil.example.com", status: 403, why: "the plain cross-site case" },
