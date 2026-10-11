@@ -926,7 +926,6 @@ test("gate feedback DOES resume the plan session on the plan model", async () =>
   // Only the plan-to-implement boundary is a new conversation.
 })
 test("the implement prompt carries the plan file path, since it inherits no context", async () => { /* ... */ })
-test("resumePlanSession=true resumes instead, keeping one model throughout", async () => { /* ... */ })
 test("feedback re-runs the plan phase rather than advancing", async () => { /* ... */ })
 test("a plan turn ending in a question becomes waiting(question), not done", async () => { /* ... */ })
 test("implement then a passing test reaches done and ticks the checkbox", async () => { /* ... */ })

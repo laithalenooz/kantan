@@ -102,7 +102,6 @@ A project record:
   "implementModel": "claude-sonnet-5-5",
   "planEffort": "high",
   "implementEffort": "medium",
-  "resumePlanSession": false
 }
 ```
 
@@ -211,9 +210,8 @@ reader has already passed, so `replay()`'s followers would re-read or mis-read. 
 a later task could write it.
 
 So **every `phase` record that spawns a process carries its own `sessionId`**, the plan phase
-included. That is also the only shape that can tell the truth: when `resumePlanSession` is true
-the implement phase runs in `planSessionId`, and a header field named `implementSessionId` would
-have to lie or be empty.
+included. Recording it per phase also means the log says which session each
+spawn actually used, rather than leaving a reader to infer it.
 
 The plan phase runs as its own process:
 
@@ -257,8 +255,15 @@ and reads the plan file rather than resuming the plan session. Two reasons:
 
 The cost is real and worth stating: the implement session re-reads files the plan session already
 explored. With prompt caching, carrying that context forward would have been cheap, so this trades
-a small cost increase for the model split. `project.resumePlanSession` makes it one flag either
-way, defaulting to `false` (two conversations).
+a small cost increase for the model split.
+
+**There is no flag to revert it, and that is deliberate.** An earlier draft carried
+`resumePlanSession` as a one-line escape hatch back to a single conversation. It was removed once
+the prompts existed, because in that mode two lines of the implement prompt become false: it tells
+the agent it has not seen the conversation that wrote the plan, and the plan turn's "do not
+implement" instruction would still be in context. Honouring the flag would mean a conditional
+inside the most load-bearing strings in the project, to serve a mode nobody asked for. The prompts
+stay true instead.
 
 Gate feedback still resumes the **plan** session, on the same model. Only the plan-to-implement
 boundary is a new conversation.
@@ -282,8 +287,16 @@ regardless.
 Post-gate prompts explicitly suppress the skill checkpoints we do not want: execute inline, do
 not pause between batches, do not run `finishing-a-development-branch`.
 
-`superpowers:writing-plans` runs headless without stalling **(probed)**, honours a dictated
-plan path, and emits a plan that names its own successor skill.
+**Both phases are validated end to end against the real CLI (probed).**
+
+`superpowers:writing-plans` runs headless without stalling, honours a dictated plan path, and
+emits a plan that names its own successor skill.
+
+`superpowers:executing-plans` runs headless with the committed implement prompt and satisfies
+every property this design depends on: it read the plan, implemented the change, ran the suite,
+committed on the branch already checked out without creating one, ended with exactly `ORCH: done`
+as its final line, and **left the feature file untouched** so the server remains the only writer
+of task state. Seven turns, $0.16 on Sonnet at effort `medium`.
 
 ### 3.3 Verification belongs to the server
 

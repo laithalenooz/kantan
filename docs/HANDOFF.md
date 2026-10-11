@@ -198,6 +198,28 @@ guarantee. A **leftover XML from the previous run parses fine and reports the wr
 which is worse than an absent one. The stall signature must fall back to output when the XML is
 absent, empty, or stale.
 
+### The plan itself can smuggle in a tick instruction — Task 13
+`plan-success.jsonl`'s own final message records that the plan it wrote contained
+"**Checkbox:** tick T1 in `docs/features/slugger.md`". So a silent implement prompt is not enough:
+**the plan tells the implementer to tick**, and `tickTask`'s idempotence would then make the
+server's own tick a no-op that looks like success. Closed from both ends now — the plan prompt
+forbids including such a step, and the implement prompt forbids any edit to the feature file.
+Probed: the implement phase left the feature file untouched.
+
+### `src/sentinel.ts` now exports `DONE` and `BLOCKED` — anyone emitting a sentinel
+`src/prompts.ts` builds its sentinel lines from those exports, so the emitting and parsing sides
+cannot drift. `BLOCKED_RE` stays a regex literal and its parsing logic is untouched; the
+`BLOCKED` ↔ `BLOCKED_RE` agreement is pinned from outside by `test/prompts.test.ts`, where a
+one-character drift fails three tests.
+
+### `TaskSpec.ref` is non-null on purpose — Task 13
+Deliberately narrower than `backlog.Task`, so a ref-less task **cannot reach a prompt**. That
+forces the open decision (assign refs, or refuse) rather than hiding it.
+
+### `feedbackPrompt` needs the `planPath` from the `phase` record — Task 13
+It resumes the plan session and re-dictates that path, so handing it a freshly derived path would
+point the agent at a file the gate is not rendering.
+
 ### A run has TWO session ids and using the wrong one fails silently — Task 13
 `runId` names the run. `planSessionId` and `implementSessionId` are separate conversations, and
 `--session-id` takes a UUID so neither can be derived from `runId`. Gate feedback resumes the
