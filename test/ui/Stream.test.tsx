@@ -850,6 +850,100 @@ describe("only new rows animate", () => {
     expect(mounted.row("fresher")?.getAttribute("data-enter")).toBe("true")
   })
 
+  /*
+   * The three tests below are the real delivery path, not a convenience: the
+   * run stream replays the whole log from byte 0 on every connect, unbatched
+   * and with no marker between the replay and the live tail, so a caller that
+   * mounts this empty and fills it has no boundary to declare.
+   */
+
+  test("a log that arrives after mount settles into history, and a later arrival still animates", async () => {
+    const mounted = await mount(<api.Stream rows={[]} />)
+    expect(mounted.rows()).toHaveLength(0)
+
+    /* Sixty records in one update — the shape a caller gets if it coalesces the
+     * replay, which the server's own comment suggests it should. */
+    const replayed = syntheticLog(60)
+    await mounted.update(<api.Stream rows={replayed} />)
+    expect(mounted.rows().length).toBeGreaterThan(4)
+
+    /*
+     * The guarantee: once drawn, they are history. Away and back is silent,
+     * whatever happened on the way in.
+     *
+     * Note what is deliberately *not* asserted. A batch this size moves the
+     * scroll far enough that following lands the viewer past the window that
+     * animated, in a commit after the one that absorbed those ids — so some of
+     * the rows finally on screen will not have faded in. That is the asymmetry
+     * this component chooses: a fade that did not happen, never one that
+     * happened twice. The incremental case below is the one a live run
+     * actually produces, and it does animate.
+     */
+    await mounted.scrollTo(0)
+    await mounted.scrollToBottom()
+    for (const row of mounted.rows()) expect(row.getAttribute("data-enter")).toBe("false")
+
+    /* One more record, the way the stream delivers them: unbatched. */
+    await mounted.update(
+      <api.Stream rows={[...replayed, eventRow("live", { kind: "thinking", length: 12 }, { at: Date.now() })]} />,
+    )
+    expect(mounted.row("live")?.getAttribute("data-enter")).toBe("true")
+  })
+
+  test("a reconnect re-delivers every record, and deterministic ids keep it silent", async () => {
+    const mounted = await mount(<api.Stream rows={[]} />)
+    const replayed = syntheticLog(60)
+    await mounted.update(<api.Stream rows={replayed} />)
+
+    /* What a reconnect produces: the same bytes, rebuilt into a new array, so
+     * the same ids in the same order — plus whatever happened meanwhile. */
+    const reconnected = [
+      ...syntheticLog(60),
+      eventRow("e60", { kind: "tool_use", id: "t60", name: "Bash", input: { command: "npm test" } }, { at: Date.now() }),
+    ]
+    expect(reconnected.map((row) => row.id).slice(0, 60)).toEqual(replayed.map((row) => row.id))
+
+    await mounted.update(<api.Stream rows={reconnected} />)
+
+    for (const row of mounted.rows()) {
+      const id = row.getAttribute("data-row-id")
+      expect(row.getAttribute("data-enter")).toBe(id === "e60" ? "true" : "false")
+    }
+  })
+
+  test("an expanded row survives a reconnect, and does not survive reminted ids", async () => {
+    /*
+     * The cost of breaking the id contract, in the one place it is impossible
+     * to argue with. Everything this component remembers about a row — that it
+     * has already animated, that it is expanded, how tall it measured — is
+     * keyed on the id. Mint a new one for the same log line and all three go.
+     */
+    const log = syntheticLog(40)
+    const expanded = log[8]
+    if (!expanded) throw new Error("the synthetic log is too short")
+
+    const mounted = await mount(<api.Stream rows={log} />)
+    await mounted.scrollTo(0)
+    const button = mounted.row(expanded.id)?.querySelector("button")
+    expect(button).not.toBeNull()
+    if (button instanceof HTMLElement) await click(button)
+    expect(mounted.row(expanded.id)?.querySelector("button")?.getAttribute("aria-expanded")).toBe("true")
+
+    // A reconnect: the same bytes, a new array, the same ids.
+    await mounted.update(<api.Stream rows={syntheticLog(40)} />)
+    await mounted.scrollTo(0)
+    expect(mounted.row(expanded.id)?.querySelector("button")?.getAttribute("aria-expanded")).toBe("true")
+
+    // The same records under ids minted per delivery.
+    const reminted = syntheticLog(40).map((row) => ({ ...row, id: `delivery2-${row.id}` }))
+    await mounted.update(<api.Stream rows={reminted} />)
+    await mounted.scrollTo(0)
+    expect(mounted.row(expanded.id)).toBeNull()
+    for (const row of mounted.rows()) {
+      expect(row.querySelector("button")?.getAttribute("aria-expanded") ?? "false").toBe("false")
+    }
+  })
+
   test("reduced motion stops the fade, which MotionConfig alone does not", async () => {
     setPrefersReduce(true)
 

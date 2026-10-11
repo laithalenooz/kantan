@@ -40,6 +40,41 @@
  * The card's own blur fade — `bf d3` on the same `<section>` in the artboards —
  * carries the opening instead, as one movement rather than thirty.
  *
+ * ## What the seed cannot do, and what has to hold instead
+ *
+ * The seed only covers rows that are in `rows` on the first render. The real
+ * log does not arrive that way: `GET /api/runs/:id/stream` replays the run's
+ * JSONL **from byte 0 on every connect** and then follows, deliberately
+ * unbatched — one record on disk is one event on the wire, with no marker
+ * between the replay and the live tail. So a caller that mounts this empty and
+ * fills it from the stream has no boundary to pass, and the replay arrives as
+ * first arrivals: the opening window fades in, which is the artboards' look
+ * reached by a different road, and then settles.
+ *
+ * What must not happen is the **reconnect** doing it again, and the only thing
+ * that stops it is the one thing a caller controls: **`id` has to be
+ * deterministic per log line** — the run id and the record's index, say — so a
+ * replay of the same bytes produces the same ids and this component recognises
+ * every one of them. Ids minted per delivery would re-animate the whole log on
+ * every reconnect, collapse every expanded row, and throw away the
+ * virtualizer's measurement cache with them. `test/ui/Stream.test.tsx` holds
+ * that contract both ways round.
+ *
+ * One asymmetry falls out of that and is kept on purpose. Following moves the
+ * scroll in a commit *after* the one that drew an arrival, so a single update
+ * carrying hundreds of records lands the viewer past the rows that faded in,
+ * and those finally on screen will not have. The alternative — absorbing only
+ * what a commit drew — animates that case and pays for it by fading in every
+ * never-drawn row the first time someone scrolls up through the log, which is
+ * the behaviour this whole mechanism exists to prevent. A fade that did not
+ * happen is cheaper than one that happens again.
+ *
+ * For the same reason, a caller showing a **different run** should give this a
+ * `key` of the run id rather than swapping `rows` underneath it. Swapped rows
+ * are absorbed, but only after the render that first held them has already
+ * treated its window as arrivals — and `following` and the expanded set would
+ * carry over from a run they do not belong to.
+ *
  * ## Reduced motion
  *
  * `main.tsx` wraps the app in `MotionConfig reducedMotion="user"`, which is
@@ -179,8 +214,12 @@ export function Stream({ rows, maxHeight = 520, footer, className }: StreamProps
    * render calls disagree with the first, and a row would decide it was old
    * before it had ever appeared.
    *
-   * Guarded on the array's identity rather than its length, so a parent that
-   * swaps in a different run's rows is absorbed too.
+   * Guarded on the array's identity rather than its length, so an array that
+   * changed without growing — a replay rebuilt from byte 0, a different run
+   * swapped in — is absorbed too. Absorbed *after the fact*, though: the render
+   * that first held those rows has already decided what was new in it. Which is
+   * right for a reconnect, whose ids are old, and is the reason the file comment
+   * asks for a `key` on a run change, whose ids are not.
    */
   const absorbed = useRef<readonly StreamRow[] | null>(null)
   useEffect(() => {
