@@ -470,59 +470,79 @@ Dials: variance 6, motion 4, density 8.
 The account label sits on every project row and in the run header. Mis-billing a client because
 the UI stayed quiet about the account is a defect.
 
-### 4.1 Tokens (provisional)
+### 4.1 Tokens
 
-**Run `impeccable init` then `new-work` before the first UI commit.** The palette below is the
-ui-ux-pro-max database default, matched to its "RPA / Automation Dashboard" profile. The match
-is apt for the state vocabulary, but the values are Tailwind slate-900, slate-800 and slate-400,
-which is the default this project should move past. The ring color also breaks the no-pure-white
-rule. Treat the semantics as settled and the hex values as a starting point.
+Settled by the direction contract in `.impeccable/surfaces/src-ui.md`. The world is the
+**plaintext technical standard**: a document of record, not a console. It deliberately refuses the
+dark operator terminal with one neon accent, which is both this category's default arrangement and
+a documented AI-interface cluster.
 
-| Token | Provisional value | Meaning |
+**The ground is light, and the physical scene forced it rather than taste.** The scene: reading a
+400-line plan closely for two minutes, then glancing at the same screen from across the room
+twenty minutes later to see whether anything needs you. Close reading of long prose wins on a
+paper ground; the glance is served by region colour, which works on light.
+
+| Token | Value | |
 |---|---|---|
-| background / card / muted | `#0F172A` / `#1B2336` / `#272F42` | surfaces |
-| foreground / muted | `#F8FAFC` / `#94A3B8` | text |
-| accent | `#22C55E` | running, pass |
-| destructive | `#EF4444` | failed |
-| waiting | amber | gate, stalled, question |
-| done | blue | finished |
+| ground | `#F4F4F1` | paper. Cool, deliberately **not** cream, which is a named AI cluster |
+| ink | `#17191C` | |
+| rule | `#C9C9C3` | hairlines, the only divider |
+| muted ink | `#5C6066` | labels, secondary values |
 
-OLED dark, locked for the whole app. No section inverts.
+**Colour follows the ISO safety convention and is purely semantic.** Not decoration, not branding:
 
-Status color is semantic, never decorative. The status dots carry real state, which is the
-documented exception to the no-decorative-dots rule.
-
-Type: JetBrains Mono for paths, costs, durations, session ids, task refs and test output. IBM
-Plex Sans for labels and prose. All numbers are mono.
-
-Shape lock: 6px panels, 4px chips, no pills. Applied everywhere.
-
-### 4.2 Motion and components
-
-Each effect states what it communicates. Nothing animates for show.
-
-| Effect | Communicates | Source |
+| Role | Means | Used for |
 |---|---|---|
-| spring enter per stream row | feedback: something arrived | `AnimatedListItem`, used alone |
-| Border Beam on the active run panel | state: this is live. Stops at the gate | Magic UI |
-| Number Ticker on cost | feedback: cost is accruing | Magic UI |
-| Animated Circular Progress | the 5h rate-limit window, per account | Magic UI |
-| Code Comparison | diffs inside `Edit` tool calls | Magic UI |
-| File Tree | the project and feature and task tree | Magic UI |
+| blue | mandatory action | **something needs you.** The gate, an unanswered question |
+| green | safe condition | tests passed |
+| red | danger | failed |
+| yellow | warning | stalled, grinding |
+| *(none)* | — | **running.** A phase in progress is merely happening and gets no colour |
 
-**Magic UI `AnimatedList` and `Terminal` are excluded from the stream.** Verified against its
-registry source: `AnimatedList` reveals children on a `setTimeout` (default 1000ms), slices
-`children.slice(0, index + 1)`, reverses the result, and keeps everything mounted. It is a
-notification-stack demo reel. On a live log it would drip one line per second, in reverse, with
-no virtualization. `AnimatedListItem` is separable and is just a spring-transitioned
-`motion.div`, so that is the per-row animation we keep. Treat `Terminal` as likely scripted too
-and verify before use.
+**So the presence of colour is itself the information.** When nothing needs you there is no colour
+on screen at all; a coloured region means something changed. That is only true if the rule is
+kept absolutely, so a decorative use of any of these four hues is a defect.
 
-**The virtualizer owns the stream.** Row animations are keyed by event id and fire only on first
-arrival, or every row re-animates when scrolled back into view.
+Colour commits at **region** scale, never as accents on a neutral ground. A grey screen with one
+accent is the category default without the category's polish.
 
-No marquee, no meteors, no confetti. Everything collapses to static under
-`prefers-reduced-motion`.
+Type: **Public Sans** for prose and labels, chosen because it is the face of a standards body
+rather than by association. **Commit Mono** for every machine value: paths, costs, durations,
+session ids, task refs, test output. All numbers mono.
+
+**One type size on the working surface.** Rank is carried by weight, case, reversal and rule,
+never by size. The one place scale is used it is extreme: monumental against tiny mono, with no
+middle sizes. The rendered plan at the gate is the exception, where a reading measure applies.
+
+Shape: hairline rules and plates. No cards, no shadows, no rounded containers. A standards
+document has rules and reversed blocks; it does not have cards.
+
+### 4.2 The signature move, and motion
+
+**The signature move: the gate is a full-bleed reversed field.** When a run needs the human, a
+whole region becomes a blue plate with reversed type and the primary action sits inside it. It is
+legible from across the room, which is the returning-after-an-absence scene exactly. When nothing
+needs the human there is no plate and no colour.
+
+A standards document does not fade its normative callouts in. **The plate arrives as a hard cut
+or a single fast wipe**, never a soft fade.
+
+Motion is otherwise minimal, and each effect states what it communicates:
+
+| Effect | Communicates | Note |
+|---|---|---|
+| Blur Fade on a new stream record | feedback: something arrived | per row, keyed by event id, **first arrival only** |
+| Number Ticker on cost | feedback: money is accruing | mono numerals, no easing flourish |
+| Segmented rule for the 5h window | the rate limit, per profile | a ruled bar, not a glowing ring |
+| Code Comparison | diffs inside `Edit` records | |
+| File Tree | the clause tree of projects, features, tasks | |
+
+**Border Beam is removed.** It was chosen as the "this is live" signal for a dark world, and it
+contradicts two rules now: running has no colour, and nothing is softened. Liveness is carried by
+the record visibly growing, which is what an appended document does.
+
+No marquee, no meteors, no confetti, no glow. Everything collapses to static under
+`prefers-reduced-motion`, including the plate's wipe.
 
 ### 4.3 Two hard constraints
 
