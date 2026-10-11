@@ -51,7 +51,7 @@ version-dependent, and the fixtures and parser encode it.
 
 | Noun | Is actually | Lives in |
 |---|---|---|
-| Project | a repo directory, a test command, and an account | `~/.orch/projects.json` |
+| Project | a repo directory, a test command, a profile, and its models | `~/.orch/projects.json` |
 | Feature | a markdown file | `<repo>/docs/features/<slug>.md` |
 | Task | a `- [ ]` line in that file | the same file |
 | Run | one task through the pipeline | `~/.orch/runs/<uuid>.jsonl` |
@@ -73,9 +73,11 @@ A project record:
   "reportPath": "reports/junit.xml",
   "configDir": null,
   "budgetUsd": 50,
-  "model": "claude-sonnet-5-5",
+  "planModel": "claude-opus-5-5",
+  "implementModel": "claude-sonnet-5-5",
   "planEffort": "high",
-  "implementEffort": "medium"
+  "implementEffort": "medium",
+  "resumePlanSession": false
 }
 ```
 
