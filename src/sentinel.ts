@@ -26,8 +26,21 @@ export interface ResultEvent {
   result?: string
 }
 
-/** The literal the phase prompts instruct the agent to end with. Not configurable. */
-const DONE = "ORCH: done"
+/**
+ * The literals the phase prompts instruct the agent to end with. Not
+ * configurable.
+ *
+ * Exported so `src/prompts.ts` emits exactly what this module accepts. Nothing
+ * else could make the two agree: a one-character drift on either side would
+ * leave every finished phase reading as `question`, so every run would stop at a
+ * gate that should have passed, with no error anywhere to catch. The prompts
+ * build their sentinel lines out of these, and `test/prompts.test.ts` feeds the
+ * lines a prompt dictates back through `phaseOutcome`.
+ *
+ * `BLOCKED` is the prefix alone, because the reason after it is optional.
+ */
+export const DONE = "ORCH: done"
+export const BLOCKED = "ORCH: blocked"
 
 /**
  * `ORCH: blocked`, with an optional reason separated from it by whitespace.
@@ -39,6 +52,13 @@ const DONE = "ORCH: done"
  * otherwise rejects. Safe here because the input is a single line, already
  * split on "\n". Without it such a reason would fall through to `question`,
  * which stops the run just the same but reports the wrong thing about why.
+ *
+ * Still a literal, not built from `BLOCKED`: this expression is the byte-for-byte
+ * subject of the cases in `test/sentinel.test.ts`, and rewriting it to construct
+ * the same pattern would put that evidence at risk to buy nothing. The two are
+ * instead held together from outside, by `test/prompts.test.ts` sending the
+ * blocked line a prompt dictates through `phaseOutcome`. Verified by mutation:
+ * a one-character change to `BLOCKED` fails three of those tests.
  */
 const BLOCKED_RE = /^ORCH: blocked(?:[ \t]+(.*))?$/s
 
