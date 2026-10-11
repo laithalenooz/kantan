@@ -146,6 +146,15 @@
    * the vertical grid everything else is built from. */
   --text-work: 0.875rem;
   --text-work--line-height: 1.25rem;
+
+  /* The one place scale is extreme, per design 4.1: "monumental against tiny
+     mono, with no middle sizes". There is no middle size token on purpose, so
+     this is the whole of the exception and it is spent once — on the gate
+     plate, the thing that has to read from across the room. Anything that
+     wants a size between this and --text-work has misread the direction. */
+  --text-monument: 2.75rem;
+  --text-monument--line-height: 1;
+  --tracking-monument: -0.02em;
   --leading-work: 1.25rem;
 
   /* Rank is carried by weight, case, reversal and rule. Three weights is the
