@@ -1,163 +1,236 @@
-import { useState } from "react"
-import { Tree, type TreeProject, type TaskId } from "./Tree.tsx"
+import { useCallback, useMemo, useState } from "react"
+import { Tree, canStart, type Account, type TaskId, type TreeProject, type TreeTask } from "./Tree.tsx"
 import { Gate, type GateProps } from "./Gate.tsx"
-import { Stream, type StreamRow } from "./Stream.tsx"
-import { Sidebar, type CostProcess, type PhaseStep, type AccountWindow } from "./Sidebar.tsx"
-import type { Event } from "../stream.ts"
-
-/** stream.ts's result variant: the DOMAIN shape, not the wire shape sentinel.ts reads. */
-type ResultEvent = Extract<Event, { kind: "result" }>
-
-/**
- * The shell: tree, run, rail. Three columns, per docs/design/Main.dc.html.
- *
- * The four regions were built independently against the artboards; this file
- * is the only place they meet, so the seams between them live here.
- *
- * It still renders fixture data. Wiring it to the server is the next step, and
- * two of the shapes below exist to make that wiring correct rather than
- * convenient:
- *
- *   - `rowId` is deterministic. The SSE replays from byte 0 on every connect
- *     and carries no replay-versus-live marker, so a generated id would
- *     re-animate the whole log on reconnect, collapse every expanded row and
- *     throw away the measurement cache.
- *   - `waitId` is `runId#phaseRecordIndex`. Content alone cannot tell a
- *     re-asked question from a poll of the same one.
- */
-
-const RUN = "r-8f3a1c"
-
-/** Deterministic per log line. Never a counter. */
-const rowId = (recordIndex: number) => `${RUN}#${recordIndex}`
-
-const PROJECTS: TreeProject[] = [
-  {
-    path: "/home/you/code/your-app",
-    account: { kind: "personal", label: "personal" },
-    testCmd: "npm test",
-    features: [
-      {
-        path: "docs/features/importer.md",
-        tasks: [
-          { ref: "T1", text: "Parse the manifest", done: true, run: { state: { kind: "done", merged: true }, branch: "orch/importer-t1-4b20a9" } },
-          { ref: "T2", text: "Map records to rows", done: false, run: { state: { kind: "waiting", reason: "gate" }, branch: "orch/importer-t2-9f3a1c" } },
-          { ref: "T3", text: "Runtime shim (v1.2)", done: false },
-        ],
-      },
-    ],
-  },
-  {
-    path: "/home/you/code/other-repo",
-    account: { kind: "work", label: "work" },
-    testCmd: "vendor/bin/pest",
-    features: [
-      {
-        path: "docs/features/billing.md",
-        tasks: [
-          { ref: "T1", text: "Ledger reconciliation", done: true, run: { state: { kind: "done", merged: false }, branch: "orch/billing-t1-2ce471" } },
-          { ref: "T2", text: "Refund path", done: false, run: { state: { kind: "failed", why: "tests failed after 3 attempts" }, branch: "orch/billing-t2-77d0ba" } },
-        ],
-      },
-    ],
-  },
-]
-
-const PLAN_MD = `# T2 Map records to rows
-
-Add \`mapRecord()\`, taking one parsed manifest entry and returning a row.
-Unknown fields are dropped rather than passed through, because the writer
-refuses unknown keys.
-
-1. **Failing test** for a record carrying an unknown field.
-2. **Run it** and watch it fail.
-3. **Implement** the mapping.
-4. **Run the suite** and commit.
-`
-
-const ROWS: StreamRow[] = [
-  { id: rowId(1), event: { kind: "tool_use", id: "t1", name: "Bash", input: { command: "git log --oneline -1" } } },
-  { id: rowId(2), event: { kind: "tool_use", id: "t2", name: "Read", input: { file_path: "/home/you/code/your-app/src/importer/manifest.ts" } } },
-  { id: rowId(3), event: { kind: "tool_use", id: "t3", name: "Edit", input: { file_path: "src/importer/map.ts", old_string: "return row", new_string: "return mapRecord(row)" } } },
-  { id: rowId(4), tests: { exitCode: 1, attempt: 1, summary: "9 passing, 1 failing" } },
-  { id: rowId(5), event: { kind: "text", text: "The unknown-field case was dropping the whole row. Narrowing the guard." } },
-  { id: rowId(6), tests: { exitCode: 0, attempt: 2, summary: "10 passing" } },
-]
-
-const res = (costUsd: number): ResultEvent => ({
-  kind: "result",
-  subtype: "success",
-  isError: false,
-  costUsd,
-  numTurns: 1,
-  text: "",
-  permissionDenials: [],
-})
-
-const PHASES: PhaseStep[] = [
-  { phase: "plan", state: "done", elapsedMs: 8_000 },
-  { phase: "gate", state: "waiting" },
-  { phase: "implement", state: "pending" },
-  { phase: "test", state: "pending" },
-]
+import { Stream } from "./Stream.tsx"
+import { Sidebar, type AccountWindow } from "./Sidebar.tsx"
+import { startRun, taskKeyOf, type RunView } from "./live.ts"
+import { useAction, usePlan, useRun, useTree } from "./useRun.ts"
+import type { RunPhase } from "../runlog.ts"
+import type { AskingPhase } from "./Gate.tsx"
 
 /**
- * One entry per process, holding that process's result events.
+ * The shell: tree, run, rail. Three columns, per `docs/design/Main.dc.html`.
  *
- * `sumProcessCost` takes the LAST of each. Within a process the figure
- * accumulates, so summing every result double-counts — the plan process below
- * reads 0.25, not 0.10 + 0.25.
+ * The four regions were built independently against the artboards; this file is
+ * the only place they meet, so the seams between them live here. The data comes
+ * from `useRun.ts`, which owns the races, and from `live.ts`, which owns the
+ * fold - this file owns only the joins, and every one of them is a decision
+ * some type would otherwise have let us make silently.
  */
-const PROCESSES: CostProcess[] = [
-  // stream.ts's DOMAIN shape (isError, costUsd), not the wire shape
-  // (is_error, total_cost_usd) that src/sentinel.ts reads.
-  { results: [res(0.1), res(0.25)] },
-  { results: [res(0.17)] },
-]
 
-const WINDOWS: AccountWindow[] = [
-  { profile: null, label: "personal", status: "allowed", utilization: 0.41, current: true },
-  { profile: "/home/you/.claude-work", label: "work", status: "allowed", utilization: 0.12 },
-]
+/**
+ * Which conversation an answer goes back into.
+ *
+ * `park` records the phase that was running, so a question can arrive on any
+ * of `plan`, `implement` or `refine`; `AskingPhase` offers only the first two,
+ * because a `refine` turn runs **inside the implement conversation** and that
+ * is the one `--resume` has to reopen. `gate` and `test` never ask: the gate
+ * spawns nothing and the test phase runs the suite, not an agent.
+ *
+ * So the mapping is total rather than partial, and the default is `implement`
+ * because that is where every non-plan turn lives. Getting this wrong is the
+ * silent failure design §2 is built around: answering into the planning session
+ * runs the reply in the wrong conversation and still exits `success`.
+ */
+function askingPhase(phase: RunPhase): AskingPhase {
+  return phase === "plan" ? "plan" : "implement"
+}
+
+/** The run id for a selection, or `null` when that task has never run. */
+function runIdFor(runs: Readonly<Record<string, { runId: string }>> | undefined, selected: TaskId | null): string | null {
+  if (runs === undefined || selected === null) return null
+  const key = taskKeyOf(selected)
+  return key === null ? null : (runs[key]?.runId ?? null)
+}
+
+function findTask(projects: readonly TreeProject[], selected: TaskId | null): TreeTask | null {
+  if (selected === null) return null
+  const project = projects.find((p) => p.path === selected.projectPath)
+  const feature = project?.features.find((f) => f.path === selected.featureFile)
+  return feature?.tasks.find((t) => t.ref === selected.taskRef) ?? null
+}
+
+function projectFor(projects: readonly TreeProject[], selected: TaskId | null): TreeProject | null {
+  if (selected === null) return null
+  return projects.find((p) => p.path === selected.projectPath) ?? null
+}
+
+/**
+ * The rings.
+ *
+ * One window, for the account **this run** bills to, and that is a limitation
+ * rather than a choice: a window's `status` and `utilization` only ever arrive
+ * on a `rate_limit` event inside some run's log, so a second account's figures
+ * live in a log this screen is not reading. Showing a second ring would mean
+ * either inventing its numbers or labelling it with the first account's, and
+ * `AccountWindow` says plainly that merging two accounts shows a run the wrong
+ * limit silently. So the rail shows what it knows.
+ *
+ * `profile` is passed exactly as the header recorded it - no trimming, no
+ * `realpath` - because that field is the account's identity and normalising it
+ * would merge two of them.
+ */
+function windowsFor(view: RunView | null, account: Account | undefined): AccountWindow[] {
+  if (view?.header === null || view?.header === undefined) return []
+  const label = account?.label ?? (account?.kind === "unknown" ? "account unknown" : (account?.kind ?? "account unknown"))
+  return [
+    {
+      profile: view.header.profile,
+      label,
+      current: true,
+      // `status` is required and only a real event can supply it. "allowed" is
+      // the CLI's own word for a window with room, and it is what the rail
+      // reads as "nothing to say yet" - the notice keys on the other values.
+      status: view.limit?.status ?? "allowed",
+      utilization: view.limit?.utilization,
+    },
+  ]
+}
+
+/** The line under the log saying what the run is doing, per both artboards. */
+function footerFor(view: RunView | null): string | null {
+  if (view === null) return null
+  if (view.ended !== null) {
+    const why = view.ended.why === undefined ? "" : ` · ${view.ended.why}`
+    return view.ended.state === "done" ? "Done" : `Failed${why}`
+  }
+  if (view.waiting !== null) {
+    switch (view.waiting.reason) {
+      case "gate":
+        return "Gate · run paused until you decide"
+      case "question":
+        return "Question · waiting for your answer"
+      case "blocked":
+        // The prose carries the figures and the instruction to raise, and it is
+        // the only place they exist: nothing else in the log holds it.
+        return view.waiting.detail ?? "Blocked · waiting for you"
+      case "stalled":
+        return view.waiting.detail ?? "Stalled · the same failure three times"
+    }
+  }
+  const running = view.phases.find((p) => p.state === "running")
+  return running === undefined ? null : `${running.phase} · running`
+}
 
 export function App() {
-  const [selected, setSelected] = useState<TaskId | null>({
-    projectPath: "/home/you/code/your-app",
-    featureFile: "docs/features/importer.md",
-    taskRef: "T2",
-  })
+  const { tree, error: treeError } = useTree()
+  const [selected, setSelected] = useState<TaskId | null>(null)
+  const [started, setStarted] = useState<Record<string, string>>({})
+  const [startError, setStartError] = useState<string | null>(null)
 
-  const gate: GateProps = {
-    kind: "gate",
-    waitId: `${RUN}#7`,
-    plan: { status: "loaded", path: "docs/plans/2026-10-11-t2-map-records.md", markdown: PLAN_MD },
-    testCommand: "npm test",
-    filesRead: ["src/importer/manifest.ts", "src/importer/map.ts"],
-    planDurationMs: 8_000,
-    costUsd: 0.25,
-    onApprove: () => console.log("approve"),
-    onFeedback: (text) => console.log("feedback", text),
-  }
+  const projects = tree?.projects ?? []
+  const selectedKey = selected === null ? null : taskKeyOf(selected)
+  // A run started in this session is addressable before the tree has been
+  // re-read, so the freshly minted id wins over the tree's older answer.
+  const fresh = selectedKey === null ? undefined : started[selectedKey]
+  const runId = fresh ?? runIdFor(tree?.runs, selected)
+
+  const { view } = useRun(runId)
+  const atGate = view?.waiting?.reason === "gate"
+  const plan = usePlan(runId, atGate)
+  const { send, error: actionError } = useAction(runId)
+
+  const task = findTask(projects, selected)
+  const project = projectFor(projects, selected)
+
+  const onStart = useCallback(async () => {
+    if (selected === null || selected.taskRef === null || selectedKey === null) return
+    setStartError(null)
+    try {
+      const id = await startRun({ projectPath: selected.projectPath, featureFile: selected.featureFile, taskRef: selected.taskRef })
+      setStarted((prior) => ({ ...prior, [selectedKey]: id }))
+    } catch (cause) {
+      setStartError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }, [selected, selectedKey])
+
+  const gate: GateProps | null = useMemo(() => {
+    if (view === null || view.waitId === null || view.waiting === null) return null
+
+    if (view.waiting.reason === "gate") {
+      // Held until the plan has actually arrived. `PlanSource` has no "loading"
+      // variant, and the nearest stand-in - `undictated` - would tell the human
+      // this run dictated no plan, which is a different and false statement.
+      if (plan === null) return null
+      return {
+        kind: "gate",
+        waitId: view.waitId,
+        plan,
+        testCommand: project?.testCmd ?? "",
+        planDurationMs: view.phases.find((p) => p.phase === "plan")?.elapsedMs,
+        onApprove: () => send({ kind: "approve" }),
+        onFeedback: (text: string) => send({ kind: "feedback", text }),
+      }
+    }
+
+    if (view.waiting.reason === "question") {
+      // The card prints the agent's own words, and `detail` is where `park` put
+      // them. With none recorded there is nothing to quote, so the footer says
+      // the run is waiting and no card claims to know what it asked.
+      if (view.waiting.detail === null) return null
+      const asked = view.phases.find((p) => p.state === "waiting")?.phase ?? "implement"
+      return {
+        kind: "question",
+        waitId: view.waitId,
+        phase: askingPhase(asked),
+        question: view.waiting.detail,
+        onAnswer: (text: string) => send({ kind: "answer", text }),
+      }
+    }
+
+    // `blocked` and `stalled` have no card in the design: they are a notice
+    // under the log, which `footerFor` writes.
+    return null
+  }, [view, plan, project, send])
+
+  const failure = treeError ?? startError ?? actionError
 
   return (
     <div className="grid h-dvh grid-cols-[18rem_minmax(0,1fr)_14rem] overflow-hidden">
-      <div className="min-w-0 overflow-y-auto border-r border-edge bg-panel">
-        <Tree projects={PROJECTS} selected={selected} onSelect={setSelected} />
+      <div className="min-w-0 overflow-y-auto">
+        <Tree projects={projects} selected={selected} onSelect={setSelected} />
       </div>
 
       <div className="flex min-w-0 flex-col overflow-y-auto">
-        <Gate {...gate} />
-        <Stream rows={ROWS} maxHeight={520} />
+        {failure !== null && (
+          <p role="alert" className="m-4 rounded-[12px] border border-[#F3C6C9] bg-[#FDF2F3] px-4 py-3 text-[13px] leading-[1.5] text-[#D92D3A]">
+            {failure}
+          </p>
+        )}
+
+        {gate !== null && <Gate {...gate} />}
+
+        {view !== null && (
+          <Stream rows={view.rows} maxHeight={atGate ? 520 : 640} footer={footerFor(view)} />
+        )}
+
+        {runId === null && task !== null && canStart(task) && (
+          <div className="m-4 rounded-[14px] border border-edge bg-panel px-4 py-[18px]">
+            <p className="text-[13.5px] leading-[1.55] text-muted-500">
+              {task.ref} has not run yet.
+            </p>
+            <button
+              type="button"
+              onClick={() => void onStart()}
+              className="mt-3 rounded-full bg-ink px-4 py-2 text-[13px] font-semibold text-white"
+            >
+              Start this task
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="min-w-0 overflow-y-auto border-l border-edge bg-panel">
-        <Sidebar
-          phases={PHASES}
-          processes={PROCESSES}
-          ceilingUsd={50}
-          windows={WINDOWS}
-          onStop={() => console.log("stop")}
-        />
+        {view !== null && view.ceilingUsd !== null && (
+          <Sidebar
+            phases={view.phases}
+            processes={view.processes}
+            ceilingUsd={view.ceilingUsd}
+            windows={windowsFor(view, project?.account)}
+            onStop={() => void send({ kind: "stop" })}
+            stopDisabled={view.ended !== null}
+          />
+        )}
       </div>
     </div>
   )

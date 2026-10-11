@@ -309,7 +309,8 @@ function errorsOf(raw: unknown): unknown {
  * mapping and exports the key function for it.
  */
 export interface TreePayload {
-  projects: readonly TreeProject[]
+  /** Mutable because `TreeProps.projects` is, and this is handed straight to it. */
+  projects: TreeProject[]
   /** Keyed by `taskKey` from `src/runindex.ts`: the three parts joined by NUL. */
   runs: Readonly<Record<string, RunRef>>
 }
@@ -369,6 +370,34 @@ export async function fetchPlan(runId: string, fetcher: typeof fetch = fetch): P
   const res = await fetcher(`${API}/runs/${encodeURIComponent(runId)}/plan`, { cache: "no-store" })
   if (!res.ok) return { status: "unreadable", path: "", why: `the server refused: ${res.status} ${await text(res)}` }
   return (await res.json()) as PlanSource
+}
+
+/**
+ * Starts a run on a task and answers the id everything else addresses it by.
+ *
+ * The tree deliberately has no start control - it picks the task and the centre
+ * column acts on it - so this is the centre's call. A task with no ref cannot
+ * be started at all: `run.ts` refuses rather than inventing one, and
+ * `canStart` in `Tree.tsx` is the check to make before offering it.
+ */
+export async function startRun(
+  task: { projectPath: string; featureFile: string; taskRef: string },
+  fetcher: typeof fetch = fetch,
+): Promise<string> {
+  const res = await fetcher(`${API}/runs`, {
+    method: "POST",
+    cache: "no-store",
+    body: JSON.stringify({ projectPath: task.projectPath, featureFile: task.featureFile, taskRef: task.taskRef }),
+  })
+  if (!res.ok) throw new Error(`the run could not be started: ${res.status} ${await text(res)}`)
+  const answer = (await res.json()) as { runId?: unknown }
+  // The id is what the stream, the plan and every action are keyed by, so a
+  // response without a usable one is a failure even at 201 - continuing would
+  // subscribe to `undefined` and show an empty log for a run that is spending.
+  if (typeof answer.runId !== "string" || answer.runId === "") {
+    throw new Error("the run was started but the server did not say what its id is")
+  }
+  return answer.runId
 }
 
 /** The actions, design §4.4. POST, never GET: see the header of `src/server.ts`. */

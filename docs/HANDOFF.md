@@ -656,6 +656,48 @@ died unexplained around then, that was the cause, not a crash. Kill by pid
 from the port (`lsof -ti:PORT`), never by command pattern, while other agents
 are running.
 
+### `bun run server` and `bun run ui` cannot talk to each other
+
+Vite proxies `/api` to 3100 and **deliberately does not set `changeOrigin`**
+(see the comment in `vite.config.ts`: rewriting `Host` would hide the browser's
+real one from the rebinding check). So the server receives `Host:
+localhost:5173`, which `allowedHosts` refuses with a 403 reading *"the Host
+header must be exactly 127.0.0.1:3100 or localhost:3100"* unless `dev` is on.
+`ORCH_DEV=1` is the switch and nothing in `package.json` set it, so the obvious
+two-terminal dev workflow failed at the first request with a message that
+sounds like a misconfigured reverse proxy.
+
+Use **`bun run server:dev`** (added 2026-10-11) beside `bun run ui`. Observed
+in a real browser, not reasoned about: the first screenshot of the wired shell
+showed that 403 and nothing else.
+
+### The UI's read of a run lives in `src/ui/live.ts`, and it is a fold
+
+Not an accumulator. `GET /api/runs/:id/stream` replays from byte 0 on every
+connect with no replay-versus-live marker, so the client must be able to throw
+its state away, re-read and arrive at the same answer. Three consequences
+anyone touching it should not relearn the hard way:
+
+- A row's id is `runId#recordIndex:eventIndex`. One `cli` record classifies to
+  zero, one or several events, so the record index alone collides; a running
+  row counter is worse, because a filtered hook subtype yields no row and would
+  renumber everything after it on reconnect.
+- `subscribeRun` empties its buffer on every `open`. Appending across a
+  reconnect doubles every row **and** the cost total - the silent direction,
+  since the figures stay plausible and the ceiling is compared against twice
+  the truth.
+- `park` is called with the phase that **ran**, not the phase that waits, so
+  `run.ts:864` records `{phase:"plan", state:"waiting", reason:"gate"}`. `gate`
+  is the only `WaitReason` naming a phase in the ladder; reading the other
+  three the same way finishes a phase still outstanding.
+
+### A `let x: T | null = null` assigned only inside a closure narrows to `null`
+
+`tsc` narrows the declaration, not the closure's assignment, so `x?.foo` is an
+access on `never` and `x?.()` is "not callable". It cost four rounds of
+typecheck in `test/ui/useRun.test.tsx`. Use a holder - `const seen: { x: T |
+null } = { x: null }` - which keeps the declared type.
+
 ## Settled: decisions with non-obvious reasons
 
 | Decision | Why it is not the obvious thing |
