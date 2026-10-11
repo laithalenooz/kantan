@@ -620,6 +620,42 @@ If this is unified later, the fallbacks are load-bearing: happy-dom resolves a b
 a contrast test it should fail.
 
 
+### The tree cannot address a single route (open)
+
+`Tree.tsx` hands its caller a `TaskId` — `{projectPath, featureFile, taskRef}`.
+Every route in `src/server.ts` is keyed by **`runId`**: the stream, the plan,
+approve, feedback, answer, stop. And `TreeTaskRun` carries no run id, so a
+selection in the tree resolves to nothing the HTTP port will accept.
+
+Do **not** close this by adding `runId` to `TreeTaskRun`. The Tree is
+presentational and four agents hold its file; `runindex.ts` already owns the
+task-to-run mapping and already exports the key function for it. `GET
+/api/projects` returns the mapping beside the tree:
+
+    { projects: TreeProject[],
+      runs: Record<ReturnType<typeof taskKey>, { runId, costUsd, attempts }> }
+
+The shell joins them. `taskKey` separates with `NUL`, which survives JSON as
+`\u0000` and is the one byte a path cannot contain, so the key stays unambiguous
+over the wire.
+
+### `raise` has no route (open)
+
+`createRunner` exposes `raise(runId, budgetUsd)`; nothing serves it. It is the
+only action carrying a numeric argument, so it owns a 400 no other route has:
+a body that parses but whose number is absent, negative, zero, `NaN`, or a
+string. The CLI itself rejects a non-positive `--max-budget-usd` (probed,
+2026-10-11), so the route must not pass one through and let the spawn fail
+later, where the UI cannot attribute it.
+
+### `pkill -f "bun run src/server.ts"` is not yours alone
+
+An agent ran that pattern while probing on 2026-10-11 and it matches every
+agent's dev server on this machine, not just its own. If a real-browser check
+died unexplained around then, that was the cause, not a crash. Kill by pid
+from the port (`lsof -ti:PORT`), never by command pattern, while other agents
+are running.
+
 ## Settled: decisions with non-obvious reasons
 
 | Decision | Why it is not the obvious thing |
