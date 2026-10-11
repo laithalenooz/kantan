@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <!-- The page is light by decision and the direction contract locks one
+         theme. Declared here as well as in tokens.css so the browser knows
+         before any CSS arrives, which keeps the first paint from flashing a
+         dark default. There is no dark variant. -->
+    <meta name="color-scheme" content="only light" />
+
+    <title>kantan</title>
+
+    <!-- Fonts are self-hosted from src/ui/fonts and declared with @font-face in
+         tokens.css. Deliberately no Google Fonts <link>: it is a third-party
+         request on every load of a tool that binds to loopback precisely so it
+         talks to nothing. -->
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/ui/main.tsx"></script>
+  </body>
+</html>
