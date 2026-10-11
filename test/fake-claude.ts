@@ -141,9 +141,12 @@ function parseArgv(argv: string[]): Invocation {
       continue
     }
 
+    // Probed: the real CLI reports the whole token, not the stripped name, so
+    // `--verbose=yes` comes back as `unknown option '--verbose=yes'`. Giving a
+    // boolean flag a value therefore needs no branch of its own.
     die(
       1,
-      `error: unknown option '${name}'`,
+      `error: unknown option '${token}'`,
       `fake-claude: recognises only ${recognised()}`,
     )
   }

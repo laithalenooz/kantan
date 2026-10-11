@@ -741,6 +741,47 @@ git add -A && git commit -m "feat: spawn a phase with session, account, model an
 
 ---
 
+## Task 8b: Permissions per project
+
+**Files:** `src/permissions.ts`; tests alongside. Extends `Project` (see below).
+
+Per design §2.2. This is the safety story for anyone who is not the author, and today the design
+hardcodes `bypassPermissions`.
+
+Two new fields: `permissionMode` (`"acceptEdits" | "bypassPermissions"`, default `acceptEdits`)
+and `allowedTools` (`string[] | null`, default `null` meaning derive).
+
+`deriveAllowedTools(project)` returns:
+`Edit`, `Write`, `Read`, `Glob`, `Grep`, `Bash(git *)`, and `Bash(<first word of testCmd> *)`.
+
+**Adding these fields is the three-file change `HANDOFF.md` warns about:** `Project`, `FIELDS` and
+`validateProject` must move together or every existing store throws on load. This task is the
+first case, so do it properly and leave the pattern visible.
+
+Tests:
+
+- The default derives from `testCmd`: `"npm test"` yields `Bash(npm *)`, `"vendor/bin/pest"`
+  yields `Bash(vendor/bin/pest *)`, `"flutter test"` yields `Bash(flutter *)`.
+- An explicit `allowedTools` is passed through untouched, not merged with the derived set.
+  Merging would mean nobody can express "only these".
+- `bypassPermissions` omits `--allowedTools` entirely, since the flag is meaningless with it.
+- A `testCmd` of only whitespace is rejected by the store already; assert the derivation never
+  produces a bare `Bash(*)` from a blank first word, because that is blanket shell access arriving
+  by accident.
+- **`permission_denials` on the result event is surfaced, not swallowed.** A denied run must report
+  which tool was refused. Add a fixture or a fake-binary script that produces a non-empty
+  `permission_denials` and assert it reaches the caller. A denial that looks like a generic
+  failure is the confusing-failure case §2.2 exists to avoid.
+
+Then update Task 8's flag set to pass `--permission-mode` from the project and
+`--allowedTools` when the mode is `acceptEdits`.
+
+```bash
+git add -A && git commit -m "feat: per-project permission mode with a derived allowlist"
+```
+
+---
+
 ## Task 9: Sentinel detection
 
 **Files:**

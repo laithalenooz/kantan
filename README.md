@@ -6,7 +6,7 @@ A local web UI that drives the real `claude` CLI through one coding task at a ti
 plan, you approve, then implement and test until the tests pass.
 
 > **Status: early.** The design is finished and evidence-backed. The implementation is
-> five tasks of thirty-one, at 99 tests. If you came for working software, come back later. If you came
+> five tasks of thirty-two, at 99 tests. If you came for working software, come back later. If you came
 > for the hard-won facts about `claude -p`, those are in [`docs/probes/`](docs/probes/) and
 > they are the best part of this repo today.
 
@@ -49,6 +49,42 @@ Four nouns, three of which already exist on your disk:
 **The server runs your tests, not the agent.** It branches on the exit code and never on the
 agent reporting success. Verification from outside the agent cannot be talked out of.
 
+## Running it
+
+Not yet. The server and UI arrive in later tasks. When they do, this section is the contract:
+
+```bash
+git clone https://github.com/laithalenooz/kantan && cd kantan
+curl -fsSL https://bun.sh/install | bash     # standalone, not via npm
+bun install
+bun run check                                # typecheck and tests, to prove the clone works
+```
+
+Two things you will need: the `claude` CLI on your `PATH`, already logged in, and a repo with a
+`docs/features/<slug>.md` holding `- [ ] T1 ...` lines.
+
+Until then, `bun run check` works today and runs the full suite.
+
+## Permissions, and what kantan grants an agent
+
+An unattended agent needs real tool access: it runs its own tests and commits its work. So this
+is per-project configuration, and the default is **derived from what you already declared**
+rather than guessed:
+
+| Granted by default | Why |
+|---|---|
+| `Edit`, `Write`, `Read`, `Glob`, `Grep` | implementing and reading the repo |
+| `Bash(git *)` | the agent commits on the task branch |
+| `Bash(<your testCmd> *)` | TDD runs the suite it is writing against |
+
+Nothing else. No network, no package installs, no arbitrary shell. `bypassPermissions` is
+available if you want it on your own machine, but it is not the default, because a default that
+hands blanket shell access to a stranger's repo is the wrong default no matter how convenient it
+is for the author.
+
+A denied tool shows up in the UI by name, so the fix is a line of config rather than a debugging
+session.
+
 ## What we learned about `claude -p`, so you do not have to
 
 These cost real money to discover. Every script in [`docs/probes/`](docs/probes/) is
@@ -76,16 +112,14 @@ rerunnable, so you can check rather than trust.
 Claude Code `2.1.296`. kantan records `claude --version` in every run log for that reason. On
 a version bump, rerun the probes before trusting any of it.
 
-**Permissions.** An unattended agent needs broad tool access to run its own tests and commit.
-Decide for yourself what you grant it, per project, and prefer an explicit allowlist over
-blanket bypass on anything you would not hand to a stranger. Bind the server to `127.0.0.1`,
-and keep the `Host`, `Origin` and token checks: the endpoints feed arbitrary text to an agent
-with tool access.
+**The server is not a public service.** It binds `127.0.0.1` and checks `Host`, `Origin` and a
+per-launch token, because its endpoints feed arbitrary text to an agent with tool access. Do not
+expose it, and do not remove those checks to make a reverse proxy work.
 
 ## Design
 
 - [Design](docs/plans/2026-10-11-orchestrator-design.md), with every probed claim marked.
-- [Implementation plan](docs/plans/2026-10-11-orchestrator-implementation.md), 31 TDD tasks.
+- [Implementation plan](docs/plans/2026-10-11-orchestrator-implementation.md), 32 TDD tasks.
 
 ## Licence
 

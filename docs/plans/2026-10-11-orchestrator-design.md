@@ -71,7 +71,7 @@ down. Every line is one JSON object with a `kind` field:
 |---|---|---|
 | `header` | orchestrator, once, first | §3.1's ids, the profile, models, efforts, budget, task ref |
 | `cli` | orchestrator, verbatim | one untouched stream-json event, nested under `event` |
-| `phase` | orchestrator | a transition: `plan -> waiting(gate)`, `implement -> running` |
+| `phase` | orchestrator | a transition: `plan -> waiting(gate)`, `implement -> running`. The plan phase's record carries `planPath`, so the gate renders the file the prompt dictated rather than re-deriving it by convention |
 | `test` | orchestrator | exit code, failure signature, which attempt |
 | `human` | orchestrator | `approve`, or `feedback` with the text |
 | `end` | orchestrator, last | terminal state and total cost |
@@ -95,6 +95,8 @@ A project record:
   "testCmd": "npm test",
   "reportPath": "reports/junit.xml",
   "configDir": null,
+  "permissionMode": "acceptEdits",
+  "allowedTools": null,
   "budgetUsd": 50,
   "planModel": "claude-opus-5-5",
   "implementModel": "claude-sonnet-5-5",
@@ -132,7 +134,42 @@ A non-default profile runs the full flag set **(probed)**: `bypassPermissions` w
 file, returning `permission_denials: []` and exit 0. The same turn confirmed the `ORCH: done`
 sentinel arrives as the final assistant text.
 
-**Do not assume this holds for every profile.** A managed or enterprise profile can carry
+### 2.2 Permissions are per project, and the default is derived
+
+An unattended agent needs real tool access: it runs its own tests under TDD and commits its work.
+`--permission-mode acceptEdits` alone does not cover `Bash`, and in headless mode anything that
+would prompt is **auto-denied**, so an under-permissioned run fails confusingly rather than
+safely. Blanket `bypassPermissions` is the other extreme: fine on your own machine, wrong as a
+shipped default for someone pointing this at a repo they care about.
+
+So it is configuration, and the default is **derived from what the project already declares**:
+
+```json
+"permissionMode": "acceptEdits",
+"allowedTools": null
+```
+
+A `null` `allowedTools` means "compute it", which yields:
+
+| Granted | Why |
+|---|---|
+| `Edit`, `Write`, `Read`, `Glob`, `Grep` | implementing and reading the repo |
+| `Bash(git *)` | the agent commits its own work on the task branch |
+| `Bash(<first word of testCmd> *)` | TDD needs to run the suite it is writing against |
+
+Nothing else. No network, no package installs, no arbitrary shell. A project needing more lists
+it explicitly, and `permissionMode: "bypassPermissions"` remains available for someone who wants
+it on their own machine and says so.
+
+**Deriving beats defaulting here** because the two facts it needs, the repo and the test command,
+are already required fields. A hand-written default allowlist would be wrong for every project
+that does not run `npm test`.
+
+The cost is honest: a project whose tests shell out to something unexpected will hit a denial. The
+denial is **visible** in `permission_denials` on the result event, so surface it in the UI with
+the tool that was refused, and let the fix be one line of config rather than a debugging session.
+
+**Do not assume `bypassPermissions` holds for every profile.** A managed or enterprise profile can carry
 policy that restricts permission modes, models, or tools, so check `policy-limits.json` and run
 one real tool call before trusting a profile unattended. Treat a profile that refuses
 `bypassPermissions` as a supported case, not a bug.

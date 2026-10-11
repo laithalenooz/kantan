@@ -76,6 +76,6 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 | Path | What |
 |---|---|
 | `docs/plans/*-design.md` | The design. Claims marked `(probed)` were verified; scripts in `docs/probes/`. |
-| `docs/plans/*-implementation.md` | 31 TDD tasks. |
+| `docs/plans/*-implementation.md` | 32 TDD tasks. |
 | `docs/HANDOFF.md` | Decisions and deferrals a later task needs. Read before starting one. |
 | `docs/probes/` | Rerunnable scripts behind the `(probed)` claims. |
