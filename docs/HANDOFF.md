@@ -453,6 +453,26 @@ replay in the same change - two sources will drift.
 
 ---
 
+### The tree joins on `featureFile` by exact string — whoever wires `App.tsx`
+`TreeFeature.path` must be the **exact repo-relative string the run header records** as
+`featureFile`. If the join misses, a `done, unmerged` task reads as `open` and `canStart` returns
+true — a silent re-run of finished work, which the tree has no way to detect.
+
+Related: `Account.kind` is `"personal" | "work" | "unknown"` and required on every project.
+`unknown` renders a neutral chip saying neither, because a silent default of "personal" is the
+exact failure the chip exists to prevent. `Project` carries a `configDir`, not a word, so the
+reading is the caller's.
+
+### `StateGlyph` carries its own keyframes via the tree root — whoever reuses it
+`MOTION_CSS` is rendered once by `Tree`'s root, so a `StateGlyph` used outside a tree needs those
+two keyframes in scope or it silently stops animating.
+
+### `happy-dom`'s `register()` throws on a second call — any new DOM suite
+`bun test` runs every file in one process. Register only if the slot is free and `unregister()`
+only if you took it, or your suite pulls the document out from under the others depending on file
+order. `test/ui/Tree.test.tsx` has the pattern.
+
+
 ## Settled: decisions with non-obvious reasons
 
 | Decision | Why it is not the obvious thing |
