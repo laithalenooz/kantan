@@ -220,6 +220,28 @@ forces the open decision (assign refs, or refuse) rather than hiding it.
 It resumes the plan session and re-dictates that path, so handing it a freshly derived path would
 point the agent at a file the gate is not rendering.
 
+### Register routes in `ROUTES`, never in `Bun.serve` — Tasks 17 and 18
+`Bun.serve({ routes })` matches **before** the `fetch` fallback, so a route registered there never
+meets the guard chain. `src/server.ts` uses one `fetch` handler: Host, then Origin, then token,
+then dispatch. A loop over `ROUTES` asserts all three guards for every registered key, so your
+routes are covered the moment you add an entry — and `TOKEN_EXEMPT` is asserted to be *exactly*
+`["GET /", "GET /api/session"]`, so widening it fails a test first.
+
+Dispatch is exact `METHOD /path` with no percent-decoding or trailing-slash normalisation. Task
+17's `:id` route needs a matcher that runs **after** the guards, and a pattern must never make a
+route token-exempt. `RouteHandler` and `RouteContext` are exported; do not invent your own.
+
+### `GET` must have no side effects — Tasks 17, 18 and every UI task
+`SameSite=Strict` ignores **ports**, so a page on any other localhost port is same-site. Its
+no-cors GETs (`img`, `script`, navigation) carry the auth cookie and send no `Origin`. Actions
+must be `POST`. A convenience GET that starts a run is reachable from any other local page.
+
+### Four security claims are spec-level, not observed — whoever tests with a real browser
+No real browser was involved in Task 16's suite. These are taken from the spec: browsers always
+send `Origin` on non-GET/HEAD; browsers lowercase the host; `SameSite=Strict` semantics;
+`EventSource` cannot send custom headers. **If any is wrong, the GET/HEAD Origin exemption is the
+row that bites.** Worth one real-browser check during Task 25 or 26.
+
 ### A run has TWO session ids and using the wrong one fails silently — Task 13
 `runId` names the run. `planSessionId` and `implementSessionId` are separate conversations, and
 `--session-id` takes a UUID so neither can be derived from `runId`. Gate feedback resumes the

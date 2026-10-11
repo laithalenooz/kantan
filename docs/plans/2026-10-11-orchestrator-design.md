@@ -605,6 +605,34 @@ localhost port, and DNS rebinding defeats the naive assumption. Required:
 - Reject any POST whose `Origin` is not the app's own.
 - Mint a token per launch and require it on every request.
 
+**The obvious way to write the `Host` check is a vulnerability (probed).** In Bun, `req.url` is
+built *from the `Host` header*, and the URL parser canonicalizes it:
+
+| `Host` sent | `req.url` becomes |
+|---|---|
+| `2130706433:35645` | `http://127.0.0.1:35645/...` |
+| `evil.example.com` | `http://evil.example.com/...` |
+| not a valid authority | **relative**, so `new URL(req.url)` throws |
+
+So a check against `new URL(req.url).host` **accepts the decimal-IP bypass**, because the parser
+turns `2130706433` into `127.0.0.1` before the allowlist sees it. And an invalid authority makes a
+URL-parsing dispatcher answer **500**. Read the **raw header**, byte-exact against an allowlist,
+**before any URL parsing**.
+
+Match exactly. A `startsWith` accepts `127.0.0.1.evil.com`, an `endsWith` accepts
+`localhost.evil.com`, a substring check accepts `evil.com:3100#127.0.0.1:3100`. An absent `Host`
+is refused, not treated as local. `0.0.0.0` is refused despite Linux routing it to loopback, and a
+trailing dot (`localhost.`) is a separate browser origin with separate cookies.
+
+**`GET` handlers must stay side-effect-free.** `SameSite=Strict` ignores ports, so a page on any
+other localhost port is **same-site**: its no-cors GETs — an `img`, a `script`, a navigation —
+carry the cookie and send no `Origin`. Every action is therefore a `POST`, and a convenience GET
+that started a run would be reachable from any other local page.
+
+**Register routes in one place.** `Bun.serve({ routes })` matches *before* the `fetch` fallback, so
+a route registered there never meets the guard chain. One `fetch` handler, guards first, then
+dispatch.
+
 **The token travels in a `SameSite=Strict` cookie, not a header.** `EventSource`, the browser's
 SSE client, cannot send custom headers, so a header-only token would break the run stream
 outright. The cookie is set on page load.
