@@ -68,6 +68,7 @@ import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore }
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react"
 import Markdown from "react-markdown"
 import type { Components } from "react-markdown"
+import remarkGfm from "remark-gfm"
 
 /* -------------------------------------------------------------------------- */
 /* Props                                                                       */
@@ -112,9 +113,20 @@ export interface GateShape {
   planDurationMs?: number
   /** Spend so far on this run. */
   costUsd?: number
-  onApprove: () => void
-  /** Resumes the planning conversation with the human's words. */
-  onFeedback: (text: string) => void
+  /**
+   * Accepted the plan.
+   *
+   * May return a promise, and **rejecting is how a refusal is reported**: the
+   * card puts the controls back and shows the rejection's message. The server
+   * refuses with `busy`, `dirty`, `wrong-state` or `unknown-run`, and answers
+   * 503 while no machine is wired, so this is the normal path and not an edge.
+   */
+  onApprove: () => unknown
+  /**
+   * Resumes the planning conversation with the human's words, verbatim.
+   * Rejects to report a refusal, as `onApprove` does; the draft is kept.
+   */
+  onFeedback: (text: string) => unknown
 }
 
 /**
@@ -145,7 +157,11 @@ export interface QuestionShape {
   question: string
   /** Preformatted, e.g. "asked at 18:22 · 9 min ago". The clock is the shell's. */
   askedAt?: string
-  onAnswer: (text: string) => void
+  /**
+   * Sends the human's words back into the conversation that asked, verbatim.
+   * Rejects to report a refusal, as the gate's actions do; the draft is kept.
+   */
+  onAnswer: (text: string) => unknown
   onApprove?: never
   onFeedback?: never
 }
@@ -304,6 +320,18 @@ function Spinner({ className }: { className?: string }) {
  * mislead. Everything else keeps react-markdown's own element, styled by the
  * `.kg-prose` rules below.
  */
+/**
+ * GitHub-flavoured markdown, because the plans this renders have tables in them.
+ *
+ * Measured rather than assumed: this repository's own plan documents carry 127
+ * table rows and a task list between them, and the plan prompt tells the agent
+ * the file is the whole handoff — so a plan that renders its steps as pipe soup
+ * is the likely case, not the exotic one. GFM adds tables, task lists,
+ * strikethrough and autolinks. It does **not** enable raw HTML, so the safety
+ * story above is unchanged.
+ */
+const PROSE_PLUGINS = [remarkGfm]
+
 const PROSE_COMPONENTS: Components = {
   /* Never fetched. The alt text and the URL are shown as text so the human can
    * see what the plan pointed at without the page requesting it. */
@@ -325,6 +353,15 @@ const PROSE_COMPONENTS: Components = {
     ) : (
       <span className="kg-inert">{children}</span>
     ),
+}
+
+/** The plan and the question go through the same pipeline: both are agent text. */
+function AgentProse({ children }: { children: string }) {
+  return (
+    <Markdown remarkPlugins={PROSE_PLUGINS} components={PROSE_COMPONENTS}>
+      {children}
+    </Markdown>
+  )
 }
 
 /* -------------------------------------------------------------------------- */
@@ -406,6 +443,7 @@ const GATE_CSS = `
   --kg-indigo-deep: var(--color-indigo-deep, #4b4bc8);
   --kg-indigo-deeper: var(--color-indigo-deeper, #3a3aa8);
   --kg-indigo-tint: var(--color-indigo-tint, #dcdcf6);
+  --kg-fail: var(--color-fail, #d92d3a);
 
   /* The card and the composer are white in the artboard; the token layer names
      no white, so this is the one surface colour declared here outright. */
@@ -524,6 +562,11 @@ const GATE_CSS = `
   color: var(--kg-muted-700);
   text-wrap: pretty;
 }
+.kg-lede code {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 13.5px; background-color: var(--kg-panel-3);
+  border-radius: 6px; padding: 1px 5px;
+}
 .kg-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
 .kg-chip {
   padding: 6px 10px; border-radius: 999px;
@@ -564,35 +607,49 @@ const GATE_CSS = `
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 13px; line-height: 1.65; color: #272930;
 }
 .kg-prose pre code { background: none; border: 0; padding: 0; font-size: inherit; }
+/* The marker is positioned, never a grid or flex column. Markdown hands a list
+   item a mix of text, <code> and <strong>, and each of those would become its
+   own column in a grid: the artboard could use one because its content was a
+   single hand-written <span>. The symptom is a word per line. */
 .kg-prose ol {
   list-style: none; counter-reset: kgs; margin: 0 0 14px; padding: 0;
   display: flex; flex-direction: column; gap: 10px;
 }
-.kg-prose ol > li {
-  counter-increment: kgs;
-  display: grid; grid-template-columns: 28px minmax(0,1fr); gap: 12px; align-items: baseline;
-}
+.kg-prose ol > li { counter-increment: kgs; position: relative; padding-left: 40px; min-height: 26px; }
 .kg-prose ol > li::before {
   content: counter(kgs);
+  position: absolute; left: 0; top: 0;
   display: grid; place-items: center;
   width: 26px; height: 26px; border-radius: 999px;
   background-color: var(--kg-ink); color: var(--kg-paper);
-  font-size: 12.5px; font-weight: 600; transform: translateY(-1px);
+  font-size: 12.5px; font-weight: 600;
 }
-.kg-prose ul { margin: 0 0 14px; padding: 0 0 0 4px; list-style: none; }
-.kg-prose ul > li {
-  display: grid; grid-template-columns: 18px minmax(0,1fr); gap: 8px; margin-bottom: 8px;
-}
+.kg-prose ul { margin: 0 0 14px; padding: 0; list-style: none; }
+.kg-prose ul > li { position: relative; padding-left: 18px; margin-bottom: 8px; }
 .kg-prose ul > li::before {
-  content: ""; width: 6px; height: 6px; border-radius: 50%;
-  background-color: var(--kg-muted-300); margin-top: 11px;
+  content: ""; position: absolute; left: 2px; top: 11px;
+  width: 6px; height: 6px; border-radius: 50%;
+  background-color: var(--kg-muted-300);
 }
+.kg-prose li > ul, .kg-prose li > ol { margin-top: 8px; }
 .kg-prose strong { font-weight: 620; color: var(--kg-ink); }
 .kg-prose blockquote {
   margin: 16px 0; padding: 2px 0 2px 16px;
   border-left: 2px solid var(--kg-edge-strong); color: var(--kg-muted-700);
 }
-.kg-prose table { display: block; overflow-x: auto; max-width: 100%; }
+.kg-prose table {
+  display: block; overflow-x: auto; max-width: 100%;
+  border-collapse: collapse; margin: 0 0 16px; font-size: 14px;
+}
+.kg-prose th, .kg-prose td {
+  border: 1px solid var(--kg-edge); padding: 7px 10px; text-align: left; vertical-align: top;
+}
+.kg-prose th { background-color: var(--kg-panel-3); font-weight: 620; }
+/* A task list is a list of boxes, not a list of bullets. */
+.kg-prose li:has(> input[type="checkbox"]) { padding-left: 0; }
+.kg-prose li:has(> input[type="checkbox"])::before { content: none; }
+.kg-prose li > input[type="checkbox"] { margin: 0 8px 0 0; accent-color: var(--kg-ink); }
+.kg-prose del { color: var(--kg-muted-500); }
 .kg-prose a { color: var(--kg-indigo-deep); overflow-wrap: anywhere; }
 .kg-prose a:hover { color: var(--kg-indigo-deeper); }
 .kg-prose img { max-width: 100%; }
@@ -629,6 +686,10 @@ const GATE_CSS = `
   display: flex; flex-direction: column; gap: 6px;
 }
 .kg-files-list li { overflow-wrap: anywhere; }
+/* display:flex on a class outranks the user agent's [hidden] rule, so the
+   collapsed list rendered in full with its toggle still saying "closed".
+   Caught by a screenshot, not by a test that only read the attribute. */
+.kg-files-list[hidden] { display: none; }
 
 /* --- the actions bar ---------------------------------------------------- */
 
@@ -676,6 +737,16 @@ const GATE_CSS = `
   background-color: rgba(255,255,255,.14); font-size: 12px; font-weight: 500;
 }
 .kg-approve:disabled .kg-kbd { background-color: rgba(17,18,22,.06); }
+.kg-refused {
+  flex: 1 1 100%;
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 10px 12px; border-radius: 12px;
+  background-color: var(--kg-paper); border: 1px solid var(--kg-fail);
+  color: var(--kg-fail); font-size: 13.5px; line-height: 1.5;
+}
+.kg-refused svg { width: 16px; height: 16px; flex: none; margin-top: 1px; }
+.kg-refused strong { font-weight: 620; }
+.kg-refused span { min-width: 0; overflow-wrap: anywhere; }
 .kg-settled {
   flex: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; min-height: 56px;
 }
@@ -739,10 +810,18 @@ const GATE_CSS = `
 }
 .kg-bubble pre code { background: none; border: 0; padding: 0; }
 .kg-bubble ul, .kg-bubble ol { margin: 0 0 12px; padding: 0; list-style: none; }
-.kg-bubble li { display: grid; grid-template-columns: 18px minmax(0,1fr); gap: 8px; margin-bottom: 8px; }
+.kg-bubble ol { counter-reset: kgq; }
+.kg-bubble li { position: relative; padding-left: 18px; margin-bottom: 8px; }
 .kg-bubble li::before {
-  content: ""; width: 6px; height: 6px; border-radius: 50%;
-  background-color: var(--kg-indigo); margin-top: 10px;
+  content: ""; position: absolute; left: 0; top: 10px;
+  width: 6px; height: 6px; border-radius: 50%;
+  background-color: var(--kg-indigo);
+}
+.kg-bubble ol > li { counter-increment: kgq; padding-left: 22px; }
+.kg-bubble ol > li::before {
+  content: counter(kgq) ".";
+  top: 0; left: 0; width: auto; height: auto; border-radius: 0;
+  background: none; color: var(--kg-indigo-deeper); font-weight: 620; font-size: 13.5px;
 }
 .kg-bubble strong { font-weight: 620; color: #17174a; }
 .kg-bubble a { color: var(--kg-indigo-deep); overflow-wrap: anywhere; }
@@ -819,6 +898,27 @@ const GATE_CSS = `
 
 type Settled = null | "approved" | "sent-back"
 
+/**
+ * What to show when an action does not land.
+ *
+ * `src/server.ts` answers an approve or a feedback with a tagged refusal —
+ * `busy`, `dirty`, `wrong-state`, `unknown-run`, or a 503 while no machine is
+ * wired — and each carries a message written for a human. None of the artboards
+ * draws this state, because they draw a run that behaves. A card that kept
+ * saying "Approved. A fresh agent is implementing the plan." after the server
+ * said no would be lying about the one decision this screen exists to take, so
+ * the handlers may return a promise and a rejection puts the controls back.
+ */
+function describeRefusal(err: unknown): string {
+  if (err instanceof Error && err.message.trim() !== "") return err.message
+  if (typeof err === "string" && err.trim() !== "") return err
+  return "The server refused it and did not say why. The run record may have more."
+}
+
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return typeof value === "object" && value !== null && typeof (value as PromiseLike<unknown>).then === "function"
+}
+
 export function Gate(props: GateProps) {
   const reduce = useReducedMotion()
   const ids = useId()
@@ -849,12 +949,20 @@ export function Gate(props: GateProps) {
           props.plan.status === "undictated" ? "" : props.plan.path
         }\u0000${props.plan.status === "loaded" ? props.plan.markdown : props.plan.status === "unreadable" ? props.plan.why : ""}`
       : `question\u0000${props.waitId}\u0000${props.phase}\u0000${props.question}`
+  const [refused, setRefused] = useState<string | null>(null)
+  const acted = useRef(false)
+  /* Bumped whenever the card is handed a new park, so a promise from the
+   * previous one cannot come back and undo this one's state. */
+  const generation = useRef(0)
   const [seen, setSeen] = useState(signature)
   if (seen !== signature) {
     setSeen(signature)
     setSettled(null)
+    setRefused(null)
     setReply("")
     setAnswer("")
+    acted.current = false
+    generation.current += 1
   }
   const replyRef = useRef<HTMLTextAreaElement | null>(null)
   const cardRef = useRef<HTMLDivElement | null>(null)
@@ -862,27 +970,58 @@ export function Gate(props: GateProps) {
 
   const canApprove = props.kind === "gate" && props.plan.status === "loaded" && settled === null
 
+  /**
+   * One action, once.
+   *
+   * The latch is a ref rather than the `settled` state because a listener
+   * registered by an effect outlives the render that queued the state change:
+   * a second chord arriving in the same tick would read the old `settled` and
+   * fire again. A ref is updated the moment the first one is accepted.
+   */
+  const fire = useCallback((optimistic: Settled, action: () => unknown) => {
+    if (acted.current) return
+    acted.current = true
+    const token = generation.current
+    setSettled(optimistic)
+    setRefused(null)
+    const undo = (err: unknown) => {
+      /* The card has moved on to another park; this refusal is about a decision
+       * that is no longer on screen, and applying it would wipe the new one. */
+      if (generation.current !== token) return
+      acted.current = false
+      setSettled(null)
+      setRefused(describeRefusal(err))
+    }
+    try {
+      const result = action()
+      if (isPromiseLike(result)) void result.then(undefined, undo)
+    } catch (err) {
+      undo(err)
+    }
+  }, [])
+
   const approve = useCallback(() => {
-    if (props.kind !== "gate" || props.plan.status !== "loaded" || settled !== null) return
-    setSettled("approved")
-    props.onApprove()
-  }, [props, settled])
+    if (props.kind !== "gate" || props.plan.status !== "loaded") return
+    const act = props.onApprove
+    fire("approved", act)
+  }, [props, fire])
 
   const sendBack = useCallback(() => {
-    if (props.kind !== "gate" || settled !== null) return
+    if (props.kind !== "gate") return
     if (reply.trim() === "") return
-    setSettled("sent-back")
+    const act = props.onFeedback
     /* Verbatim. The human's words are the next turn of a conversation, so
-     * trimming or reflowing them would edit what the agent reads. */
-    props.onFeedback(reply)
-  }, [props, reply, settled])
+     * trimming or reflowing them would edit what the agent reads. The draft is
+     * also kept in state, so a refusal hands it back rather than losing it. */
+    fire("sent-back", () => act(reply))
+  }, [props, reply, fire])
 
   const sendAnswer = useCallback(() => {
-    if (props.kind !== "question" || settled !== null) return
+    if (props.kind !== "question") return
     if (answer.trim() === "") return
-    setSettled("sent-back")
-    props.onAnswer(answer)
-  }, [props, answer, settled])
+    const act = props.onAnswer
+    fire("sent-back", () => act(answer))
+  }, [props, answer, fire])
 
   /**
    * ⌘↵ / Ctrl+↵ approves — and must never do so while the human is writing an
@@ -904,9 +1043,14 @@ export function Gate(props: GateProps) {
   useEffect(() => {
     if (!canApprove) return
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      /* Something nearer the keystroke already acted on it: a dialog, or the
+       * app-wide shortcuts. Two handlers for one chord is one too many. */
+      if (event.defaultPrevented) return
+      if (event.repeat || event.isComposing) return
       if (event.key !== "Enter") return
       if (!(event.metaKey || event.ctrlKey)) return
       if (event.altKey || event.shiftKey) return
+
       const target = event.target
       if (target === replyRef.current) {
         if (reply.trim() === "") return
@@ -914,6 +1058,11 @@ export function Gate(props: GateProps) {
         sendBack()
         return
       }
+      /* A draft in the reply box is an objection in progress, and approving
+       * would implement the plan it objects to and throw the words away. The
+       * chord does nothing while one exists; Send back is a tab away, and so is
+       * clearing the box. Refusing costs a click, approving costs a run. */
+      if (reply.trim() !== "") return
       if (target instanceof HTMLElement) {
         const tag = target.tagName
         if (target.isContentEditable || tag === "TEXTAREA" || tag === "INPUT" || tag === "SELECT") return
@@ -990,7 +1139,7 @@ export function Gate(props: GateProps) {
         {/* The agent's own words, rendered inert: no raw HTML, no fetched
             images, no live `javascript:` links. */}
         <div className={`kg-bubble${reduce ? "" : " kg-pop"}`}>
-          <Markdown components={PROSE_COMPONENTS}>{props.question}</Markdown>
+          <AgentProse>{props.question}</AgentProse>
         </div>
 
         {settled === null ? (
@@ -1000,6 +1149,7 @@ export function Gate(props: GateProps) {
               <span>{nothing}</span>
             </p>
             <div className="kg-composer">
+              {refused !== null ? <Refusal did="Not sent." message={refused} /> : null}
               <label className="kg-composer-label" htmlFor={`kg-answer-${ids}`}>
                 Your answer
               </label>
@@ -1107,7 +1257,7 @@ export function Gate(props: GateProps) {
 
         {plan.status === "loaded" ? (
           <article className="kg-prose" data-plan-path={plan.path}>
-            <Markdown components={PROSE_COMPONENTS}>{plan.markdown}</Markdown>
+            <AgentProse>{plan.markdown}</AgentProse>
           </article>
         ) : (
           <p className="kg-missing">
@@ -1136,6 +1286,7 @@ export function Gate(props: GateProps) {
         ) : null}
 
         <div className="kg-actions">
+          {refused !== null ? <Refusal did="Not done." message={refused} /> : null}
           {settled === null ? (
             <>
               <div className="kg-reply">
@@ -1187,6 +1338,18 @@ export function Gate(props: GateProps) {
         </div>
       </div>
     </section>
+  )
+}
+
+/** What the server said when it would not take the action. */
+function Refusal({ message, did }: { message: string; did: string }) {
+  return (
+    <p className="kg-refused" role="alert">
+      <AlertIcon />
+      <span>
+        <strong>{did}</strong> {message}
+      </span>
+    </p>
   )
 }
 

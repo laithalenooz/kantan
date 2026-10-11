@@ -513,9 +513,15 @@ describe("the plan comes from the path the run log recorded", () => {
     const panel = host.querySelector(`#${CSS.escape(panelId)}`)
     expect(panel?.hasAttribute("hidden")).toBe(true)
 
+    /* The attribute is not the behaviour: `display: flex` on the list's own
+       class outranks the user agent's [hidden] rule, and the collapsed list
+       rendered in full under a toggle that said it was closed. */
+    expect(getComputedStyle(panel as Element).display).toBe("none")
+
     await click(toggle)
     expect(toggle.getAttribute("aria-expanded")).toBe("true")
     expect(panel?.hasAttribute("hidden")).toBe(false)
+    expect(getComputedStyle(panel as Element).display).not.toBe("none")
     expect(Array.from(panel?.querySelectorAll("li") ?? []).map((li) => li.textContent)).toEqual([
       "src/importer/manifest.ts",
       "src/importer/writer.ts",
@@ -654,6 +660,51 @@ describe("the approve chord", () => {
     expect(calls).toEqual([])
   })
 
+  test("a draft in the reply box stops the chord approving from anywhere", async () => {
+    /* The hole this closes: the first version only refused when the chord
+     * arrived *in* the reply box. Type an objection, tab to Send back or click
+     * into the plan, press the chord, and it approved the plan being objected
+     * to and threw the words away. */
+    for (const where of ["body", "send-back", "files-toggle"] as const) {
+      const calls: string[] = []
+      const { host } = await render(
+        <Gate
+          {...gateProps({
+            onApprove: () => calls.push("approve"),
+            onFeedback: (text: string) => calls.push(`feedback:${text}`),
+          })}
+        />,
+      )
+      await type(textareaNamed(host, /reply to the draft/i), "Not this way.")
+      const target =
+        where === "body"
+          ? host.ownerDocument.body
+          : where === "send-back"
+            ? buttonNamed(host, /send back/i)
+            : buttonNamed(host, /planning also read/i)
+      await pressSubmitChord(target)
+      expect(calls).toEqual([])
+      expect(textareaNamed(host, /reply to the draft/i).value).toBe("Not this way.")
+    }
+  })
+
+  test("a chord something nearer already handled is left alone", async () => {
+    const calls: string[] = []
+    const { host } = await render(<Gate {...gateProps({ onApprove: () => calls.push("approve") })} />)
+    const swallow = (event: Event) => event.preventDefault()
+    document.addEventListener("keydown", swallow, true)
+    try {
+      await pressSubmitChord(host.ownerDocument.body)
+      expect(calls).toEqual([])
+    } finally {
+      document.removeEventListener("keydown", swallow, true)
+    }
+    /* And still live once the other handler is gone, so this proves a guard
+     * rather than a broken listener. */
+    await pressSubmitChord(host.ownerDocument.body)
+    expect(calls).toEqual(["approve"])
+  })
+
   test("the chord is not live when there is no readable plan", async () => {
     const calls: string[] = []
     const { host } = await render(
@@ -674,6 +725,113 @@ describe("the approve chord", () => {
 
     const { host: noPlan } = await render(<Gate {...gateProps({ plan: { status: "undictated" } })} />)
     expect(buttonNamed(noPlan, /approve/i).hasAttribute("aria-keyshortcuts")).toBe(false)
+  })
+})
+
+describe("an action the server refuses", () => {
+  test("a refused approve puts the button back and says what happened", async () => {
+    let attempts = 0
+    const { host } = await render(
+      <Gate
+        {...gateProps({
+          onApprove: () => {
+            attempts += 1
+            return Promise.reject(new Error("Another run holds this project. Stop it first."))
+          },
+        })}
+      />,
+    )
+    await click(buttonNamed(host, /approve/i))
+    /* The promise rejects in a microtask; let React flush its state. */
+    await act(async () => {})
+
+    expect(attempts).toBe(1)
+    expect(host.textContent).not.toContain("A fresh agent is implementing")
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("Another run holds this project")
+    expect(buttonNamed(host, /approve/i).disabled).toBe(false)
+
+    /* Tried again for real: the one-shot latch has to be released too, not just
+     * the rendered state, or the button comes back and does nothing. */
+    await click(buttonNamed(host, /approve/i))
+    await act(async () => {})
+    expect(attempts).toBe(2)
+    expect(host.querySelector('[role="alert"]')).not.toBeNull()
+  })
+
+  test("a refused reply hands the words back instead of losing them", async () => {
+    const { host } = await render(
+      <Gate {...gateProps({ onFeedback: () => Promise.reject(new Error("This run is not at a gate.")) })} />,
+    )
+    const typed = "Keep unknown fields under row.meta."
+    await type(textareaNamed(host, /reply to the draft/i), typed)
+    await click(buttonNamed(host, /send back/i))
+    await act(async () => {})
+
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("not at a gate")
+    expect(textareaNamed(host, /reply to the draft/i).value).toBe(typed)
+    expect(buttonNamed(host, /send back/i).disabled).toBe(false)
+  })
+
+  test("a refused answer does the same in the question shape", async () => {
+    const { host } = await render(
+      <Gate {...questionProps({ onAnswer: () => Promise.reject(new Error("No route accepts an answer yet.")) })} />,
+    )
+    await type(textareaNamed(host, /your answer/i), "Persist it.")
+    await click(buttonNamed(host, /send answer/i))
+    await act(async () => {})
+
+    expect(host.textContent).not.toContain("Planning resumed")
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("No route accepts an answer yet")
+    expect(textareaNamed(host, /your answer/i).value).toBe("Persist it.")
+  })
+
+  test("a handler that throws outright is treated the same as a rejection", async () => {
+    const { host } = await render(
+      <Gate
+        {...gateProps({
+          onApprove: () => {
+            throw new Error("boom")
+          },
+        })}
+      />,
+    )
+    await click(buttonNamed(host, /approve/i))
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("boom")
+    expect(buttonNamed(host, /approve/i).disabled).toBe(false)
+  })
+
+  test("a refusal that arrives after the run has moved on is dropped", async () => {
+    /* Otherwise a slow rejection from the previous park wipes the state of the
+     * one now on screen and shows a message about a decision nobody can see. */
+    let refuse: (err: unknown) => void = () => {}
+    const slow = new Promise<never>((_resolve, reject) => {
+      refuse = reject
+    })
+    const { host, rerender } = await render(<Gate {...gateProps({ onApprove: () => slow })} />)
+    await click(buttonNamed(host, /approve/i))
+    expect(host.textContent).toContain("A fresh agent is implementing")
+
+    await rerender(<Gate {...questionProps()} />)
+    await act(async () => {
+      refuse(new Error("Stale: that gate is gone."))
+      await Promise.resolve()
+    })
+
+    expect(host.querySelector('[role="alert"]')).toBeNull()
+    expect(host.textContent).not.toContain("Stale: that gate is gone")
+    /* The question is still answerable. */
+    expect(textareaNamed(host, /your answer/i).value).toBe("")
+  })
+
+  test("the refusal message is legible against the bar it sits on", async () => {
+    const { host } = await render(<Gate {...gateProps({ onApprove: () => Promise.reject(new Error("Nope.")) })} />)
+    await click(buttonNamed(host, /approve/i))
+    await act(async () => {})
+    const alert = host.querySelector('[role="alert"]') as HTMLElement
+    const ink = parseColour(resolveVars(getComputedStyle(alert).color, alert))
+    const ground = groundBehind(alert)
+    expect(ink).not.toBeNull()
+    if (ink) expect(contrast(ink, ground.colour)).toBeGreaterThanOrEqual(4.5)
   })
 })
 
@@ -837,12 +995,18 @@ describe("the question shape exposes no way to approve", () => {
   })
 
   test("the type system refuses an approve handler on the question shape", () => {
-    /* Not a runtime assertion: `tsc --noEmit` fails if this line stops being an
-     * error, which is the only way to prove the shape cannot be wired up. */
-    const legal = <Gate {...questionProps()} />
-    expect(legal).toBeTruthy()
+    /* Not a runtime assertion. `tsc --noEmit` fails if a `@ts-expect-error`
+     * line stops erroring, which is the only way to prove the shape cannot be
+     * wired up at all.
+     *
+     * The twin below it carries identical props minus the one under test, with
+     * no directive. That is what keeps the proof honest: a `@ts-expect-error` is
+     * satisfied by *any* error on the line, so without a compiling twin this
+     * would also pass on a typo or a missing required field. */
+    const twin = <Gate kind="question" waitId="run-9#2" phase="plan" question="Which?" onAnswer={() => {}} />
+    expect(twin).toBeTruthy()
 
-    const refused = (
+    const noApprove = (
       // @ts-expect-error a question has nothing to approve, so it has no onApprove
       <Gate
         kind="question"
@@ -853,7 +1017,20 @@ describe("the question shape exposes no way to approve", () => {
         onApprove={() => {}}
       />
     )
-    expect(refused).toBeTruthy()
+    expect(noApprove).toBeTruthy()
+
+    const noFeedback = (
+      // @ts-expect-error feedback replies to a draft; a question has no draft to reply to
+      <Gate
+        kind="question"
+        waitId="run-9#2"
+        phase="plan"
+        question="Which?"
+        onAnswer={() => {}}
+        onFeedback={() => {}}
+      />
+    )
+    expect(noFeedback).toBeTruthy()
   })
 })
 
@@ -1113,6 +1290,39 @@ describe("the plan is untrusted content", () => {
     expect(host.textContent).toContain("[image: logo — https://example.com/tracker.png]")
   })
 
+  test("a list item with mixed inline content is not laid out in columns", async () => {
+    /* Markdown gives a list item a mix of text, <code> and <strong>. The
+       artboard's two-column grid worked because its content was one
+       hand-written <span>; applied here, every inline child became its own
+       column and the text rendered a character per line. The marker is
+       positioned instead, and this is the pin for it. */
+    const { host } = await render(
+      <Gate
+        {...gateProps({
+          plan: {
+            status: "loaded",
+            path: DICTATED_PATH,
+            markdown: "1. Write `map.test.ts` **first**, then run it.\n\n- A **bullet** with `code` in it.",
+          },
+        })}
+      />,
+    )
+    const items = Array.from(host.querySelectorAll("article li"))
+    expect(items.length).toBe(2)
+    for (const li of items) {
+      const display = getComputedStyle(li).display
+      expect(display === "grid" || display === "flex").toBe(false)
+    }
+
+    const { host: asked } = await render(
+      <Gate {...questionProps({ question: "Which?\n\n- **Memory.** Smaller, but a force-quit loses writes." })} />,
+    )
+    const bubbleItem = asked.querySelector(".kg-bubble li") as HTMLElement
+    const bubbleDisplay = getComputedStyle(bubbleItem).display
+    expect(bubbleDisplay === "grid" || bubbleDisplay === "flex").toBe(false)
+    expect(bubbleItem.textContent).toContain("Memory. Smaller, but a force-quit loses writes.")
+  })
+
   test("long unbroken strings wrap instead of overflowing", async () => {
     const { host } = await hostile()
     const prose = host.querySelector("article") as HTMLElement
@@ -1122,6 +1332,61 @@ describe("the plan is untrusted content", () => {
     )
     const pre = host.querySelector("pre")
     if (pre) expect(getComputedStyle(pre).overflowX).toBe("auto")
+  })
+
+  test("a table in the plan renders as a table, because plans here have tables", async () => {
+    const { host } = await render(
+      <Gate
+        {...gateProps({
+          plan: {
+            status: "loaded",
+            path: DICTATED_PATH,
+            markdown: ["| File | What |", "|---|---|", "| `map.ts` | the new mapper |"].join("\n"),
+          },
+        })}
+      />,
+    )
+    expect(host.querySelector("table")).not.toBeNull()
+    expect(Array.from(host.querySelectorAll("th")).map((th) => th.textContent)).toEqual(["File", "What"])
+    expect(host.querySelector("td code")?.textContent).toBe("map.ts")
+    /* And it scrolls on its own axis rather than widening the card. */
+    expect(getComputedStyle(host.querySelector("table") as Element).overflowX).toBe("auto")
+  })
+
+  test("a task list keeps its boxes, and they are not operable", async () => {
+    const { host } = await render(
+      <Gate
+        {...gateProps({
+          plan: {
+            status: "loaded",
+            path: DICTATED_PATH,
+            markdown: "- [x] Write the failing test\n- [ ] Make it pass",
+          },
+        })}
+      />,
+    )
+    const boxes = Array.from(host.querySelectorAll('input[type="checkbox"]'))
+    expect(boxes).toHaveLength(2)
+    /* A plan is a document, not a form: ticking a box here would record nothing
+     * and the orchestrator owns the real tick. */
+    for (const box of boxes) expect((box as HTMLInputElement).disabled).toBe(true)
+    expect(focusables(host).some((el) => el.tagName === "INPUT")).toBe(false)
+  })
+
+  test("GFM does not open the door to raw HTML", async () => {
+    const { host } = await render(
+      <Gate
+        {...gateProps({
+          plan: {
+            status: "loaded",
+            path: DICTATED_PATH,
+            markdown: "| A |\n|---|\n| <script>alert(1)</script> |",
+          },
+        })}
+      />,
+    )
+    expect(host.querySelector("script")).toBeNull()
+    expect(host.querySelector("td")?.textContent).toContain("<script>alert(1)</script>")
   })
 
   test("the question text goes through the same pipeline", async () => {
