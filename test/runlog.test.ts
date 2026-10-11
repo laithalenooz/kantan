@@ -43,6 +43,32 @@ test("the header carries every field needed to interpret and resume the run", as
   })
 })
 
+test("the header carries the feature file's bytes as a hash, taken at parse time", async () => {
+  const { path } = await scratch()
+  const log = await createRunLog(path, header())
+  await log.close()
+
+  const [first] = await collect(path)
+  expect(first).toMatchObject({ kind: "header", featureFileHash: FEATURE_HASH })
+})
+
+test("the feature file hash is readable from line one alone, without the rest of the log", async () => {
+  const { path } = await scratch()
+  const log = await createRunLog(path, header())
+  for (let i = 0; i < 400; i++) {
+    await log.appendCli(JSON.stringify({ type: "assistant", seq: i, text: "x".repeat(200) }))
+  }
+  await log.close()
+
+  // Design §5's mid-run-edit warning compares against the bytes a `readFeature`
+  // returned. A resumed run re-reads immediately before writing, so it has
+  // nothing of its own to compare against; line one is what survives the
+  // restart, and a resumed run must not have to read the whole log to find it.
+  const head = await firstBytes(path, 1024)
+  const lineOne = head.slice(0, head.indexOf("\n"))
+  expect(JSON.parse(lineOne)).toMatchObject({ featureFileHash: FEATURE_HASH })
+})
+
 test("the header does not carry implementSessionId, which does not exist yet", async () => {
   const { path } = await scratch()
   const log = await createRunLog(path, header())
@@ -469,6 +495,11 @@ test("appending to a closed log fails loudly", async () => {
 
 // --- Helpers ----------------------------------------------------------------
 
+/** SHA-256 of an empty feature file. Any stable digest of the bytes would do;
+ * what the log needs is that the writer and a later reader compute the same
+ * one. */
+const FEATURE_HASH = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
 function header(over: Partial<RunHeader> = {}): RunHeader {
   return {
     claudeVersion: "2.1.3",
@@ -482,9 +513,23 @@ function header(over: Partial<RunHeader> = {}): RunHeader {
     projectPath: "/repo",
     featureFile: "docs/features/run-log.md",
     taskRef: "T7",
+    featureFileHash: FEATURE_HASH,
     budgetUsd: 50,
     startedAt: "2026-10-11T09:00:00.000Z",
     ...over,
+  }
+}
+
+/** The log's first `n` bytes, decoded. Deliberately not the whole file: what
+ * the hash-on-line-one test pins is that a reader needs no more than this. */
+async function firstBytes(path: string, n: number): Promise<string> {
+  const fh = await open(path, "r")
+  try {
+    const buf = Buffer.allocUnsafe(n)
+    const { bytesRead } = await fh.read(buf, 0, n, 0)
+    return buf.toString("utf8", 0, bytesRead)
+  } finally {
+    await fh.close()
   }
 }
 

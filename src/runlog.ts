@@ -59,6 +59,22 @@ export interface RunHeader {
   projectPath: string
   featureFile: string
   taskRef: string
+  /**
+   * A hash of the feature file's bytes as the run parsed them.
+   *
+   * Design §5 promises a warning when a human edits the feature file mid-run,
+   * and `featurefile.ts`'s `tickTaskInFile` can only raise it by comparing
+   * against the bytes the `readFeature` it was handed returned. A resumed run
+   * re-reads the file immediately before writing, so it holds nothing older to
+   * compare against and the warning can never fire - which is exactly the
+   * server-restart case. This field is what survives the restart, and it is on
+   * line one so reading it costs one line rather than the whole log.
+   *
+   * Required, not optional, for the same reason as `profile`: an absent field
+   * cannot be told apart from a writer that did not record one, and a reader
+   * that cannot tell would have to treat "no hash" as "unchanged".
+   */
+  featureFileHash: string
   /** The ceiling this run was given. */
   budgetUsd: number
   /** Absolute, ISO 8601. */
