@@ -12,7 +12,7 @@ tested at **zero API cost**. Task 5 builds a fake `claude` binary that replays t
 |---|---|---|
 | `plan-success.jsonl` | 43 | A plan phase honouring the sentinel. Final line is exactly `ORCH: done`, the plan was written to the dictated path, and nothing was implemented. Captured on `claude-sonnet-5-5` at effort `high`. |
 | `ends-with-question.jsonl` | 30 | A turn that ends in a **question** and still exits `result/success`. `AskUserQuestion` does not exist in `-p`, so the agent asked in prose. **No sentinel.** This is why completion is never inferred from exit status. |
-| `budget-exhausted.jsonl` | 26 | `result/subtype = error_max_budget_usd`, `is_error: true`, and an **empty** `result` string. Captured with `--max-budget-usd 0.0001`. |
+| `budget-exhausted.jsonl` | 26 | `result/subtype = error_max_budget_usd`, `is_error: true`, and **no `result` key at all** (not an empty string: the field is absent). Captured with `--max-budget-usd 0.0001`. |
 
 ## What the parser must survive
 
@@ -26,7 +26,11 @@ Counted from these files, not imagined:
 | `assistant` | `text`, `tool_use` and `thinking` blocks. |
 | `user` | `tool_result` blocks, paired back by `tool_use_id`. |
 | `rate_limit_event` | Window utilization. |
-| `result/success`, `result/error_max_budget_usd` | Terminal. The error subtype outranks any sentinel. |
+| `result/success`, `result/error_max_budget_usd` | Terminal. The error subtype outranks any sentinel. **`result` is optional** — absent on the error event, so do not type it as `string`. |
+
+The error event also carries `errors`, `terminal_reason`, `stop_reason`, `permission_denials`,
+`result_index` and `queued_turn_count`. `result_index` and `queued_turn_count` imply a process can
+emit more than one result event, which matters for cost accounting.
 
 Tool-call paths run to **158 characters**, kept deliberately long so the UI's long-token wrapping
 has something real to wrap.

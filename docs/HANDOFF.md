@@ -18,6 +18,19 @@ Setting `process.env` inside a test body is a no-op. Any test that substitutes t
 it in the environment of a **fresh process**. `test/version.test.ts` and
 `test/fake-claude.test.ts`'s `claudeVersion()` test both do this; the pattern is worth copying.
 
+### The sentinel literals exist in two places and can drift — Task 13 or whoever notices
+`src/sentinel.ts` keeps `ORCH: done` and `ORCH: blocked` module-private, correctly, since its
+brief scoped it to one function. `src/prompts.ts` must emit the same literals. **Nothing currently
+makes them agree.** Export a shared constant from one side and import it in the other, with a test
+that the prompt contains exactly what the parser accepts. Until then a one-character edit to either
+breaks every run silently: the agent emits a sentinel the parser does not recognise, so every
+completed phase reads as a question.
+
+### A process can emit more than one `result` event — Task 14 (budget)
+The error event carries `result_index` and `queued_turn_count`. Cost accounting must take the
+**last** result of each process, which is what the existing cost note already implies but did not
+explain.
+
 ### Adding a field to `Project` is a three-file change — every later task
 `src/projects.ts` **rejects unknown fields**, on load and in `defaults()`. Any task adding a field
 must extend `Project`, `FIELDS` and `validateProject` **together**, or every load throws on the
@@ -139,7 +152,7 @@ replacement snippet; do not skip it. This repo is open source.
 |---|---|
 | Hook events are filtered for display but the run log stays **raw** | The log doubles as permanent history and replay source. Filtering on write would make it unreplayable against a future parser. |
 | `system/thinking_tokens` exists and is **not** hook noise | Found only by inspecting real captures. Easy to lose to a `startsWith("hook")` filter, which is why Task 6 uses an allowlist. |
-| `error_max_budget_usd` returns an **empty** `result` string | So the sentinel parser must tolerate empty text, and an error subtype outranks any sentinel. |
+| `error_max_budget_usd` carries **no `result` key at all** | Not an empty string: the field is absent. So `result` must be typed optional, the sentinel parser must never read text on an error event, and an error subtype outranks any sentinel. I originally recorded this as "empty string" because my check used `.get("result", "")`, which cannot distinguish absent from empty. Task 9 caught it. |
 | Cost resets per process, not per run | `--max-budget-usd` bounds one process. A resumed process reports only its own spend, which includes re-reading history. Sum the **last result of each process**; summing every result inside one process double-counts. |
 | The effort ladder stops at `xhigh`, not `max` | Anthropic's FrontierCode figures show Sonnet 5.5 scoring **lower at Max than at xhigh**. The top setting is worse, not just dearer. |
 | Escalating effort requires a respawn | `--effort` is spawn-time. `--resume` accepts a different one and keeps context (probed). |
