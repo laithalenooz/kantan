@@ -68,7 +68,7 @@ const ENUMERATION: Row[] = [
   {
     testCmd: "CI=1 npm test",
     grant: null,
-    why: "`Bash(CI=1 *)` grants nothing, and `Bash(npm *)` does not match the command as typed",
+    why: "`Bash(npm *)` does not match the command as typed, and `Bash(CI=1 *)` matches that prefix followed by anything - a blanket shell in disguise",
   },
   {
     testCmd: '"/home/me/my tests/run.sh" --ci',

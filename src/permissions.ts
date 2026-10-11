@@ -109,7 +109,12 @@ export function permissionArgs(project: Project): string[] {
  *   nothing in the output naming this field. A compound or env-prefixed
  *   command does exactly that: the leading word of `cd packages/api && npm
  *   test` is `cd`, and of `CI=1 npm test` is `CI=1`, so the rule grants
- *   something useless while the command that matters is denied.
+ *   something other than the suite while the suite is denied.
+ *
+ * The env-prefixed case lands on both: run through the CLI's own matcher,
+ * `Bash(npm *)` does not match `CI=1 npm test` at all, and `Bash(CI=1 *)`
+ * matches `CI=1` followed by **any** command - a blanket shell behind a
+ * harmless-looking prefix.
  *
  * Neither is worth guessing at, so those shapes throw. Refusing costs one
  * line of config and says which line; the two silent outcomes cost a repo or
@@ -137,7 +142,7 @@ function program(project: Project): string {
   if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) {
     refuse(
       project,
-      `it starts with the environment assignment ${JSON.stringify(word)}, so there is no rule that both grants the program and matches the command as typed`,
+      `it starts with the environment assignment ${JSON.stringify(word)}: a rule for the program after it would not match the command as typed, and Bash(${word} *) would match that assignment followed by any command at all`,
     )
   }
   if (!/^[A-Za-z0-9_./][A-Za-z0-9_.:+@/-]*$/.test(word)) {
