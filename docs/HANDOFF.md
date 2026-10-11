@@ -698,6 +698,20 @@ access on `never` and `x?.()` is "not callable". It cost four rounds of
 typecheck in `test/ui/useRun.test.tsx`. Use a holder - `const seen: { x: T |
 null } = { x: null }` - which keeps the declared type.
 
+### `GET /` serves a placeholder, so there is no single-process kantan (open)
+
+`INDEX_STUB` in `src/server.ts` still answers *"kantan is running. The UI
+arrives in a later task."* The UI has arrived; `vite build` writes `dist/` and
+nothing serves it. So the only way to run kantan is the two-terminal dev setup,
+which the README now says plainly rather than implying otherwise.
+
+Closing it means serving `dist/` from `GET /` with the cookie it already sets,
+and falling back to the stub when `dist/` is absent - a clone that has not been
+built must still start and say why, rather than 404ing on its own index. Note
+the asset routes have to sit **inside** `ROUTES`, not in `Bun.serve({routes})`:
+the module header explains that a route registered there is matched before the
+guard chain runs and would never meet it.
+
 ## Settled: decisions with non-obvious reasons
 
 | Decision | Why it is not the obvious thing |

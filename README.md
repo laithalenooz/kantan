@@ -51,8 +51,6 @@ agent reporting success. Verification from outside the agent cannot be talked ou
 
 ## Running it
 
-Not yet. The server and UI arrive in later tasks. When they do, this section is the contract:
-
 ```bash
 git clone https://github.com/laithalenooz/kantan && cd kantan
 curl -fsSL https://bun.sh/install | bash     # standalone, not via npm
@@ -60,10 +58,24 @@ bun install
 bun run check                                # typecheck and tests, to prove the clone works
 ```
 
-Two things you will need: the `claude` CLI on your `PATH`, already logged in, and a repo with a
-`docs/features/<slug>.md` holding `- [ ] T1 ...` lines.
+Then two terminals:
 
-Until then, `bun run check` works today and runs the full suite.
+```bash
+bun run server:dev                           # the orchestrator, on 127.0.0.1:3100
+bun run ui                                   # the interface, on 127.0.0.1:5173
+```
+
+Open <http://127.0.0.1:5173>. Use `server:dev`, not `server`: Vite proxies `/api` to 3100 and
+deliberately does **not** rewrite the `Host` header, because rewriting it would hide the browser's
+real one from the DNS-rebinding check. So the server sees `Host: localhost:5173` and refuses it
+unless `ORCH_DEV=1` has widened the allowed set, which is all `server:dev` does.
+
+Two things you will need: the `claude` CLI on your `PATH`, already logged in, and a repo with a
+`docs/features/<slug>.md` holding `- [ ] T1 ...` lines. Point kantan at the repo from the empty
+state and it will read the task file.
+
+**Not yet a single process.** `vite build` produces `dist/`, and the server does not serve it —
+`GET /` still answers a placeholder. Two terminals is the only supported way to run it today.
 
 ## Permissions, and what kantan grants an agent
 
