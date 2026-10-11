@@ -195,18 +195,25 @@ Run states: `running`, `waiting(gate | question | blocked | stalled)`, `done`, `
 ### 3.1 Process model
 
 **A run owns two session ids, not one.** Because plan and implement are two conversations
-(below), and `--session-id` takes a UUID so it cannot be derived from the run id by suffixing,
-the run log header records three ids:
+(below), and `--session-id` takes a UUID so it cannot be derived from the run id by suffixing:
 
-| Id | Scope |
-|---|---|
-| `runId` | the run itself: the JSONL filename, the UI, the log header |
-| `planSessionId` | the plan conversation. Gate feedback resumes **this** one |
-| `implementSessionId` | the implement conversation. Effort escalation resumes **this** one |
+| Id | Scope | Recorded in |
+|---|---|---|
+| `runId` | the run itself: the JSONL filename, the UI | the log `header` |
+| `planSessionId` | the plan conversation. Gate feedback resumes **this** one | the log `header` |
+| `implementSessionId` | the implement conversation. Effort escalation resumes **this** one | the **`phase` record**, not the header |
 
-`implementSessionId` is minted when the gate is approved, not at run start, so a run abandoned at
-the gate never has one. When `resumePlanSession` is true there is one conversation and
-`implementSessionId` is absent.
+**The implement session id is not in the header, and that is a correctness requirement rather
+than a convenience.** It is minted at gate approval, so the header is already written when it
+exists. The log is append-only: rewriting line one later shifts every byte offset a tailing
+reader has already passed, so `replay()`'s followers would re-read or mis-read. A permanently
+`null` header field would send readers to the `phase` record anyway while creating a second place
+a later task could write it.
+
+So **every `phase` record that spawns a process carries its own `sessionId`**, the plan phase
+included. That is also the only shape that can tell the truth: when `resumePlanSession` is true
+the implement phase runs in `planSessionId`, and a header field named `implementSessionId` would
+have to lie or be empty.
 
 The plan phase runs as its own process:
 

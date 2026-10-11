@@ -31,7 +31,13 @@ same mismatch found at Task 13 costs reopening finished work.
 | `testrun` | `runTests(project)` | Returns the raw outcome only. It deliberately does **not** compute a signature. |
 | `stall` | `failureSignature(outcome)` | Task 13 combines it with `testrun`. Three identical consecutive signatures mean escalate effort, not interrupt. |
 | `git` | repo guards, branch, lock | Branches from a **recorded base**, never from whatever is checked out. The dirty check applies to **new** runs only, never to resuming a run on its own branch. |
-| `runlog` | append, replay | `cli` payloads nest **byte-identically**. The header is written before `implementSessionId` exists. |
+| `runlog` | append, replay | `cli` payloads nest **byte-identically**, by splicing the raw stdout line — so `appendCli` takes the line **without** its terminator and refuses a trailing newline rather than trimming it. `implementSessionId` is **not** in the header; it rides `PhaseRecord.sessionId`, which must be written on every spawning phase. `replay({follow:true})` ends **only on abort**, never at `end`. |
+
+## A resource leak waiting for Task 18
+
+`replay({ follow: true })` never ends on its own, not even at the `end` record. **The SSE handler
+must abort on client disconnect**, or every closed tab leaves a poller and an open file descriptor
+behind, including on runs that have already finished. Nothing in the type signature hints at this.
 
 ## The two ids that fail silently
 
