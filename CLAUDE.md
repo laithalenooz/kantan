@@ -101,6 +101,23 @@ nothing is cross-contaminated. A bare commit with both staged takes both.
 This is what makes work on disjoint files parallelisable without a worktree per agent, which
 matters because kantan's own design rejects worktree proliferation in favour of serialising runs.
 
+## Motion's `useReducedMotion()` cannot be trusted alone
+
+Probed independently by two agents: it caches the media query in a **module global on first
+call**, and answered `false` with `prefers-reduced-motion: reduce` actually set. A component that
+relies on it alone keeps animating for a user who asked it not to.
+
+OR it with a live read:
+
+```ts
+const live = useSyncExternalStore(subscribe, () => matchMedia("(prefers-reduced-motion: reduce)").matches)
+const reduced = useReducedMotion() || live
+```
+
+Related and separate: `<MotionConfig reducedMotion="user">` only switches **transform** animations
+off. Opacity, filter and anything hand-rolled keep running, so a blur-fade or a number ticker must
+be gated explicitly.
+
 ## Scratch directories must be keyed on the pid
 
 Several agents run `bun run check` at once, so a test helper that does
