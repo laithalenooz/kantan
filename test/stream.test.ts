@@ -1,6 +1,6 @@
-import { expect, test } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import { join } from "node:path"
-import { FILTERED_HOOK_SUBTYPES, StreamParser, parseStream, type Event } from "../src/stream"
+import { FILTERED_HOOK_SUBTYPES, StreamParser, classify, parseStream, type Event } from "../src/stream"
 
 const fixture = (name: string) => join(import.meta.dir, "fixtures", name)
 
@@ -624,4 +624,55 @@ test("parseStream consumes an async byte source", async () => {
   const events: Event[] = []
   for await (const e of parseStream(source())) events.push(e)
   expect(events).toEqual(parseChunks(bytes, bytes.length))
+})
+
+// --- classify: the seam the UI reads cli records through --------------------
+
+describe("classify", () => {
+  // `runlog.ts` stores a `cli` record as `{kind:"cli", event}` where `event` is
+  // the already-parsed object. The UI folds those records into rows, so it needs
+  // the classification without the line framing. `parseLine` is the same
+  // function with `JSON.parse` in front of it.
+  test("classifies an already-parsed event", () => {
+    expect(classify({ type: "result", subtype: "success", is_error: false, total_cost_usd: 0.25, num_turns: 1, result: "ok" })).toEqual([
+      { kind: "result", subtype: "success", isError: false, costUsd: 0.25, numTurns: 1, text: "ok", permissionDenials: [] },
+    ])
+  })
+
+  test("agrees with parseStream on the same event", async () => {
+    const event = { type: "assistant", message: { content: [{ type: "text", text: "hi" }, { type: "tool_use", id: "t1", name: "Bash", input: { command: "ls" } }] } }
+    async function* line(): AsyncGenerator<string> {
+      yield JSON.stringify(event) + "\n"
+    }
+    const viaLine: Event[] = []
+    for await (const e of parseStream(line())) viaLine.push(e)
+    expect(classify(event)).toEqual(viaLine)
+  })
+
+  // The id scheme the UI keys rows on has to survive this: one record in, two
+  // rows out.
+  test("one event can yield several", () => {
+    const events = classify({ type: "assistant", message: { content: [{ type: "text", text: "a" }, { type: "text", text: "b" }] } })
+    expect(events).toHaveLength(2)
+  })
+
+  // A filtered hook subtype yields nothing, so a record index is not a row
+  // index either.
+  test("one event can yield none", () => {
+    expect(classify({ type: "system", subtype: "hook_started" })).toEqual([])
+  })
+
+  test("a non-object is unknown, not a throw", () => {
+    expect(classify(42)).toEqual([{ kind: "unknown", raw: 42 }])
+    expect(classify(null)).toEqual([{ kind: "unknown", raw: null }])
+    expect(classify([])).toEqual([{ kind: "unknown", raw: [] }])
+  })
+
+  // There is no `parse_error` from here: the record held parsed JSON already.
+  // A caller seeing one would be looking at a different bug.
+  test("never reports a parse error", () => {
+    for (const raw of [42, null, [], {}, { type: "nope" }]) {
+      expect(classify(raw).some((e) => e.kind === "parse_error")).toBe(false)
+    }
+  })
 })

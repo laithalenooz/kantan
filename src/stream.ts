@@ -112,6 +112,33 @@ function parseLine(line: string): Event[] {
     return [{ kind: "parse_error", line, error: (cause as Error).message }]
   }
 
+  return classify(raw)
+}
+
+/**
+ * One already-parsed stream-json event, classified.
+ *
+ * `parseLine` is this with `JSON.parse` in front of it. The seam exists because
+ * `runlog.ts` stores a `cli` record as `{ kind: "cli", event }` where `event` is
+ * the **parsed object**, so a reader folding a log back into events has no line
+ * to hand `parseLine` and should not manufacture one by re-serialising.
+ *
+ * Two properties of the return matter to such a reader, and both are
+ * load-bearing for any scheme that gives rows stable ids:
+ *
+ * - **One event in can be several events out.** An assistant message carrying
+ *   text and two tool calls is three events.
+ * - **One event in can be none out.** The hook subtypes in
+ *   `FILTERED_HOOK_SUBTYPES` yield nothing at all.
+ *
+ * So a record's index is neither a row's index nor a row's identity. A caller
+ * keying on the record index alone collides on the first message that carries
+ * two blocks.
+ *
+ * It never returns `parse_error`: the caller already holds parsed JSON. Only
+ * `parseLine` can produce one, from a line that was not JSON.
+ */
+export function classify(raw: unknown): Event[] {
   // `null`, `42` and `[]` are all valid JSON, and reading `.type` off them throws.
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return [{ kind: "unknown", raw }]
   const m = raw as Record<string, unknown>
