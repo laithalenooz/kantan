@@ -26,6 +26,7 @@
     "@tanstack/react-virtual": "^3.14.14",
     "motion": "^14.1.0",
     "react": "^19.3.0",
-    "react-dom": "^19.3.0"
+    "react-dom": "^19.3.0",
+    "react-markdown": "^10.1.0"
   }
 }
