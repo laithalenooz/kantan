@@ -442,3 +442,59 @@ describe("a park the run has moved past", () => {
     expect(view.phases.find((p) => p.state === "waiting")).toBeUndefined()
   })
 })
+
+describe("the digest timeline", () => {
+  test("mirrors the records a human cares about, oldest first", () => {
+    const view = fold([
+      header(),
+      { kind: "phase", phase: "plan", state: "running", sessionId: "s" } as RunRecord,
+      { kind: "phase", phase: "plan", state: "waiting", reason: "gate" } as RunRecord,
+      { kind: "human", action: "approve" } as RunRecord,
+      { kind: "phase", phase: "implement", state: "running", sessionId: "s2" } as RunRecord,
+      { kind: "cli", event: { type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "Edit", input: { file_path: "a.ts" } }] } } },
+      { kind: "cli", event: { type: "assistant", message: { content: [{ type: "tool_use", id: "t2", name: "Write", input: { file_path: "b.ts" } }] } } },
+      { kind: "phase", phase: "test", state: "running" } as RunRecord,
+      { kind: "test", exitCode: 1, attempt: 1, signature: "deadbeef" } as RunRecord,
+      { kind: "test", exitCode: 0, attempt: 2 } as RunRecord,
+      { kind: "end", state: "done", costUsd: 0.5, warnings: ["the feature file changed"] } as RunRecord,
+    ])
+    expect(view.digest.map((e) => e.kind)).toEqual(["approved", "implemented", "tests", "tests", "ended"])
+    expect(view.digest.map((e) => e.id)).toEqual([...new Set(view.digest.map((e) => e.id))])
+  })
+
+  test("counts files written, and never files merely read", () => {
+    // The number is a claim about what the agent did while the user was away,
+    // so counting a Read would report work that never happened.
+    const tool = (name: string, path: string): RunRecord => ({
+      kind: "cli",
+      event: { type: "assistant", message: { content: [{ type: "tool_use", id: name + path, name, input: { file_path: path } }] } },
+    })
+    const view = fold([
+      header(),
+      { kind: "phase", phase: "implement", state: "running", sessionId: "s" } as RunRecord,
+      tool("Read", "read-only.ts"),
+      tool("Edit", "a.ts"),
+      tool("Edit", "a.ts"), // the same file twice is one file
+      tool("Write", "b.ts"),
+      { kind: "end", state: "done", costUsd: 0.1 } as RunRecord,
+    ])
+    const implemented = view.digest.find((e) => e.kind === "implemented")
+    expect(implemented).toEqual({ id: expect.any(String), kind: "implemented", files: 2 })
+  })
+
+  test("omits a count it does not have rather than reporting zero", () => {
+    // `files` is optional in DigestEntry precisely so a caller without it says
+    // nothing. Zero would be a claim that the implement phase wrote nothing.
+    const view = fold([
+      header(),
+      { kind: "phase", phase: "implement", state: "running", sessionId: "s" } as RunRecord,
+      { kind: "phase", phase: "test", state: "running" } as RunRecord,
+    ])
+    expect(view.digest.find((e) => e.kind === "implemented")).toEqual({ id: expect.any(String), kind: "implemented" })
+  })
+
+  test("carries an end record's warnings, which nothing else holds", () => {
+    const view = fold([header(), { kind: "end", state: "failed", why: "gave up", costUsd: 0.2, warnings: ["left on its branch"] } as RunRecord])
+    expect(view.digest.at(-1)).toEqual({ id: expect.any(String), kind: "ended", state: "failed", why: "gave up", warnings: ["left on its branch"] })
+  })
+})

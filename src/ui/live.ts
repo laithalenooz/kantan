@@ -14,6 +14,7 @@
 
 import { classify, type Event } from "../stream.ts"
 import type { RunHeader, RunPhase, RunRecord, WaitReason } from "../runlog.ts"
+import type { DigestEntry } from "./Digest.tsx"
 import type { PlanSource } from "./Gate.tsx"
 import type { StreamRow } from "./Row.tsx"
 import type { TreeProject } from "./Tree.tsx"
@@ -50,6 +51,20 @@ export interface RunView {
   rows: StreamRow[]
   /** Only the phases this log actually shows; `phaseLadder` fills the rest. */
   phases: PhaseStep[]
+  /**
+   * The "while you were away" timeline, oldest first.
+   *
+   * Derived here rather than in the component because every entry mirrors a
+   * record, and the ids have to be as stable as the stream's for the same
+   * reason: the entrance is keyed on them and the SSE replays from byte 0.
+   *
+   * Sparse on purpose. `added`/`removed` line counts and the effort-escalation
+   * entry are **not** emitted, because the log does not hold them - a diff is
+   * not recorded and effort changes show up as prose in the stream rather than
+   * as a record. Each is optional in `DigestEntry` precisely so a caller that
+   * does not have them says nothing instead of inventing a number.
+   */
+  digest: DigestEntry[]
   /** One per spawned process, in order. Feed straight to `sumProcessCost`. */
   processes: CostProcess[]
   /** The newest usable raise, else the header's figure. `null` with no header. */
@@ -72,6 +87,24 @@ export interface RunView {
   warnings: string[]
   /** Record kinds this version does not know, in first-seen order. */
   unknownKinds: string[]
+}
+
+/**
+ * Tools whose use means a file changed.
+ *
+ * Enumerated rather than pattern-matched: the digest prints "3 files", and a
+ * rule like "any tool whose input has a file_path" would count a `Read` and
+ * report work that never happened. Over-counting is the expensive direction
+ * here, because the number is a claim about what the agent did while the user
+ * was away.
+ */
+const WRITING_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"])
+
+/** A tool input's `file_path`, when it has a usable one. */
+function pathOf(input: unknown): string | null {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return null
+  const path = (input as Record<string, unknown>)["file_path"]
+  return typeof path === "string" && path !== "" ? path : null
 }
 
 /** The six kinds this version writes. Anything else is a newer writer's. */
@@ -100,6 +133,9 @@ export function foldRun(runId: string, records: readonly RunRecord[]): RunView {
   /** Mutable while folding; handed out as `CostProcess[]` at the end. */
   const buckets: ResultEvent[][] = []
   const phases = new Map<RunPhase, PhaseStep>()
+  const digest: DigestEntry[] = []
+  /** Distinct paths the implement phase wrote, for the `implemented` entry. */
+  const touched = new Set<string>()
   const warnings: string[] = []
   const unknownKinds: string[] = []
 
@@ -174,6 +210,10 @@ export function foldRun(runId: string, records: readonly RunRecord[]): RunView {
             return
           }
           if (event.kind === "rate_limit") limit = { status: event.status, utilization: event.utilization }
+          if (event.kind === "tool_use" && WRITING_TOOLS.has(event.name)) {
+            const path = pathOf(event.input)
+            if (path !== null) touched.add(path)
+          }
           rows.push({ id: rowId(runId, i, j), event })
         })
         return
@@ -187,6 +227,13 @@ export function foldRun(runId: string, records: readonly RunRecord[]): RunView {
         if (record.sessionId !== undefined) buckets.push([])
         if (record.planPath !== undefined) planPath = record.planPath
 
+        if (openPhase === "implement" && record.phase !== "implement") {
+          digest.push({
+            id: `${runId}#${i}i`,
+            kind: "implemented",
+            ...(touched.size === 0 ? {} : { files: touched.size }),
+          })
+        }
         if (openPhase !== null && openPhase !== record.phase) close(phases, openPhase)
         // The run reached a different phase, so whatever it was parked at is
         // settled - the gate was approved, the question answered, the ceiling
@@ -235,6 +282,13 @@ export function foldRun(runId: string, records: readonly RunRecord[]): RunView {
         // Both are optional on `TestsSeen` precisely so a caller that does not
         // have them says nothing instead of inventing something.
         rows.push({ id: rowId(runId, i, 0), tests: { exitCode: record.exitCode, attempt: record.attempt } })
+        digest.push({
+          id: `${runId}#${i}`,
+          kind: "tests",
+          attempt: record.attempt,
+          exitCode: record.exitCode,
+          ...(record.signature === undefined ? {} : { signature: record.signature }),
+        })
         return
       }
 
@@ -248,6 +302,7 @@ export function foldRun(runId: string, records: readonly RunRecord[]): RunView {
           if (typeof figure === "number" && Number.isFinite(figure) && figure > 0) raised = figure
           else warnings.push("a raise record carried a figure this reader cannot use; the previous ceiling stands")
         }
+        if (record.action === "approve") digest.push({ id: `${runId}#${i}`, kind: "approved" })
         if (record.action === "approve" || record.action === "feedback") {
           // The park this answered is over, whatever the next phase record says.
           waitId = null
@@ -258,6 +313,16 @@ export function foldRun(runId: string, records: readonly RunRecord[]): RunView {
 
       case "end": {
         ended = { state: record.state, warnings: record.warnings ?? [], costUsd: record.costUsd, ...(record.why === undefined ? {} : { why: record.why }) }
+        if (openPhase === "implement" && touched.size > 0) {
+          digest.push({ id: `${runId}#${i}i`, kind: "implemented", files: touched.size })
+        }
+        digest.push({
+          id: `${runId}#${i}`,
+          kind: "ended",
+          state: record.state,
+          ...(record.why === undefined ? {} : { why: record.why }),
+          ...(record.warnings === undefined ? {} : { warnings: record.warnings }),
+        })
         waitId = null
         waiting = null
         // A run that ended is waiting for nobody, so no phase may still say it
@@ -280,6 +345,7 @@ export function foldRun(runId: string, records: readonly RunRecord[]): RunView {
     header,
     rows,
     phases: [...phases.values()],
+    digest,
     processes: buckets.map((results) => ({ results })),
     ceilingUsd: raised ?? (header as RunHeader | null)?.budgetUsd ?? null,
     planPath,

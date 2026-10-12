@@ -3,6 +3,7 @@ import { Tree, canStart, type Account, type TaskId, type TreeProject, type TreeT
 import { Gate, type GateProps } from "./Gate.tsx"
 import { Stream } from "./Stream.tsx"
 import { Sidebar, type AccountWindow } from "./Sidebar.tsx"
+import { Digest, ReturnBand, type DigestSubject } from "./Digest.tsx"
 import { startRun, taskKeyOf, type RunView } from "./live.ts"
 import { useAction, usePlan, useRun, useTree } from "./useRun.ts"
 import type { RunPhase } from "../runlog.ts"
@@ -85,6 +86,34 @@ function windowsFor(view: RunView | null, account: Account | undefined): Account
       utilization: view.limit?.utilization,
     },
   ]
+}
+
+/**
+ * How many tasks across the whole tree are waiting on a human.
+ *
+ * Counted here because that is where the whole tree is. `ReturnBand` refuses to
+ * say "Nothing needs you" when this is `undefined`, and the asymmetry is the
+ * reason: a false "nothing needs you" sends the user away from a run that is
+ * parked, which is the one failure the band exists to prevent. So a tree that
+ * has not loaded yields `undefined`, not `0`.
+ *
+ * `stalled` is deliberately excluded. It is its own state with its own plum
+ * treatment, and `src/run.ts` parks a stalled run without a question
+ * outstanding - counting it would make the band demand attention that no gate
+ * is waiting for.
+ */
+function countNeedsYou(projects: readonly TreeProject[]): number | undefined {
+  if (projects.length === 0) return undefined
+  let waiting = 0
+  for (const project of projects) {
+    for (const feature of project.features) {
+      for (const task of feature.tasks) {
+        const state = task.run?.state
+        if (state?.kind === "waiting" && state.reason !== "stalled") waiting += 1
+      }
+    }
+  }
+  return waiting
 }
 
 /** The line under the log saying what the run is doing, per both artboards. */
@@ -183,12 +212,38 @@ export function App() {
     return null
   }, [view, plan, project, send])
 
+  const needsYou = countNeedsYou(projects)
+
+  /**
+   * What the band and the digest are about.
+   *
+   * `state` comes from the **tree**, not from the fold, and that is deliberate:
+   * `RunState`'s `done` variant carries `merged`, which only `isMergedIntoBase`
+   * can answer - the log cannot. Taking it from the log would mean guessing,
+   * and `runindex.ts` is explicit that a `done` run read as merged lets a
+   * second run start against work that is not integrated.
+   */
+  const subject: DigestSubject | null =
+    task?.run === undefined || selected?.taskRef == null
+      ? null
+      : {
+          state: task.run.state,
+          taskRef: selected.taskRef,
+          ...(task.text === "" ? {} : { title: task.text }),
+          ...(project === null ? {} : { project: project.path.split("/").at(-1) ?? project.path }),
+        }
+
   const failure = treeError ?? startError ?? actionError
 
   return (
     /* `kr` is the artboards' own root class, and `artboard.css`'s reduced-motion
-       guard is `.kr, .kr *` — it does nothing until a root carries it. */
-    <div className="kr grid h-dvh grid-cols-[18rem_minmax(0,1fr)_14rem] overflow-hidden">
+       guard is `.kr, .kr *` — it does nothing until a root carries it.
+       A column, not the grid itself: both artboards put a full-width band
+       between the header and the three columns, and only one band ever shows. */
+    <div className="kr flex h-dvh flex-col overflow-hidden">
+      {subject !== null && view?.ended === null && <ReturnBand subject={subject} needsYou={needsYou} />}
+
+      <div className="grid min-h-0 flex-1 grid-cols-[18rem_minmax(0,1fr)_14rem] overflow-hidden">
       {/* A flex column, because `Tree` draws its own panel as an `<aside
           className="basis-72 grow">` - and `grow` does nothing to a child of a
           block, so the panel ends at its content and the ground shows through
@@ -205,6 +260,19 @@ export function App() {
         )}
 
         {gate !== null && <Gate {...gate} />}
+
+        {/* Keyed by run, as Stream's rows are: the entrance is keyed on entry
+            ids and a replayed log must reconcile rather than re-animate. */}
+        {subject !== null && view !== null && view.digest.length > 0 && (
+          <Digest
+            key={runId ?? "none"}
+            subject={subject}
+            entries={view.digest}
+            needsYou={needsYou}
+            testCommand={project?.testCmd}
+            {...(view.header === null ? {} : { startedAtMs: Date.parse(view.header.startedAt) })}
+          />
+        )}
 
         {view !== null && (
           <Stream rows={view.rows} maxHeight={atGate ? 520 : 640} footer={footerFor(view)} />
@@ -237,6 +305,7 @@ export function App() {
             stopDisabled={view.ended !== null}
           />
         )}
+      </div>
       </div>
     </div>
   )
