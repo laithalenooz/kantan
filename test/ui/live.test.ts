@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { act, fetchTree, foldRun, startRun, subscribeRun, taskKeyOf, type RunView } from "../../src/ui/live"
+import { act, fetchTree, foldRun, removeProject, startRun, subscribeRun, taskKeyOf, type RunView } from "../../src/ui/live"
 import { sumProcessCost } from "../../src/ui/Sidebar"
 import type { RunRecord } from "../../src/runlog"
 
@@ -672,5 +672,30 @@ describe("a server restart must not strand the open tab", () => {
     }) as unknown as typeof fetch
     await expect(act("r-1", { kind: "approve" }, fetcher)).rejects.toThrow("409")
     expect(n).toBe(1)
+  })
+})
+
+describe("removing a project", () => {
+  test("a 404 is success, because a double submit is the reachable case", async () => {
+    // The route answers 404 for a path that is not registered, and is right to:
+    // nothing can recover that distinction from a 200 answered to a
+    // misspelling. But by the time this runs, "not registered" is what the
+    // caller wanted, and "that project could not be removed" for a project
+    // that is gone is the confusing direction.
+    const fetcher = (async (url: string | URL | Request) => {
+      if (String(url).endsWith("/session")) return Response.json({ ok: true })
+      return new Response(JSON.stringify({ error: "not registered" }), { status: 404 })
+    }) as unknown as typeof fetch
+    await expect(removeProject("/gone", fetcher)).resolves.toBeUndefined()
+  })
+
+  test("a refusal that is not 404 still throws", async () => {
+    // 409 while a run is in flight: removing then would leave the run
+    // unreachable, since every action resolves its project first.
+    const fetcher = (async (url: string | URL | Request) => {
+      if (String(url).endsWith("/session")) return Response.json({ ok: true })
+      return new Response("run r-1 is in flight", { status: 409 })
+    }) as unknown as typeof fetch
+    await expect(removeProject("/busy", fetcher)).rejects.toThrow("in flight")
   })
 })

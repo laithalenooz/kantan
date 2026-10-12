@@ -672,11 +672,22 @@ export async function draftFeature(
   return answer.path
 }
 
-/** Stops tracking a repository. The repo itself is untouched. */
+/**
+ * Stops tracking a repository. The repo itself is untouched.
+ *
+ * A **404 counts as success**. The route answers it for a path that is not
+ * registered, which is right - a client can collapse 404 into success and
+ * nothing can recover the distinction from a 200 answered to a misspelling -
+ * but by the time this function runs, "it is not registered" is the outcome
+ * the caller wanted. The reachable case is a double submit, and reporting
+ * "that project could not be removed" for a project that is now gone is the
+ * confusing direction.
+ */
 export async function removeProject(path: string, fetcher: typeof fetch = fetch): Promise<void> {
   const res = await withSession(fetcher, (f) =>
     f(`${API}/projects`, { method: "DELETE", cache: "no-store", body: JSON.stringify({ path }) }),
   )
+  if (res.status === 404) return
   if (!res.ok) throw new Error(`that project could not be removed: ${res.status} ${await text(res)}`)
 }
 

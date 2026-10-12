@@ -647,29 +647,6 @@
   }
 }
 
-/* ── The two motion kill-switches ────────────────────────────────────────────
- * Unlayered and `!important`, so they beat every normal declaration in every
- * layer, Tailwind's `animate-*` utilities included.
- *
- * `.still` is the artboard's static mode, used for screenshots.
- * `.kr` is its reduced-motion scope. Both are widened from the artboard's
- * `X *` to `X, X *` so an animation on the root element itself is covered too;
- * no artboard animates its root, so nothing about them changes.
- *
- * CSS only. A Motion (JS) animation ignores both, which is why `CLAUDE.md`
- * requires a live `matchMedia` read rather than `useReducedMotion()` alone. */
-.still,
-.still * {
-  animation: none !important;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .kr,
-  .kr * {
-    animation: none !important;
-  }
-}
-
 /* ── From the four management artboards (Start, AddTasks, Project, AddRepo) ──
  *
  * Added when those landed in the artifact. Verbatim from their `<style>`
@@ -694,5 +671,28 @@
     background: linear-gradient(90deg, #EEEEF2 0%, #EEEEF2 35%, #F8F8FB 50%, #EEEEF2 65%, #EEEEF2 100%);
     background-size: 250% 100%;
     animation: kskel 1.4s linear infinite;
+  }
+}
+
+/* ── The two motion kill-switches ────────────────────────────────────────────
+ * Unlayered and `!important`, so they beat every normal declaration in every
+ * layer, Tailwind's `animate-*` utilities included.
+ *
+ * `.still` is the artboard's static mode, used for screenshots.
+ * `.kr` is its reduced-motion scope. Both are widened from the artboard's
+ * `X *` to `X, X *` so an animation on the root element itself is covered too;
+ * no artboard animates its root, so nothing about them changes.
+ *
+ * CSS only. A Motion (JS) animation ignores both, which is why `CLAUDE.md`
+ * requires a live `matchMedia` read rather than `useReducedMotion()` alone. */
+.still,
+.still * {
+  animation: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kr,
+  .kr * {
+    animation: none !important;
   }
 }
