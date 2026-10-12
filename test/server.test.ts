@@ -3057,6 +3057,46 @@ test("the account can be changed after registering, which is what nothing could 
   expect(after?.account).toBe("work")
 })
 
+test("changing account alone moves the label and NOT the profile that bills", async () => {
+  // The trap, pinned deliberately rather than fixed, because the fix would be
+  // wrong in a way that is harder to see.
+  //
+  // `account` is a label - what the human *called* it - and `configDir` is the
+  // only thing that controls anything: `src/spawn.ts`'s `phaseEnv` sets
+  // `CLAUDE_CONFIG_DIR` from it and deletes it when there is none, and
+  // `src/run.ts` keys the run header's `profile` on it. Nothing in `src/`
+  // outside `accountOf()` reads `account` at all. So a client that switches
+  // accounts by sending `{account}` alone relabels the chip and bills exactly
+  // the same credentials as before - which is the defect the chip exists to
+  // prevent, now spoken in the chip's own voice.
+  //
+  // The route deliberately does **not** refuse that, and this test is where
+  // that decision is written down. Refusing `account` without `configDir` would
+  // reject a real configuration: a user whose *default* profile is their work
+  // account has `account: "work"` and no `configDir`, correctly. A rule the
+  // store does not have would also put the route and a hand-edited
+  // `projects.json` into disagreement about what is valid.
+  //
+  // So it stays the caller's job, and the thing that makes that safe is that
+  // PATCH answers with the **whole stored record**: a client can see that
+  // `configDir` did not move. A UI offering an account switcher must send both
+  // keys in one call - which the test above proves it can.
+  const repo = await cleanRepo()
+  const profile = await scratch("orch-profile-")
+  const { l, store } = await tunedStore(repo)
+  await edit(l, { path: repo, account: "work", configDir: profile })
+
+  const relabelled = await edit(l, { path: repo, account: "personal" })
+  expect(relabelled.status).toBe(200)
+
+  const stored = (await loadProjects(store))[0]
+  expect(stored?.account).toBe("personal")
+  // Unchanged, and the response says so, which is the only honest signal there
+  // is: the runs still bill whatever `profile` holds.
+  expect(stored?.configDir).toBe(profile)
+  expect(JSON.parse(relabelled.body).project.configDir).toBe(profile)
+})
+
 test("an edit naming only the path writes nothing and answers the record", async () => {
   // Not a 400: a client cannot send a change this route silently drops - an
   // unknown key is a 400 - so the only way to name no change is to make none,

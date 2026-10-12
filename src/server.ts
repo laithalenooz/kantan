@@ -1819,6 +1819,28 @@ const REMOVE_KEYS = ["path"] as const
  * `projects.json`, a file people hand-edit and read in diffs, and a key this
  * list does not carry is a 400 naming the keys it does - never a silent drop.
  */
+/**
+ * `account` and `configDir` are **not** coupled here, and that is a decision.
+ *
+ * Only `configDir` controls anything: `src/spawn.ts`'s `phaseEnv` sets
+ * `CLAUDE_CONFIG_DIR` from it and deletes it when there is none, and
+ * `src/run.ts` keys the run header's `profile` on it. `account` is a label -
+ * what the human called it - and nothing in `src/` outside `accountOf()` below
+ * reads it. So a client that switches accounts by sending `{account}` alone
+ * relabels the chip and bills the same credentials as before.
+ *
+ * This route does not refuse that, for two reasons. A project can legitimately
+ * have an account and no `configDir` - a user whose *default* CLI profile is
+ * their work account - so "account requires configDir" would reject a correct
+ * configuration. And a rule the store does not have would put this route and a
+ * hand-edited `projects.json` into disagreement about what is valid, which is
+ * the divergence docs/HANDOFF.md warns about elsewhere.
+ *
+ * What makes leaving it to the caller safe is that this route answers with the
+ * **whole stored record**, so a client can see that `configDir` did not move. A
+ * UI offering an account switcher must send both keys in one call; that it can
+ * is pinned by test, as is the trap.
+ */
 const EDITABLE_KEYS = ["testCmd", "account", "configDir", "budgetUsd"] as const
 /** The identity, plus what may change. Derived rather than listed again, so the
  * body's allowlist and the set of keys the handler reads cannot drift: `path`

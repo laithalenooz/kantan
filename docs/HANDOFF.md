@@ -109,7 +109,9 @@ The contract, so the dialog does not learn it by trial:
 POST /api/projects  {"path", "testCmd", "configDir"?}   -> 201 {"ok":true,"project":<the stored record>}
 ```
 
-- **`path` and `testCmd` are required non-empty strings; `configDir` is optional and absolute.**
+- **`path` is a required non-empty string. `testCmd` is required but may be `null`**, which
+  registers a repo with no test suite whose runs the agent verifies itself; a blank string is
+  still a 400. **`configDir` is optional and absolute.**
   The dialog's "personal" / "work" account label is a `configDir` — a CLI profile directory, which
   carries a CLAUDE.md, skills and settings as well as credentials — and the **UI owns that
   mapping**. Sending `{"account":"personal"}` is a 400 naming the keys the route takes.
@@ -1152,42 +1154,118 @@ None of it exists. Recorded so the UI work and the API work can meet:
   in `src/draft.ts` already returns without writing - only the route conflates
   the two.
 
-### A project may have no test command, and then the agent verifies (user decision)
+### A project may have no test command - BUILT, and what each UI surface must now do
 
-Decided by the user on 2026-10-12, after asking why a test command was
-mandatory: *"if no test command is set the agent himself can verify based on
-their implementation."* Most repositories have no suite, and requiring one
-excluded them entirely.
+Decided by the user on 2026-10-12 and implemented the same day. `testCmd` is now
+`string | null` on `Project`; `null` means the agent verifies its own work.
 
-This is a real departure from the design's spine, which `CLAUDE.md` states as
-**"the server runs the tests, not the agent; branch on the exit code, never on
-the agent reporting success"**. The reason that rule exists is specific and
-still true: in `claude -p` a question and a completion both exit
-`result/success`, which is the whole reason the `ORCH: done` sentinel exists.
-An agent saying "done" is not evidence that it is.
+**Consumed:** the store, the routes, the prompts, the log and the fold are done.
+What is left is the UI, which cannot be done from here - five agents hold
+`src/ui/*`. Each item below is a reading that is now **wrong**, with the file
+and symbol.
 
-So the implementation does what was asked **without letting the UI claim a
-verification it did not observe**:
+The shape, so nobody re-derives it:
 
-- `Project.testCmd` becomes optional.
-- With a command, nothing changes: `src/testrun.ts` runs it and the run
-  branches on the exit code.
-- Without one, the test phase becomes an **agent self-check**, and the run
-  records **how** it was verified - not just that it was.
-- Every surface that today prints an exit code must distinguish the two. The
-  design's own rule is *"always print the exit code, never 'looks good'"*
-  (`Row.tsx`, `Digest.tsx`), and the honest extension is that a run with no
-  command says **so**, rather than borrowing the language of one that passed.
-  "Self-checked by the agent - no test command" is true; a green tick is not.
-- `canStart` and the tree's `passed` reading must not treat the two as equal.
+| Where | What it says |
+|---|---|
+| `Project.testCmd` | `string \| null`. `null` = no suite. **Absent still throws** - the field has always existed, so an absent key is a damaged record, not an opt-out |
+| `EndRecord.verifiedBy` | `"test-command" \| "self-check"`, written on **every** `done` run |
+| `RunState` (done arm) | optional `verifiedBy`; read it with **`verificationOf(state)`** from `src/runindex.ts`, never directly |
+| `VerificationReading` | `"test-command" \| "self-check" \| "unknown"` |
 
-The cheap direction is being explicit: a run that over-claims verification
-gets work merged that nothing checked, and the user told us they want this
-precisely because the repos in question have nothing to check with.
+**Absence is `unknown`, never "tests passed".** A log written before the field
+existed cannot have recorded one. That is why `verifiedBy` is written on
+command runs too: if it were recorded only for self-checks, one silence would
+have to carry both "an older log" and "a run whose tests passed".
 
-Related and already in the design: `Project.dc.html` adds **"Run it now"** on
-the test command with an exit-code badge. That makes a command provable before
-it is trusted, which is the other half of the same problem.
+**What the UI must render differently.** Nothing here is cosmetic; each one is
+a surface that currently says a suite passed when none ran.
+
+- **`src/ui/Tree.tsx:114` - `TreeProject.testCmd` must widen to `string | null`.**
+  `GET /api/projects` already sends `null`; `src/server.ts` carries it through a
+  local `WireProject` because that field is still `string`. Line ~1089 prints
+  `$ {project.testCmd}`, which renders a bare `$` with nothing after it. It
+  needs its own phrase - "no test command, the agent verifies" - not an empty
+  string. **Do not "fix" this with `?? ""`**: that is the reading the whole
+  change exists to prevent.
+- **`src/ui/Tree.tsx:166` - `taskStateOf` reads a ticked box with no run as
+  `passed`.** `DESCRIPTIONS.passed` says "Tests passed, judged by exit code 0.
+  What the agent says about its own work never counts" - which is now false for
+  a self-checked task, and the state is *unreachable to correct* once the run
+  log is pruned or the repo re-cloned. At minimum the `done` arm at line ~174
+  must split on `verificationOf(state)`: a `self-check` run is not `passed`.
+  The ninth state the design never needed is now needed.
+- **`src/ui/Tree.tsx:203` - `canStart`** returns `taskStateOf(task) === "open"`.
+  If a self-checked run gets its own `TaskState`, `canStart` must treat it as
+  finished (like `passed` and `done-unmerged`), **not** fall through. An
+  unhandled state that reads as `open` is a silent re-run of finished work.
+- **`src/ui/Tree.tsx:534` - `StateLabel`'s `exitCode`** prints ` · exit <n>`.
+  A self-checked run has none and must never be given one. The design's rule is
+  "always print the exit code, never 'looks good'", and the honest extension is
+  that a run with no command **says so**: "Self-checked by the agent - no test
+  command" is true, a green tick is not.
+- **`src/ui/Row.tsx:855` and `src/ui/live.ts:349`** build a test row from a
+  `test` record. A self-checked run writes **none**, deliberately: `exitCode` is
+  a required number meaning "a command ran and exited N", and a `0` there would
+  draw a green pass for a command that never ran. The stream shows the
+  self-check as the agent's own `cli` records under a `test` phase record. If a
+  row is wanted for it, it must come from the phase record, not an invented
+  exit code.
+- **`src/ui/Digest.tsx:157`** already has `exitCode?: number` "because it is
+  sometimes genuinely unknown" - that path is now also reached by a self-checked
+  run, and its chip must distinguish the two: unknown-because-nothing-ran-yet is
+  not unknown-because-nothing-will.
+- **`src/ui/live.ts:627` and `:708`** type `testCmd` as `string`. Both need
+  `string | null`.
+- **`src/ui/App.tsx:339/356`** calls `useState(project.testCmd)` then
+  `.trim()`, which **throws on `null`** - the settings dialog crashes for a
+  no-command project. Lines 210 and 356 send `""` from an empty field, which is
+  a 400: the dialog needs an explicit "this repo has no test suite" control that
+  sends `null`.
+- **`src/ui/AddRepo.tsx`** (`testCmd?: string`, the `required` input) cannot
+  express the opt-out at all, so no repo without a suite can be registered from
+  the UI even though the route accepts it.
+
+**The commit message**, because it is durable in the user's history:
+`chore: tick T1 in docs/features/x.md (self-checked, untested)`, with a body
+saying kantan ran nothing and the task is ticked on the agent's word alone. The
+subject carries it because `git log --oneline` shows nothing else.
+
+**`CLAUDE.md`'s spine sentence** - "the server runs the tests, not the agent;
+branch on the exit code, never on the agent reporting success" - now has an
+exception and does not mention it. That file is the user's; it needs a line
+from them, not from an agent.
+
+### `Project.account` is a label that controls nothing (open, and a decision was taken)
+
+Verified 2026-10-12: `src/spawn.ts`'s `phaseEnv` sets `CLAUDE_CONFIG_DIR` from
+`project.configDir` and deletes it when there is none, and `src/run.ts` keys the
+header's `profile` on it. **Nothing in `src/` outside `accountOf()` in
+`src/server.ts` reads `account` at all.** So a client switching accounts with
+`PATCH {account}` alone relabels the chip and bills the same credentials.
+
+Two things that were believed missing are **not**, verified by probe and by
+existing tests - do not rebuild them:
+
+- **`configDir` is already clearable.** `PATCH {path, configDir: null}` clears
+  it; `optionalNonBlank` reads `null` as absent and `validateProject` omits it.
+  Pinned at `test/server.test.ts`'s "the account can be changed after
+  registering" and in `projects.test.ts`'s edit matrix.
+- **The pair is already applicable in one call.** `PATCH {path, account,
+  configDir}` sets both; `EDITABLE_KEYS` carries both and `editProject` copies
+  every key the body sent.
+
+**Decision: the route does not couple them**, documented at `EDITABLE_KEYS` in
+`src/server.ts` and pinned by "changing account alone moves the label and NOT
+the profile that bills". Refusing `account` without `configDir` would reject a
+real configuration - a user whose *default* profile is their work account - and
+would put the route and a hand-edited `projects.json` into disagreement about
+what is valid. What makes it safe is that PATCH answers with the whole stored
+record, so a client can see `configDir` did not move.
+
+**So the remaining work is the UI's**, and it is not a store or route change: an
+account switcher must send both keys together, and must not report success for a
+relabel that moved no profile.
 
 ## Settled: decisions with non-obvious reasons
 
