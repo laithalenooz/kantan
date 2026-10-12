@@ -16,7 +16,7 @@
  * - **Only `needs you` pulses. Only `running` spins.** Nothing else moves.
  */
 
-import { useEffect, useId, useRef, useSyncExternalStore } from "react"
+import { useEffect, useId, useRef, useSyncExternalStore, createElement } from "react"
 import type { KeyboardEvent as ReactKeyboardEvent, ReactElement, ReactNode } from "react"
 
 /* Type-only, and deliberately so: `src/runindex.ts` opens files at module
@@ -744,6 +744,18 @@ export interface TreeProps {
    * worse than none at all.
    */
   onAddProject?: () => void
+  /**
+   * Open a project itself, rather than one of its tasks.
+   *
+   * The artboard draws the repo row as a label, because every artboard shows a
+   * project that already has work in it. A real one often does not, and then
+   * there is nothing in the column to click and no way to add a task file -
+   * which is exactly how this read as a broken app. Given a handler, the row
+   * becomes a button; its appearance does not change.
+   */
+  onSelectProject?: (path: string) => void
+  /** The project the rest of the screen is about, when it is a project. */
+  selectedProject?: string | null
 }
 
 /** Does this triple address this task? Compared whole; a bare ref is ambiguous. */
@@ -804,6 +816,8 @@ export function Tree({
   selected,
   onSelect,
   onAddProject,
+  onSelectProject,
+  selectedProject,
 }: TreeProps): ReactElement {
   const eyebrow = "text-[11.5px] font-semibold uppercase tracking-[.07em] text-muted-400"
   const ids = useId()
@@ -988,6 +1002,8 @@ export function Tree({
         {projects.map((project, index) => (
           <ProjectBlock
             key={project.path}
+            {...(onSelectProject === undefined ? {} : { onSelectProject })}
+            {...(selectedProject === undefined ? {} : { selectedProject })}
             project={project}
             first={index === 0}
             order={index}
@@ -1015,7 +1031,11 @@ function ProjectBlock({
   selected,
   stop,
   onSelect,
+  onSelectProject,
+  selectedProject,
 }: {
+  onSelectProject?: (path: string) => void
+  selectedProject?: string | null
   project: TreeProject
   first: boolean
   /** Position in the column, which is the artboard's `.d1`-`.d9` stagger step. */
@@ -1032,19 +1052,35 @@ function ProjectBlock({
     <li
       className={`${reduce ? "" : `${blurFade(order)} `}${first ? "" : "mt-[6px] border-t border-[#ECECEF]"}`.trim()}
     >
-      <div className="flex items-center gap-2 px-[10px] pt-[14px] pb-[2px]">
-        <svg aria-hidden viewBox="0 0 24 24" className="ic size-4 shrink-0 text-muted-400" {...LINE}>
+      {/* A button only when something can act on it, and otherwise the plain
+          row the artboard draws. Same box either way: the classes below are
+          shared, and `button` is reset to `text-left` and full width so the
+          layout is identical to the `div`. */}
+      {createElement(
+        onSelectProject === undefined ? "div" : "button",
+        onSelectProject === undefined
+          ? { className: "flex items-center gap-2 px-[10px] pt-[14px] pb-[2px]" }
+          : {
+              type: "button",
+              "data-project-row": true,
+              "aria-current": selectedProject === project.path ? "true" : undefined,
+              onClick: () => onSelectProject(project.path),
+              className: `trow flex w-full items-center gap-2 rounded-[10px] px-[10px] pt-[14px] pb-[2px] text-left hover:bg-[#EFEFF2] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo ${
+                selectedProject === project.path ? "bg-[#EFEFF2]" : ""
+              }`,
+            },
+        <svg key="i" aria-hidden viewBox="0 0 24 24" className="ic size-4 shrink-0 text-muted-400" {...LINE}>
           <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
-        </svg>
-        {/* The repo's own directory name. `title` carries the whole path, which
-            is longer than this column and is not what the design shows.
-            `text-[14px]` rather than `text-sm`, because the Tailwind step
-            carries a 20px leading where the artboard's 14px line box is 18. */}
-        <span id={repoId} data-repo title={project.path} className={`${ARBITRARY} text-[14px] font-[620]`}>
+        </svg>,
+        /* The repo's own directory name. `title` carries the whole path, which
+           is longer than this column and is not what the design shows.
+           `text-[14px]` rather than `text-sm`, because the Tailwind step
+           carries a 20px leading where the artboard's 14px line box is 18. */
+        <span key="n" id={repoId} data-repo title={project.path} className={`${ARBITRARY} text-[14px] font-[620]`}>
           {repoName(project.path)}
-        </span>
-        <AccountChip account={project.account} />
-      </div>
+        </span>,
+        <AccountChip key="a" account={project.account} />,
+      )}
 
       <div
         data-test-cmd

@@ -129,6 +129,17 @@ function countNeedsYou(projects: readonly TreeProject[]): number | undefined {
   return waiting
 }
 
+/** The repo's own directory name, as the tree shows it. */
+function repoName(path: string): string {
+  return path.split("/").filter(Boolean).at(-1) ?? path
+}
+
+/** How many tasks a project holds, across all of its task files. */
+function taskCount(project: TreeProject): string {
+  const n = project.features.reduce((sum, f) => sum + f.tasks.length, 0)
+  return `${n} ${n === 1 ? "task" : "tasks"}`
+}
+
 /** The first registered project that has no task file, or `null`. */
 function emptyProjectOf(projects: readonly TreeProject[]): TreeProject | null {
   return projects.find((p) => p.features.length === 0) ?? null
@@ -327,6 +338,8 @@ export function App() {
   const { tree, origin, error: treeError, reload } = useTree()
   const [adding, setAdding] = useState(false)
   const [describing, setDescribing] = useState<string | null>(null)
+  /** A project opened in its own right, rather than one of its tasks. */
+  const [openProject, setOpenProject] = useState<string | null>(null)
   const nowMs = useNow()
   const [selected, setSelected] = useState<TaskId | null>(null)
   const [started, setStarted] = useState<Record<string, string>>({})
@@ -436,7 +449,7 @@ export function App() {
      empty state's two-column hero, which then stacks below the fold. */
   const showRail = view !== null && view.ceilingUsd !== null
   const nothingSelected =
-    treeError === null && tree !== null && projects.length > 0 && selected === null && emptyProjectOf(projects) === null
+    treeError === null && tree !== null && projects.length > 0 && selected === null && openProject === null && emptyProjectOf(projects) === null
   /**
    * A registered project with no task file at all.
    *
@@ -445,6 +458,18 @@ export function App() {
    * broken app rather than as a repo that has not been given any work.
    */
   const emptyProject = emptyProjectOf(projects)
+  /**
+   * The project the centre is about: one the user opened, or - when they have
+   * opened nothing and a project has no work in it at all - that one, because
+   * there is nothing in the column to click and the app would otherwise look
+   * broken.
+   */
+  const panelProject =
+    openProject !== null
+      ? (projects.find((p) => p.path === openProject) ?? null)
+      : selected === null
+        ? emptyProject
+        : null
   const noProjects = treeError === null && tree !== null && projects.length === 0
 
   const failure = treeError ?? startError ?? actionError
@@ -477,7 +502,23 @@ export function App() {
           block, so the panel ends at its content and the ground shows through
           below it. Caught in a screenshot; no assertion would have seen it. */}
       <div className="flex min-w-0 flex-col overflow-y-auto">
-        <Tree projects={projects} selected={selected} onSelect={setSelected} onAddProject={() => setAdding(true)} />
+        <Tree
+          projects={projects}
+          selected={selected}
+          selectedProject={openProject}
+          onSelect={(task) => {
+            // The two selections are exclusive: the centre column is about one
+            // thing, and leaving a project open behind a task would make the
+            // breadcrumb and the panel disagree.
+            setOpenProject(null)
+            setSelected(task)
+          }}
+          onSelectProject={(path) => {
+            setSelected(null)
+            setOpenProject(path)
+          }}
+          onAddProject={() => setAdding(true)}
+        />
       </div>
 
       {/* Empty renders its own `<main>` and its own `.dots` layer, because
@@ -538,23 +579,43 @@ export function App() {
           <Stream rows={view.rows} maxHeight={atGate ? 520 : 640} footer={footerFor(view)} />
         )}
 
-        {emptyProject !== null && (
-          <div className="m-4 max-w-[560px] rounded-[14px] border border-edge bg-panel px-5 py-5">
-            <h2 className="text-[15px] font-[650] tracking-[-.01em] text-ink">
-              {emptyProject.path.split("/").at(-1)} has no task file yet
-            </h2>
-            <p className="mt-2 text-[13.5px] leading-[1.55] text-muted-500">
-              kantan works through tasks written in <span className="m">docs/features/*.md</span>. Describe what you
-              want and it will write the first one, or add the file yourself and it will appear here.
-            </p>
+        {panelProject !== null && (
+          <section className="m-4 max-w-[620px] rounded-[14px] border border-edge bg-white px-5 py-5">
+            <h2 className="text-[19px] font-[650] tracking-[-.015em] text-ink">{repoName(panelProject.path)}</h2>
+            <p className="m mt-1 text-[12.5px] text-muted-400">{panelProject.path}</p>
+            <p className="m mt-3 text-xs text-muted-400">$ {panelProject.testCmd}</p>
+
+            {panelProject.features.length === 0 ? (
+              <p className="mt-4 text-[13.5px] leading-[1.55] text-muted-500">
+                No task file yet. kantan works through tasks written in <span className="m">docs/features/*.md</span>,
+                one at a time. Describe what you want and it will write the first one — or add the file yourself and
+                it will appear here.
+              </p>
+            ) : (
+              <>
+                <p className="mt-4 text-[13.5px] leading-[1.55] text-muted-500">
+                  {taskCount(panelProject)} in {panelProject.features.length}{" "}
+                  {panelProject.features.length === 1 ? "task file" : "task files"}. Pick one on the left to plan it,
+                  or add more work below.
+                </p>
+                <ul className="m mt-3 list-none space-y-1 p-0 text-[12.5px] text-muted-500">
+                  {panelProject.features.map((f) => (
+                    <li key={f.path}>
+                      {f.path} · {f.tasks.length} {f.tasks.length === 1 ? "task" : "tasks"}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+
             <button
               type="button"
-              onClick={() => setDescribing(emptyProject.path)}
-              className="cta mt-4 rounded-full bg-ink px-4 py-2 text-[13px] font-semibold text-white"
+              onClick={() => setDescribing(panelProject.path)}
+              className="cta mt-5 rounded-full bg-ink px-4 py-2 text-[13px] font-semibold text-white"
             >
               Describe what you want done
             </button>
-          </div>
+          </section>
         )}
 
         {runId === null && task !== null && canStart(task) && (
