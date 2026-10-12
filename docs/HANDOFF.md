@@ -19,8 +19,15 @@ Everything is committed and pushed; the working tree is clean and `bun run check
 the app**, which is a different list from the one the plan produces. What follows is what is left,
 in the order it is worth doing.
 
-**Next, and already diagnosed:** nothing. The last bug found (`accountOptionsFor` producing two
-options with one `optionId`) is fixed in `d359d55`. Pick from the open items below.
+**Next, and already diagnosed:** nothing. Pick from the open items below.
+
+**Done since this entry was written** (so the list below is shorter than it was):
+the project summary, adding a second Claude account, `POST /api/detect` — which turned out to be
+the reason "add a repository" showed a raw 400 — and a test harness that can no longer make billed
+model calls. Three of those were the same shape of bug: **the UI existed and the endpoint did
+not.** `AddRepo`'s detection, `AddTasks`' Ask-Claude tab, `ProjectPanel`'s "Run it now" and its
+"Add another account" were all written, documented and unreachable. If something in this app looks
+designed but inert, check the route table before reading the component.
 
 #### Open, with the reasoning already done
 
@@ -40,21 +47,21 @@ options with one `optionId`) is fixed in `d359d55`. Pick from the open items bel
    artboard for exactly that and has no counterpart here.
 
 2. **`AddRepo`'s "Run it once" is still unwired.** `POST /api/test` requires a **registered**
-   project, and that screen runs before registration. Either widen the route to accept a path
-   validated by `requireUsableRepo` (the detection route already validates arbitrary paths the
-   same way, so it adds no reachable surface), or leave the control hidden there. Do not quietly
-   run the stored command instead: the control exists to prove the command in the field.
+   project, and that screen runs before registration. `POST /api/detect` has since settled the
+   precedent: it takes an arbitrary path because it is **read-only**, and says so in its docstring.
+   A test command is not read-only — it runs whatever the box says in a folder nobody has
+   registered — so the same argument does not carry, and that is the question to answer before
+   wiring it. Do not quietly run the stored command instead: the control exists to prove the
+   command in the field.
 
 3. **No account-level view.** The 5-hour window rings are per account and fed by
    `rate_limit_event` from a live run, so with nothing running there is nowhere to see where the
    accounts stand. Reported as wanting "accounts states such as usage and other available
    states". The data only arrives mid-run today; a view would need somewhere to persist the last
-   reading per `configDir`.
+   reading per `configDir`. **This is the largest thing still missing**, and unlike the four
+   above it needs a decision rather than an endpoint: where a reading lives between runs.
 
-4. **No project summary.** Reported, and now T5 in `docs/features/kantan.md`. Clicking a project
-   opens settings; there is no overview.
-
-5. **The server factoring plan is unstarted** — `docs/plans/2026-10-12-server-factoring.md`.
+4. **The server factoring plan is unstarted** — `docs/plans/2026-10-12-server-factoring.md`.
    `src/server.ts` has grown by five routes this session, so the case is stronger than when it
    was written. The plan's constraint still holds: **the route table stays one table in one
    file**, because `Bun.serve({routes})` matches before the guard chain.
