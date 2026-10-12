@@ -24,7 +24,8 @@ import type { KeyboardEvent as ReactKeyboardEvent, ReactElement, ReactNode } fro
  * bundle. The type is borrowed rather than restated, so a change to a run's
  * state becomes a compile error here instead of a row that quietly renders as
  * something else. */
-import type { TaskStatus } from "../runindex.ts"
+import { verificationOf } from "../runindex.ts"
+import type { TaskStatus, VerificationReading } from "../runindex.ts"
 
 /** The nine readings, in the artboard's order. */
 export const TASK_STATES = [
@@ -110,8 +111,15 @@ export interface TreeProject {
   /** Repo root, absolute. The project's identity. */
   path: string
   account: Account
-  /** e.g. `npm test`. Printed under the repo name as the design shows it. */
-  testCmd: string
+  /**
+   * e.g. `npm test`. Printed under the repo name as the design shows it.
+   *
+   * `null` when the project has no suite and the agent verifies its own work
+   * (the user's 2026-10-12 decision; see `CLAUDE.md`). **Never `?? ""`** - that
+   * renders a bare `$`, which reads as a command that failed to load rather
+   * than a project that has none.
+   */
+  testCmd: string | null
   /**
    * The Claude profile directory a run bills to, or absent for the default one.
    *
@@ -234,6 +242,10 @@ export function canResume(task: TreeTask): boolean {
  * "interrupted is resumable" and "done-unmerged cannot be started again" are
  * legible to someone who has not read the artboard.
  */
+/** What "Self-checked" means, said in full rather than implied by a colour. */
+const SELF_CHECKED =
+  "This project has no test command, so kantan ran nothing. The agent was asked to verify its own work and said it was finished; nothing outside the agent checked it."
+
 const DESCRIPTIONS: Record<TaskState, string> = {
   open: "Not started. Most tasks sit here, so this is the quietest mark on the screen.",
   running: "An agent is working right now. One task at a time, so at most one of these anywhere.",
@@ -549,10 +561,20 @@ export function StateLabel({
   state,
   exitCode,
   count,
+  verification,
 }: {
   state: TaskState
   /** Printed as ` · exit <n>` beside Passed and Failed. Never invented. */
   exitCode?: number
+  /**
+   * How the run was verified, from `verificationOf` in `src/runindex.ts`.
+   *
+   * `"self-check"` changes what this may say: there was no command, so there is
+   * no exit code and nothing "passed" in the sense the word carries everywhere
+   * else on this screen. `"unknown"` - a log written before the field existed -
+   * is read as unknown, never as tested.
+   */
+  verification?: VerificationReading
   /** Test attempts inside the run, for the grinding chip. */
   count?: number
 }): ReactElement {
@@ -582,7 +604,14 @@ export function StateLabel({
         </span>
       )
     case "passed":
-      return (
+      // No exit code is printed here even if one were somehow supplied: a
+      // self-checked run has none, and inventing or borrowing one is the exact
+      // failure `CLAUDE.md` forbids.
+      return verification === "self-check" ? (
+        <span className={`${LABEL} text-muted-500`} title={SELF_CHECKED}>
+          Self-checked
+        </span>
+      ) : (
         <span className={`${LABEL} text-pass-deep`} title={DESCRIPTIONS.passed}>
           Passed
           {exit}
@@ -1131,7 +1160,7 @@ function ProjectBlock({
         data-test-cmd
         className={`${ARBITRARY} m pr-[10px] pb-[6px] pl-[34px] font-mono text-xs text-muted-400`}
       >
-        $ {project.testCmd}
+        {project.testCmd === null ? "no test suite · the agent checks its own work" : `$ ${project.testCmd}`}
       </div>
 
       <ul aria-labelledby={repoId} className="m-0 list-none p-0">
@@ -1332,7 +1361,12 @@ function TaskRow({
         ) : null}
       </span>
       <span data-state-label className="shrink-0 justify-self-end">
-        <StateLabel state={state} exitCode={task.run?.exitCode} count={task.run?.testAttempts} />
+        <StateLabel
+          state={state}
+          exitCode={task.run?.exitCode}
+          count={task.run?.testAttempts}
+          verification={verificationOf(task.run?.state)}
+        />
         {task.ref === null ? (
           <span className="text-[11.5px] text-muted-400" title="A run is addressed by its ref. Add one, like T4, to run this line.">
             no ref
