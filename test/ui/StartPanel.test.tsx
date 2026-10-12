@@ -237,9 +237,37 @@ function classesOf(selector: string): string[] {
   return (one(selector).getAttribute("class") ?? "").split(/\s+/).filter((c) => c !== "")
 }
 
-/** Everything the subtree says, with runs of whitespace flattened. */
+/**
+ * Everything the subtree **says**, with runs of whitespace flattened.
+ *
+ * The card renders a `<style>` element for the two rules `artboard.css` does
+ * not carry, and `textContent` includes a stylesheet's text. Without stripping
+ * it every assertion here reads `linear-gradient` and `background-position` as
+ * prose - which is how the first draft of the "no line number" test passed for
+ * the wrong reason, on the `line` inside `linear-gradient`.
+ */
 function prose(): string {
-  return (host.textContent ?? "").replace(/\s+/g, " ").trim()
+  const copy = host.cloneNode(true) as HTMLElement
+  for (const sheet of [...copy.querySelectorAll("style")]) sheet.remove()
+  return (copy.textContent ?? "").replace(/\s+/g, " ").trim()
+}
+
+/**
+ * One cell of the interrupted card's summary list, by the term it defines.
+ *
+ * `textContent` concatenates without separators, so a `<dt>`/`<dd>` pair reads
+ * as `Spent so far$1.12` in the flattened prose. Reading the definition on its
+ * own says what the card shows a human instead of what the DOM spells.
+ */
+function definitionOf(term: string): string | null {
+  const cell = all("dl > div").find((div) => (div.querySelector("dt")?.textContent ?? "").trim() === term)
+  if (cell === undefined) return null
+  return (cell.querySelector("dd")?.textContent ?? "").replace(/\s+/g, " ").trim()
+}
+
+/** A tail row's four columns: icon, kind, subject, clock. */
+function columnsOf(row: Element): string[] {
+  return [...row.children].map((cell) => (cell.textContent ?? "").replace(/\s+/g, " ").trim())
 }
 
 /** The first element matching `selector` whose flattened text contains `text`. */
@@ -625,5 +653,468 @@ describe("the ceiling, which is money", () => {
 
     await click(button(ARTBOARD.start))
     expect(calls).toEqual([50])
+  })
+})
+
+// --- Firing an action -------------------------------------------------------
+
+describe("committing to a run", () => {
+  test("one click is one run, and so are two clicks", async () => {
+    let calls = 0
+    await render(panel(startProps({ onStart: () => void calls++ })))
+    const start = button(ARTBOARD.start)
+    await click(start)
+    await click(start)
+    expect(calls).toBe(1)
+  })
+
+  /**
+   * **Two clicks in one tick**, which is the case a latch in state does not
+   * survive and the case that costs money.
+   *
+   * Measured: with the latch replaced by `if (acting) return`, the test above
+   * still passes - `click()` is wrapped in `act()`, so React has re-rendered
+   * and `acting` is already `true` by the second click. Both handlers here run
+   * inside one batch instead, so both closures read the state as it was, and
+   * only a ref stops the second one paying for a second run.
+   */
+  test("two clicks in one tick are still one run", async () => {
+    let calls = 0
+    await render(panel(startProps({ onStart: () => void calls++ })))
+    const start = button(ARTBOARD.start)
+    await api.act(async () => {
+      start.click()
+      start.click()
+    })
+    expect(calls).toBe(1)
+  })
+
+  test("two resume clicks in one tick are still one resume", async () => {
+    let calls = 0
+    await render(panel(resumeProps({ onResume: () => void calls++ })))
+    const resume = button(ARTBOARD.resume)
+    await api.act(async () => {
+      resume.click()
+      resume.click()
+    })
+    expect(calls).toBe(1)
+  })
+
+  /* Under StrictMode too, which double-invokes render: a latch kept in state
+   * rather than in a ref reads stale and pays twice. */
+  test("the latch survives StrictMode's double render", async () => {
+    let calls = 0
+    await renderStrict(startProps({ onStart: () => void calls++ }))
+    const start = button(ARTBOARD.start)
+    await click(start)
+    await click(start)
+    expect(calls).toBe(1)
+  })
+
+  test("resuming twice resumes once", async () => {
+    let calls = 0
+    await render(panel(resumeProps({ onResume: () => void calls++ })))
+    const resume = button(ARTBOARD.resume)
+    await click(resume)
+    await click(resume)
+    expect(calls).toBe(1)
+  })
+
+  test("starting shows the artboard's planning line in place of the button", async () => {
+    await render(panel(startProps({ onStart: () => new Promise(() => {}) })))
+    await click(button(ARTBOARD.start))
+
+    const status = one('[data-testid="starting"]')
+    expect(status.getAttribute("role")).toBe("status")
+    expect(prose()).toContain(ARTBOARD.planning)
+    expect(prose()).toContain(ARTBOARD.planningAside)
+    expect(byText("button", ARTBOARD.start)).toBeNull()
+  })
+
+  /**
+   * `Gate.onApprove`'s contract, reused: the server answers an action with a
+   * tagged refusal carrying a message written for a human, and a card that kept
+   * saying "Planning." after one would be lying.
+   */
+  test("a rejected start hands the button back, with the server's own words", async () => {
+    const why = "refused: busy — another run holds this project's lock"
+    await render(panel(startProps({ onStart: () => Promise.reject(new Error(why)) })))
+    await click(button(ARTBOARD.start))
+
+    expect(maybe('[data-testid="starting"]')).toBeNull()
+    const alert = one('[data-testid="refusal"]')
+    expect(alert.getAttribute("role")).toBe("alert")
+    expect(alert.textContent).toBe(why)
+    expect(button(ARTBOARD.start).disabled).toBe(false)
+  })
+
+  test("a refused start can be retried, because the latch was released too", async () => {
+    let calls = 0
+    await render(
+      panel(
+        startProps({
+          onStart: () => {
+            calls += 1
+            return calls === 1 ? Promise.reject(new Error("nope")) : undefined
+          },
+        }),
+      ),
+    )
+    await click(button(ARTBOARD.start))
+    await click(button(ARTBOARD.start))
+    expect(calls).toBe(2)
+  })
+
+  test("a synchronous throw is reported, not swallowed", async () => {
+    await render(
+      panel(
+        startProps({
+          onStart: () => {
+            throw new Error("no runner is wired")
+          },
+        }),
+      ),
+    )
+    await click(button(ARTBOARD.start))
+    expect(one('[data-testid="refusal"]').textContent).toBe("no runner is wired")
+  })
+
+  /**
+   * A promise from the previous task must not undo this one's state. The shell
+   * is not obliged to remount the card, so without the generation check a
+   * refusal about a task nobody is looking at would surface on the next.
+   */
+  test("a refusal that lands after the card moved on is dropped", async () => {
+    let reject: (cause: Error) => void = () => {}
+    const slow = (): Promise<never> =>
+      new Promise((_resolve, no) => {
+        reject = no
+      })
+
+    await render(panel(startProps({ onStart: slow })))
+    await click(button(ARTBOARD.start))
+
+    const next: TreeTask = { ref: "T4", text: "Another task", done: false }
+    await render(panel(startProps({ task: next, onStart: () => {} })))
+
+    await api.act(async () => {
+      reject(new Error("about the previous task"))
+      await Promise.resolve()
+    })
+
+    expect(maybe('[data-testid="refusal"]')).toBeNull()
+    expect(button(ARTBOARD.start).disabled).toBe(false)
+  })
+
+  test("the planning state does not follow the card to the next task", async () => {
+    await render(panel(startProps({ onStart: () => new Promise(() => {}) })))
+    await click(button(ARTBOARD.start))
+    expect(maybe('[data-testid="starting"]')).not.toBeNull()
+
+    const next: TreeTask = { ref: "T4", text: "Another task", done: false }
+    await render(panel(startProps({ task: next, onStart: () => {} })))
+    expect(maybe('[data-testid="starting"]')).toBeNull()
+    expect(button(ARTBOARD.start).disabled).toBe(false)
+  })
+
+  /* Two files in one repo both have a `T1`, so the ref alone is not the task. */
+  test("the same ref in another feature file is another task", async () => {
+    await render(panel(startProps({ onStart: () => new Promise(() => {}) })))
+    await click(button(ARTBOARD.start))
+
+    await render(panel(startProps({ featureFile: "docs/features/export.md", onStart: () => {} })))
+    expect(maybe('[data-testid="starting"]')).toBeNull()
+  })
+
+  test("while resuming, neither footer button can fire again", async () => {
+    let resumes = 0
+    let overs = 0
+    await render(
+      panel(
+        resumeProps({
+          onResume: () => {
+            resumes += 1
+            return new Promise(() => {})
+          },
+          onStartOver: () => void overs++,
+        }),
+      ),
+    )
+    await click(button(ARTBOARD.resume))
+    await click(button(ARTBOARD.resume))
+    await click(button(ARTBOARD.startOver))
+    expect([resumes, overs]).toEqual([1, 0])
+  })
+})
+
+// --- The one-at-a-time guard ------------------------------------------------
+
+/**
+ * What the alert may claim, by what the blocker is doing.
+ *
+ * The dimension is `RunState["kind"]`, and every value it can take is here
+ * including the ones no fixture elsewhere produces. The reason it is read at
+ * all: the lock is per project (`acquireRunLock(repo, …)`) and a run parked at
+ * the gate holds no process, so "is running" is a claim the card cannot make
+ * from the fact of being blocked. Being wrong in that direction sends someone
+ * looking for an agent that is not there; being vague costs a few words.
+ */
+const BLOCKER_STATES: readonly (readonly [string, RunState, string])[] = [
+  ["running", { kind: "running", phase: "implement" }, "is running."],
+  ["waiting at the gate", { kind: "waiting", reason: "gate" }, "is waiting for you."],
+  ["waiting on a question", { kind: "waiting", reason: "question" }, "is waiting for you."],
+  ["interrupted", { kind: "interrupted", resumeFrom: "test" }, "was interrupted and still holds the run lock."],
+  ["done", { kind: "done", merged: false }, "still holds the run lock."],
+  ["failed", { kind: "failed", why: "exit 1" }, "still holds the run lock."],
+]
+
+describe("the one-at-a-time guard", () => {
+  test.each(BLOCKER_STATES)("a blocker that is %s: %p", async (_name: string, state: RunState, clause: string) => {
+    await render(panel(startProps({ blockedBy: blocker({ state }) })))
+    const said = (one('[data-testid="one-at-a-time"]').textContent ?? "").replace(/\s+/g, " ")
+    expect(said).toContain(`other-repo · T2 Refund path ${clause}`)
+    expect(said).toContain(ARTBOARD.oneAtATime)
+  })
+
+  test("the blocker is named, because one of these is not like the others", async () => {
+    await render(panel(startProps({ blockedBy: blocker({ label: "your-app · T9 Something else" }) })))
+    expect(prose()).toContain("your-app · T9 Something else")
+  })
+
+  test("the link to that run appears only when there is somewhere to go", async () => {
+    await render(panel(startProps({ blockedBy: blocker() })))
+    expect(byText("button", ARTBOARD.goToRun)).toBeNull()
+
+    let went = 0
+    await render(panel(startProps({ blockedBy: blocker({ onGoToRun: () => void went++ }) })))
+    await click(button(ARTBOARD.goToRun))
+    expect(went).toBe(1)
+  })
+})
+
+// --- Reduced motion ---------------------------------------------------------
+
+/**
+ * Motion's half of the OR is quarantined to `false` in this file, so these
+ * exercise the **live** half - the half that has to work. Deleting `|| live`
+ * from the component must turn this section red.
+ *
+ * The preference is set **without** firing `change` in the first test, which is
+ * the stale state HANDOFF's correction says the trap actually occurs in: a stub
+ * that fires `change` repairs Motion's singleton as a side effect and so passes
+ * even with a broken fallback.
+ */
+describe("reduced motion", () => {
+  const ANIMATED = ["bf", "d1", "d2", "d3", "spin", "ks-shine"]
+
+  test.each(ALL_VARIANTS)("%s animates nothing when the preference was set silently", async (variant: Variant) => {
+    setPrefersReduceSilently(true)
+    await render(panel(VARIANTS[variant]()))
+
+    const card = one("section")
+    expect(card.getAttribute("data-motion")).toBe("static")
+    const classes = [...all("[class]")].flatMap((el) => (el.getAttribute("class") ?? "").split(/\s+/))
+    for (const name of ANIMATED) expect(classes).not.toContain(name)
+  })
+
+  test.each(ALL_VARIANTS)("%s animates when nobody asked it not to", async (variant: Variant) => {
+    await render(panel(VARIANTS[variant]()))
+    const card = one("section")
+    expect(card.getAttribute("data-motion")).toBe("animated")
+    expect(classesOf("section")).toContain("bf")
+  })
+
+  test("the planning line's shine is withheld, not just its colour changed", async () => {
+    setPrefersReduceSilently(true)
+    await render(panel(startProps({ onStart: () => new Promise(() => {}) })))
+    await click(button(ARTBOARD.start))
+    const classes = [...all("[class]")].flatMap((el) => (el.getAttribute("class") ?? "").split(/\s+/))
+    expect(classes).not.toContain("ks-shine")
+    expect(classes).not.toContain("spin")
+    expect(prose()).toContain(ARTBOARD.planning)
+  })
+
+  test("a preference that changes mid-session is noticed", async () => {
+    await render(panel(VARIANTS.open()))
+    expect(one("section").getAttribute("data-motion")).toBe("animated")
+
+    await api.act(async () => {
+      setPrefersReduce(true)
+    })
+    expect(one("section").getAttribute("data-motion")).toBe("static")
+  })
+
+  test("the steps keep their stagger when motion is allowed", async () => {
+    await render(panel(VARIANTS.open()))
+    const rungs = all('[data-testid="step"]').map((s) => s.getAttribute("class"))
+    expect(rungs).toEqual(["bf d1", "bf d2", "bf d3"])
+  })
+})
+
+// --- What the shell does not know -------------------------------------------
+
+/**
+ * Every one of these is a figure or a string the UI cannot derive today, and
+ * the rule for all of them is the same: omit it rather than print a guess.
+ * `TreeTask` has no line number, no raw markdown line and no attempt count;
+ * `Account` has no usage figure; `TreeProject` has no `budgetUsd`.
+ */
+describe("absent data is omitted, never invented", () => {
+  test("no line number means no line clause", async () => {
+    await render(panel(startProps()))
+    expect(prose()).toContain("docs/features/importer.md")
+    expect(prose()).not.toContain("· line")
+
+    await render(panel(startProps({ line: 7 })))
+    expect(prose()).toContain("docs/features/importer.md · line 7")
+  })
+
+  test("the backlog chip prints the file's own bytes, and nothing when it has none", async () => {
+    await render(panel(startProps()))
+    expect(maybe('[data-testid="backlog-line"]')).toBeNull()
+
+    await render(panel(startProps({ backlogLine: "- [ ] T3 Runtime shim (v1.2)" })))
+    expect(one('[data-testid="backlog-line"]').textContent).toBe("- [ ] T3 Runtime shim (v1.2)")
+  })
+
+  test("no usage figure means no percentage", async () => {
+    await render(panel(startProps()))
+    expect(prose()).not.toContain("% used")
+
+    await render(panel(startProps({ usagePct: 41 })))
+    expect(prose()).toContain("41% used")
+  })
+
+  test("Change is offered only when something can change the account", async () => {
+    await render(panel(startProps()))
+    expect(prose()).not.toContain("Change")
+
+    let changes = 0
+    await render(panel(startProps({ onChangeAccount: () => void changes++ })))
+    await click(button("Change"))
+    expect(changes).toBe(1)
+  })
+
+  test("the phase comes from the run's own state, and is dropped when it says nothing", async () => {
+    await render(panel(resumeProps()))
+    expect(prose()).toContain("stopped during implement")
+    expect(prose()).toContain("Stopped in")
+
+    /* A task with no run at all: nothing recorded a phase, so no phase is
+       named and the summary cell goes rather than printing a blank. */
+    await render(panel(resumeProps({ task: { ref: "T1", text: "Stream CSV export", done: false } })))
+    expect(prose()).toContain("stopped mid-run")
+    expect(prose()).not.toContain("Stopped in")
+  })
+
+  test("no attempt count means no attempt clause", async () => {
+    await render(panel(resumeProps()))
+    expect(prose()).not.toContain("attempt")
+
+    await render(panel(resumeProps({ attempt: 2 })))
+    expect(prose()).toContain("stopped during implement, attempt 2")
+    expect(prose()).toContain("Implement · attempt 2")
+  })
+
+  test("spend is printed with its ceiling, and omitted entirely when unknown", async () => {
+    await render(panel(resumeProps()))
+    expect(prose()).not.toContain("Spent so far")
+
+    await render(panel(resumeProps({ spentUsd: 1.12 })))
+    expect(definitionOf("Spent so far")).toBe("$1.12")
+
+    await render(panel(resumeProps({ spentUsd: 1.12, ceilingUsd: 50 })))
+    expect(definitionOf("Spent so far")).toBe("$1.12 of $50.00")
+  })
+
+  test("the tail prints the records it was given, and the rule either way", async () => {
+    await render(panel(resumeProps()))
+    expect(all('[data-testid="tail-row"]').length).toBe(0)
+    expect(prose()).toContain(ARTBOARD.kept)
+
+    await render(
+      panel(
+        resumeProps({
+          lastEvents: [
+            { kind: "edit", text: "src/export/stream.ts", added: 34, removed: 5, at: "14:01:48" },
+            { kind: "shell", text: "npm test", at: "14:01:55" },
+          ],
+        }),
+      ),
+    )
+    const rows = all('[data-testid="tail-row"]')
+    expect(rows.length).toBe(2)
+    /* Icon, kind, subject, clock - read per column, because `textContent` runs
+       the four together. The minus is the artboard's U+2212, not a hyphen. */
+    expect(rows[0] === undefined ? null : columnsOf(rows[0])).toEqual([
+      "",
+      "edit",
+      "src/export/stream.ts +34 −5",
+      "14:01:48",
+    ])
+    expect(rows[1] === undefined ? null : columnsOf(rows[1])).toEqual(["", "shell", "npm test", "14:01:55"])
+  })
+
+  test("Start over appears only when a caller has something behind it", async () => {
+    await render(panel(resumeProps()))
+    expect(byText("button", ARTBOARD.startOver)).toBeNull()
+    expect(prose()).not.toContain(ARTBOARD.startOverAside)
+
+    let overs = 0
+    await render(panel(resumeProps({ onStartOver: () => void overs++ })))
+    await click(button(ARTBOARD.startOver))
+    expect(overs).toBe(1)
+    expect(prose()).toContain(ARTBOARD.startOverAside)
+  })
+
+  test("no stop time means the eyebrow says only that it was interrupted", async () => {
+    await render(panel(resumeProps()))
+    expect(prose()).toContain("Interrupted")
+    expect(prose()).not.toContain("Interrupted ·")
+
+    await render(panel(resumeProps({ stoppedAt: "today at 14:02" })))
+    expect(prose()).toContain("Interrupted · today at 14:02")
+  })
+
+  test("the account chip has a variant per kind, and says so when it does not know", async () => {
+    await render(panel(startProps({ account: { kind: "work" } })))
+    expect(prose()).toContain("work")
+
+    await render(panel(startProps({ account: { kind: "unknown" } })))
+    expect(prose()).toContain("account unknown")
+
+    await render(panel(startProps({ account: { kind: "personal", label: "laith@home" } })))
+    expect(prose()).toContain("laith@home")
+  })
+})
+
+// --- Odds and ends ----------------------------------------------------------
+
+describe("the panel in its column", () => {
+  test("it renders a section and not a main, because App.tsx owns the column", async () => {
+    await render(panel(VARIANTS.open()))
+    expect(all("main").length).toBe(0)
+    expect(all("section").length).toBe(1)
+    /* The breadcrumb and the dotted ground are App's too. */
+    expect(all(".dots").length).toBe(0)
+    expect(all("nav").length).toBe(0)
+  })
+
+  test("preflight's line-height is undone, as it is on every other ported card", async () => {
+    await render(panel(VARIANTS.open()))
+    expect(classesOf("section")).toContain("leading-[normal]")
+    expect(classesOf("section")).toContain("kr")
+  })
+
+  test("a caller's className rides along with the card's own", async () => {
+    await render(panel(startProps({ className: "max-w-[860px]" })))
+    const classes = classesOf("section")
+    expect(classes).toContain("max-w-[860px]")
+    expect(classes).toContain("kr")
+  })
+
+  test("a task with no ref still renders, because the shell decides what can run", async () => {
+    await render(panel(startProps({ task: { ref: null, text: "A line with no ref", done: false } })))
+    expect(prose()).toContain("A line with no ref")
   })
 })
