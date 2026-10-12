@@ -34,6 +34,16 @@ export interface Waiting {
    * prose as the reason the run stopped.
    */
   detail: string | null
+  /**
+   * When the run parked, epoch ms, or `null` for a log written before
+   * `PhaseRecord.at` existed.
+   *
+   * `null` means print no clock. It must not fall back to the run's start -
+   * that reads "waiting 47m" for a gate parked two minutes ago - and it must
+   * not fall back to now, which resets the number every time the page reloads
+   * and is the exact lie the clock exists to prevent.
+   */
+  sinceMs: number | null
 }
 
 export interface Ended {
@@ -72,6 +82,19 @@ export interface RunView {
   /** The file the gate renders, as the plan phase recorded it. */
   planPath: string | null
   /**
+   * Files the **planning** phase read, in first-seen order.
+   *
+   * The gate collapses these under "Planning also read N files", which is how a
+   * human judges whether the plan was written with the right context. Only the
+   * plan phase counts: files the implement phase reads are the agent doing the
+   * work, not evidence about the plan being approved.
+   *
+   * Reads only - `Read`, `Glob`, `Grep` - never the writing tools, because
+   * `GateShape.filesRead` is named for what it is and a file the agent *edited*
+   * during planning would be a different and more alarming fact.
+   */
+  planFilesRead: string[]
+  /**
    * `runId#recordIndex` of the newest unresolved `waiting` record, or `null`.
    *
    * The record's index, not the row's: an action has to name the park it is
@@ -82,7 +105,7 @@ export interface RunView {
   waiting: Waiting | null
   ended: Ended | null
   /** The newest rate-limit reading in this log, for this run's account. */
-  limit: { status: string; utilization: number | undefined } | null
+  limit: { status: string; utilization: number | undefined; resetsAt: number | undefined } | null
   /** Anything this reader could not fully account for. Never thrown. */
   warnings: string[]
   /** Record kinds this version does not know, in first-seen order. */
@@ -99,6 +122,15 @@ export interface RunView {
  * was away.
  */
 const WRITING_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"])
+
+/**
+ * Tools whose use means a file was looked at.
+ *
+ * Separate from `WRITING_TOOLS` on purpose: the gate's list is evidence about
+ * how well-informed the plan is, and folding a write into it would hide the
+ * much more serious fact that the planning phase edited something.
+ */
+const READING_TOOLS = new Set(["Read", "Glob", "Grep"])
 
 /** A tool input's `file_path`, when it has a usable one. */
 function pathOf(input: unknown): string | null {
@@ -134,6 +166,7 @@ export function foldRun(runId: string, records: readonly RunRecord[]): RunView {
   const buckets: ResultEvent[][] = []
   const phases = new Map<RunPhase, PhaseStep>()
   const digest: DigestEntry[] = []
+  const planFilesRead: string[] = []
   /** Distinct paths the implement phase wrote, for the `implemented` entry. */
   const touched = new Set<string>()
   const warnings: string[] = []
@@ -147,6 +180,17 @@ export function foldRun(runId: string, records: readonly RunRecord[]): RunView {
   let limit: RunView["limit"] = null
   /** The phase whose record last said `running`, so a later record can close it. */
   let openPhase: RunPhase | null = null
+  /**
+   * When the phase currently drawn started, epoch ms, for its duration.
+   *
+   * A phase's length is the gap between its own record and the next one, which
+   * is the only thing the log can say: no record reports "this phase took 8s".
+   * `null` for a log written before `PhaseRecord.at` existed, and a phase whose
+   * start is unknown gets **no** duration rather than a guessed one - which is
+   * what `PhaseStep.elapsedMs` being optional is for, and what the rail's em
+   * dash means.
+   */
+  let phaseStartedMs: number | null = null
   /**
    * The phase currently drawn as `waiting`, so the run moving on can resolve it.
    *
@@ -209,10 +253,16 @@ export function foldRun(runId: string, records: readonly RunRecord[]): RunView {
             rows.push(errors === undefined ? { id: rowId(runId, i, j), event } : { id: rowId(runId, i, j), event, errors })
             return
           }
-          if (event.kind === "rate_limit") limit = { status: event.status, utilization: event.utilization }
+          if (event.kind === "rate_limit") {
+            limit = { status: event.status, utilization: event.utilization, resetsAt: event.resetsAt }
+          }
           if (event.kind === "tool_use" && WRITING_TOOLS.has(event.name)) {
             const path = pathOf(event.input)
             if (path !== null) touched.add(path)
+          }
+          if (openPhase === "plan" && event.kind === "tool_use" && READING_TOOLS.has(event.name)) {
+            const path = pathOf(event.input)
+            if (path !== null && !planFilesRead.includes(path)) planFilesRead.push(path)
           }
           rows.push({ id: rowId(runId, i, j), event })
         })
@@ -234,17 +284,21 @@ export function foldRun(runId: string, records: readonly RunRecord[]): RunView {
             ...(touched.size === 0 ? {} : { files: touched.size }),
           })
         }
-        if (openPhase !== null && openPhase !== record.phase) close(phases, openPhase)
+        if (openPhase !== null && openPhase !== record.phase) close(phases, openPhase, elapsed(phaseStartedMs, record.at))
         // The run reached a different phase, so whatever it was parked at is
         // settled - the gate was approved, the question answered, the ceiling
         // raised. Without this the rail reads `gate:waiting` on a finished run,
         // which is what a real log showed.
-        if (waitingPhase !== null && waitingPhase !== record.phase) close(phases, waitingPhase)
+        if (waitingPhase !== null && waitingPhase !== record.phase) {
+          // How long the human took, which is a real duration the rail prints
+          // once the gate is behind them.
+          close(phases, waitingPhase, elapsed(phaseStartedMs, record.at))
+        }
 
         if (record.state === "waiting") {
           const reason: WaitReason = record.reason ?? "gate"
           waitId = waitIdFor(runId, i)
-          waiting = { reason, detail: record.detail ?? null }
+          waiting = { reason, detail: record.detail ?? null, sinceMs: record.at ?? null }
 
           // `park` is called with the phase that **ran**, not the phase that
           // waits, and design §2 writes the gate as `plan -> waiting(gate)`:
@@ -262,16 +316,27 @@ export function foldRun(runId: string, records: readonly RunRecord[]): RunView {
           // phase finished while it is still the one outstanding, and park a
           // `gate` the run never reached.
           const parked: RunPhase = reason === "gate" ? "gate" : record.phase
-          if (parked !== record.phase) close(phases, record.phase)
-          phases.set(parked, { phase: parked, state: "waiting", note: reason })
+          if (parked !== record.phase) close(phases, record.phase, elapsed(phaseStartedMs, record.at))
+          phases.set(parked, {
+            phase: parked,
+            state: "waiting",
+            note: reason,
+            ...(record.at === undefined ? {} : { startedAtMs: record.at }),
+          })
           openPhase = null
           waitingPhase = parked
+          phaseStartedMs = record.at ?? null
         } else {
           waitId = null
           waiting = null
-          phases.set(record.phase, { phase: record.phase, state: "running" })
+          phases.set(record.phase, {
+            phase: record.phase,
+            state: "running",
+            ...(record.at === undefined ? {} : { startedAtMs: record.at }),
+          })
           openPhase = record.phase
           waitingPhase = null
+          phaseStartedMs = record.at ?? null
         }
         return
       }
@@ -349,6 +414,7 @@ export function foldRun(runId: string, records: readonly RunRecord[]): RunView {
     processes: buckets.map((results) => ({ results })),
     ceilingUsd: raised ?? (header as RunHeader | null)?.budgetUsd ?? null,
     planPath,
+    planFilesRead,
     waitId,
     waiting,
     ended,
@@ -356,6 +422,19 @@ export function foldRun(runId: string, records: readonly RunRecord[]): RunView {
     warnings,
     unknownKinds,
   }
+}
+
+/**
+ * How long a phase ran, when both ends are known.
+ *
+ * A negative gap means the clock moved backwards between two appends - a
+ * suspended laptop, an NTP step. Printing it would show "-2m"; omitting it
+ * shows the em dash the rail already has for "not known".
+ */
+function elapsed(from: number | null, to: number | undefined): { elapsedMs: number } | undefined {
+  if (from === null || to === undefined) return undefined
+  const ms = to - from
+  return ms >= 0 ? { elapsedMs: ms } : undefined
 }
 
 /**
@@ -368,8 +447,12 @@ export function foldRun(runId: string, records: readonly RunRecord[]): RunView {
  * ladder, which reads as "never happened" for a phase the log just told us
  * finished.
  */
-function close(phases: Map<RunPhase, PhaseStep>, phase: RunPhase): void {
-  phases.set(phase, { ...phases.get(phase), phase, state: "done" })
+function close(phases: Map<RunPhase, PhaseStep>, phase: RunPhase, took?: { elapsedMs: number }): void {
+  // `startedAtMs` is dropped on close: the rail ticks its own clock from it for
+  // the *current* phase, and leaving it on a finished one would run that clock
+  // beside a fixed duration.
+  const { startedAtMs: _started, ...rest } = phases.get(phase) ?? {}
+  phases.set(phase, { ...rest, phase, state: "done", ...took })
 }
 
 /**
@@ -438,9 +521,22 @@ const API = "/api"
  * server's `/` and would have no token for any other route. Harmless in
  * production, where it just re-issues the cookie it already has.
  */
-export async function openSession(fetcher: typeof fetch = fetch): Promise<void> {
+export interface Session {
+  /**
+   * Where the server is, e.g. `http://127.0.0.1:3100`, as the server names
+   * itself. `null` from a server too old to say.
+   *
+   * Not derived from `window.location`: in dev that names Vite, and the app
+   * bar's chip exists so a second tab can be pointed at kantan.
+   */
+  origin: string | null
+}
+
+export async function openSession(fetcher: typeof fetch = fetch): Promise<Session> {
   const res = await fetcher(`${API}/session`, { cache: "no-store" })
   if (!res.ok) throw new Error(`the session could not be opened: ${res.status} ${await text(res)}`)
+  const body = (await res.json()) as { origin?: unknown }
+  return { origin: typeof body.origin === "string" && body.origin !== "" ? body.origin : null }
 }
 
 export async function fetchTree(fetcher: typeof fetch = fetch): Promise<TreePayload> {

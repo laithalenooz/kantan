@@ -154,6 +154,27 @@ export interface PhaseRecord {
    */
   sessionId?: string
   /**
+   * When this phase record was written, in **epoch milliseconds**.
+   *
+   * Present on a `waiting` record, which is the one the UI puts a clock on:
+   * the band and the gate both print "waiting 2m 14s", and without a recorded
+   * instant there is nothing honest to count from. The two substitutes are
+   * both wrong in ways that matter. `RunHeader.startedAt` is when the *run*
+   * began, so a gate parked two minutes into a long run reads "waiting 47m".
+   * A mount time resets to "waiting 0s" on every reload, which is exactly the
+   * lie the clock exists to prevent - the whole premise is that the human
+   * walked away, so the number has to survive them coming back.
+   *
+   * Epoch ms rather than `startedAt`'s ISO 8601 because every consumer does
+   * arithmetic on it, and a second format that has to be parsed before it can
+   * be compared is a conversion waiting to be forgotten.
+   *
+   * Optional, per the absence policy in docs/HANDOFF.md: logs already on disk
+   * were written before this field existed, so a reader must treat its absence
+   * as "unknown" and print nothing, never as an instant.
+   */
+  at?: number
+  /**
    * Why the run is waiting, in prose, on a `waiting` record.
    *
    * Nothing else in the log holds it. A `question` has the agent's own text in

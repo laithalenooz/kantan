@@ -395,7 +395,7 @@ test("a message whose content is a string arrives as unknown", () => {
 test("rate_limit surfaces the utilization of the window named by rateLimitType", async () => {
   const events = parseText(await Bun.file(fixture("plan-success.jsonl")).text())
   const limits = events.filter((e) => e.kind === "rate_limit")
-  expect(limits).toEqual([{ kind: "rate_limit", status: "allowed", utilization: 0.41 }])
+  expect(limits).toEqual([{ kind: "rate_limit", status: "allowed", utilization: 0.41, resetsAt: 1_800_000_000 }])
 })
 
 test("rate_limit reads the named window, not a hardcoded one", () => {
@@ -407,7 +407,7 @@ test("rate_limit reads the named window, not a hardcoded one", () => {
       unifiedWindows: { five_hour: { utilization: 0.41 }, seven_day: { utilization: 0.88 } },
     },
   })
-  expect(events).toEqual([{ kind: "rate_limit", status: "allowed_warning", utilization: 0.88 }])
+  expect(events).toEqual([{ kind: "rate_limit", status: "allowed_warning", utilization: 0.88, resetsAt: undefined }])
 })
 
 test("rate_limit reports undefined utilization when the window is missing", () => {
@@ -415,7 +415,7 @@ test("rate_limit reports undefined utilization when the window is missing", () =
     type: "rate_limit_event",
     rate_limit_info: { status: "rejected", rateLimitType: "five_hour", unifiedWindows: {} },
   })
-  expect(events).toEqual([{ kind: "rate_limit", status: "rejected", utilization: undefined }])
+  expect(events).toEqual([{ kind: "rate_limit", status: "rejected", utilization: undefined, resetsAt: undefined }])
 })
 
 test("rate_limit does not key on overageStatus", () => {
@@ -429,7 +429,7 @@ test("rate_limit does not key on overageStatus", () => {
     unifiedWindows: { five_hour: { utilization: 0.12 } },
   }
   const events = parseOne({ type: "rate_limit_event", rate_limit_info: info })
-  expect(events).toEqual([{ kind: "rate_limit", status: "allowed", utilization: 0.12 }])
+  expect(events).toEqual([{ kind: "rate_limit", status: "allowed", utilization: 0.12, resetsAt: undefined }])
 })
 
 test("result carries subtype, isError, cost, turns and text", async () => {

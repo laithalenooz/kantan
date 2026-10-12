@@ -829,6 +829,7 @@ async function planTurn(run: ActiveRun, prompt: string, resume: boolean): Promis
     kind: "phase",
     phase: "plan",
     state: "running",
+    at: Date.now(),
     planPath: run.planPath,
     sessionId: run.planSessionId,
   })
@@ -965,6 +966,10 @@ async function park(
     phase,
     state: "waiting",
     reason,
+    // The instant the human became responsible for this run. Nothing else in
+    // the log holds it, and the UI's "waiting 2m 14s" has no honest source
+    // without it - see `PhaseRecord.at`.
+    at: Date.now(),
     // Written because nothing else in the log holds it: a `blocked` park the
     // machine made - an exhausted budget - and a `stalled` one have no agent
     // text behind them, so a restarted server would otherwise render the
@@ -1520,6 +1525,7 @@ async function agentTurn(run: ActiveRun, turn: ImplementTurn): Promise<RunResult
     kind: "phase",
     phase: turn.phase,
     state: "running",
+    at: Date.now(),
     // **A `phase` record carries a `sessionId` exactly when it spawned**, which
     // is the invariant a resumed run splits per-process cost windows on. A
     // refine turn on the live process must not carry one, or its window would
@@ -1589,7 +1595,7 @@ type Verified =
  */
 async function verify(run: ActiveRun): Promise<Verified> {
   run.phase = "test"
-  await run.log.append({ kind: "phase", phase: "test", state: "running" })
+  await run.log.append({ kind: "phase", phase: "test", state: "running", at: Date.now() })
   let report: string | null
   try {
     report = reportFileFor(run.project)

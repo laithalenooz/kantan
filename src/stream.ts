@@ -26,7 +26,23 @@ export type Event =
   | { kind: "thinking_tokens"; tokens: number; delta: number }
   | { kind: "tool_use"; id: string; name: string; input: unknown }
   | { kind: "tool_result"; toolUseId: string; content: string; isError: boolean }
-  | { kind: "rate_limit"; status: string; utilization: number | undefined }
+  | {
+      kind: "rate_limit"
+      status: string
+      utilization: number | undefined
+      /**
+       * When the active window resets, in **epoch seconds** - the unit the CLI
+       * sends. Taken from the active window, not from `rate_limit_info`'s own
+       * copy: the two agree for `five_hour` in the fixtures, but the top-level
+       * one is not scoped to the window `rateLimitType` names, so reading it
+       * would silently report the wrong window's reset the moment they differ.
+       *
+       * `undefined` when absent. `overageStatus` is still deliberately not
+       * surfaced - it reads "rejected" on every normal event when overage is
+       * disabled for an org, and a rail that keyed on it would warn constantly.
+       */
+      resetsAt: number | undefined
+    }
   | {
       kind: "result"
       subtype: string
@@ -258,10 +274,13 @@ function rateLimit(m: Record<string, unknown>): Event {
   const window = typeof name === "string" ? obj(windows?.[name]) : undefined
   const utilization = window?.utilization
 
+  const resetsAt = window?.resetsAt
+
   return {
     kind: "rate_limit",
     status: str(info?.status),
     utilization: typeof utilization === "number" ? utilization : undefined,
+    resetsAt: typeof resetsAt === "number" ? resetsAt : undefined,
   }
 }
 

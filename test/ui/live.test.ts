@@ -185,7 +185,7 @@ describe("phases and parks", () => {
       { kind: "phase", phase: "implement", state: "waiting", reason: "question", detail: "which table?" } as RunRecord,
     ])
     expect(view.waitId).toBe(`${RUN}#1`)
-    expect(view.waiting).toEqual({ reason: "question", detail: "which table?" })
+    expect(view.waiting).toEqual({ reason: "question", detail: "which table?", sinceMs: null })
   })
 
   test("the plan phase's planPath is carried, not re-derived by convention", () => {
@@ -496,5 +496,87 @@ describe("the digest timeline", () => {
   test("carries an end record's warnings, which nothing else holds", () => {
     const view = fold([header(), { kind: "end", state: "failed", why: "gave up", costUsd: 0.2, warnings: ["left on its branch"] } as RunRecord])
     expect(view.digest.at(-1)).toEqual({ id: expect.any(String), kind: "ended", state: "failed", why: "gave up", warnings: ["left on its branch"] })
+  })
+})
+
+describe("when the run parked", () => {
+  test("is carried from the waiting record, for the clock to count from", () => {
+    const view = fold([
+      header(),
+      { kind: "phase", phase: "plan", state: "waiting", reason: "gate", at: 1_760_000_000_000 } as RunRecord,
+    ])
+    expect(view.waiting?.sinceMs).toBe(1_760_000_000_000)
+  })
+
+  test("a log written before the field existed says null, never a substitute", () => {
+    // Falling back to the run's start reads "waiting 47m" for a gate parked two
+    // minutes ago; falling back to now resets on every reload. Both are worse
+    // than printing no clock.
+    const view = fold([header(), { kind: "phase", phase: "plan", state: "waiting", reason: "gate" } as RunRecord])
+    expect(view.waiting?.sinceMs).toBeNull()
+  })
+})
+
+describe("how long each phase took", () => {
+  test("is the gap between a phase record and the next one", () => {
+    const t = 1_760_000_000_000
+    const view = fold([
+      header(),
+      { kind: "phase", phase: "plan", state: "running", sessionId: "s", at: t } as RunRecord,
+      { kind: "phase", phase: "plan", state: "waiting", reason: "gate", at: t + 8_000 } as RunRecord,
+      { kind: "human", action: "approve" } as RunRecord,
+      { kind: "phase", phase: "implement", state: "running", sessionId: "s2", at: t + 100_000 } as RunRecord,
+      { kind: "end", state: "done", costUsd: 0.5 } as RunRecord,
+    ])
+    expect(view.phases.find((p) => p.phase === "plan")?.elapsedMs).toBe(8_000)
+    // The gate is behind the human by then, so it reports how long they took
+    // and keeps no ticking start.
+    expect(view.phases.find((p) => p.phase === "gate")?.elapsedMs).toBe(92_000)
+    expect(view.phases.find((p) => p.phase === "gate")?.startedAtMs).toBeUndefined()
+  })
+
+  test("a gate still waiting carries the instant the rail ticks from", () => {
+    const t = 1_760_000_000_000
+    const view = fold([
+      header(),
+      { kind: "phase", phase: "plan", state: "running", sessionId: "s", at: t } as RunRecord,
+      { kind: "phase", phase: "plan", state: "waiting", reason: "gate", at: t + 8_000 } as RunRecord,
+    ])
+    const gate = view.phases.find((p) => p.phase === "gate")
+    expect(gate?.state).toBe("waiting")
+    expect(gate?.startedAtMs).toBe(t + 8_000)
+    // No duration yet: it is still running, and the rail owns that clock.
+    expect(gate?.elapsedMs).toBeUndefined()
+  })
+
+  test("a phase whose start is unknown gets no duration rather than a guess", () => {
+    // Logs written before PhaseRecord.at. The rail's em dash is the honest
+    // answer; any substitute is a fabricated measurement.
+    const view = fold([
+      header(),
+      { kind: "phase", phase: "plan", state: "running", sessionId: "s" } as RunRecord,
+      { kind: "phase", phase: "implement", state: "running", sessionId: "s2", at: 1_760_000_000_000 } as RunRecord,
+    ])
+    expect(view.phases.find((p) => p.phase === "plan")?.elapsedMs).toBeUndefined()
+  })
+
+  test("a clock that went backwards yields no duration, never a negative one", () => {
+    const t = 1_760_000_000_000
+    const view = fold([
+      header(),
+      { kind: "phase", phase: "plan", state: "running", sessionId: "s", at: t } as RunRecord,
+      { kind: "phase", phase: "implement", state: "running", sessionId: "s2", at: t - 120_000 } as RunRecord,
+    ])
+    expect(view.phases.find((p) => p.phase === "plan")?.elapsedMs).toBeUndefined()
+  })
+
+  test("a finished phase keeps no startedAtMs, so no clock ticks beside its duration", () => {
+    const t = 1_760_000_000_000
+    const view = fold([
+      header(),
+      { kind: "phase", phase: "plan", state: "running", sessionId: "s", at: t } as RunRecord,
+      { kind: "phase", phase: "implement", state: "running", sessionId: "s2", at: t + 5_000 } as RunRecord,
+    ])
+    expect(view.phases.find((p) => p.phase === "plan")?.startedAtMs).toBeUndefined()
   })
 })

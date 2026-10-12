@@ -394,7 +394,23 @@ export const ROUTES: Record<string, RouteHandler> = {
    * serves index.html, so the browser never loads our "/" and the cookie has
    * to arrive this way. */
   "GET /api/session": (_req, ctx) =>
-    Response.json({ ok: true, dev: ctx.dev }, { headers: { "Cache-Control": "no-store", "Set-Cookie": tokenCookie(ctx) } }),
+    Response.json(
+      {
+        ok: true,
+        dev: ctx.dev,
+        /**
+         * Where kantan itself is, which the app bar prints.
+         *
+         * The page cannot work this out. In dev it is served by Vite on a
+         * different port, so `window.location` names Vite and not this server -
+         * and the chip exists precisely so a second browser tab can be pointed
+         * at the right place. `ctx.port` is the port actually bound, which is
+         * not the requested one when 0 was asked for.
+         */
+        origin: `http://${LOOPBACK}:${ctx.port}`,
+      },
+      { headers: { "Cache-Control": "no-store", "Set-Cookie": tokenCookie(ctx) } },
+    ),
 
   "GET /api/health": () => Response.json({ ok: true }),
 

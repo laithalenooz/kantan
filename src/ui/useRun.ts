@@ -39,10 +39,13 @@ function reason(cause: unknown): string {
  */
 export function useTree(fetcher: typeof fetch = fetch): {
   tree: TreePayload | null
+  /** Where the server is, for the app bar's chip. `null` until the session opens. */
+  origin: string | null
   error: Failure
   reload: () => void
 } {
   const [tree, setTree] = useState<TreePayload | null>(null)
+  const [origin, setOrigin] = useState<string | null>(null)
   const [error, setError] = useState<Failure>(null)
   const [nonce, setNonce] = useState(0)
 
@@ -53,9 +56,10 @@ export function useTree(fetcher: typeof fetch = fetch): {
     let live = true
     void (async () => {
       try {
-        await openSession(fetcher)
+        const session = await openSession(fetcher)
         const payload = await fetchTree(fetcher)
         if (live) {
+          setOrigin(session.origin)
           setTree(payload)
           setError(null)
         }
@@ -68,7 +72,7 @@ export function useTree(fetcher: typeof fetch = fetch): {
     }
   }, [fetcher, nonce])
 
-  return { tree, error, reload: useCallback(() => setNonce((n) => n + 1), []) }
+  return { tree, origin, error, reload: useCallback(() => setNonce((n) => n + 1), []) }
 }
 
 /**

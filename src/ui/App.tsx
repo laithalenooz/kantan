@@ -1,9 +1,10 @@
-import { useCallback, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { Tree, canStart, type Account, type TaskId, type TreeProject, type TreeTask } from "./Tree.tsx"
 import { Gate, type GateProps } from "./Gate.tsx"
 import { Stream } from "./Stream.tsx"
-import { Sidebar, type AccountWindow } from "./Sidebar.tsx"
+import { Sidebar, sumProcessCost, type AccountWindow } from "./Sidebar.tsx"
 import { Digest, ReturnBand, type DigestSubject } from "./Digest.tsx"
+import { AppBar, Breadcrumb, NeedsYouBand, usePageAttention } from "./Chrome.tsx"
 import { startRun, taskKeyOf, type RunView } from "./live.ts"
 import { useAction, usePlan, useRun, useTree } from "./useRun.ts"
 import type { RunPhase } from "../runlog.ts"
@@ -84,8 +85,19 @@ function windowsFor(view: RunView | null, account: Account | undefined): Account
       // reads as "nothing to say yet" - the notice keys on the other values.
       status: view.limit?.status ?? "allowed",
       utilization: view.limit?.utilization,
+      // Epoch seconds, as the CLI sends and `AccountWindow` expects. Omitted
+      // when unknown, which the rail prints as an em dash rather than guessing.
+      ...(view.limit?.resetsAt === undefined ? {} : { resetsAtSec: view.limit.resetsAt }),
     },
   ]
+}
+
+/** "asked at 18:22 · 9 min ago", as the card's `askedAt` expects. */
+function askedLabel(atMs: number, nowMs: number): string {
+  const clock = new Date(atMs).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
+  const mins = Math.floor((nowMs - atMs) / 60_000)
+  if (mins < 1) return `asked at ${clock} · just now`
+  return `asked at ${clock} · ${mins} min ago`
 }
 
 /**
@@ -141,8 +153,25 @@ function footerFor(view: RunView | null): string | null {
   return running === undefined ? null : `${running.phase} · running`
 }
 
+/**
+ * A clock that ticks once a minute.
+ *
+ * The shell owns it because a parked run emits no events for minutes, so
+ * anything deriving "9 min ago" from incoming data freezes at the last event
+ * and quietly understates how long the human has been away.
+ */
+function useNow(): number {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30_000)
+    return () => clearInterval(id)
+  }, [])
+  return now
+}
+
 export function App() {
-  const { tree, error: treeError } = useTree()
+  const { tree, origin, error: treeError } = useTree()
+  const nowMs = useNow()
   const [selected, setSelected] = useState<TaskId | null>(null)
   const [started, setStarted] = useState<Record<string, string>>({})
   const [startError, setStartError] = useState<string | null>(null)
@@ -187,6 +216,11 @@ export function App() {
         plan,
         testCommand: project?.testCmd ?? "",
         planDurationMs: view.phases.find((p) => p.phase === "plan")?.elapsedMs,
+        // What the run has spent, which the gate prints beside the duration.
+        // `sumProcessCost` takes the last result of each process because cost
+        // accumulates within one and resets between them.
+        costUsd: sumProcessCost(view.processes),
+        ...(view.planFilesRead.length === 0 ? {} : { filesRead: view.planFilesRead }),
         onApprove: () => send({ kind: "approve" }),
         onFeedback: (text: string) => send({ kind: "feedback", text }),
       }
@@ -203,6 +237,10 @@ export function App() {
         waitId: view.waitId,
         phase: askingPhase(asked),
         question: view.waiting.detail,
+        // Preformatted, because the card takes a string and the clock is the
+        // shell's. Omitted when the log predates `PhaseRecord.at` rather than
+        // printing a time the run never recorded.
+        ...(view.waiting.sinceMs === null ? {} : { askedAt: askedLabel(view.waiting.sinceMs, nowMs) }),
         onAnswer: (text: string) => send({ kind: "answer", text }),
       }
     }
@@ -210,7 +248,7 @@ export function App() {
     // `blocked` and `stalled` have no card in the design: they are a notice
     // under the log, which `footerFor` writes.
     return null
-  }, [view, plan, project, send])
+  }, [view, plan, project, send, nowMs])
 
   const needsYou = countNeedsYou(projects)
 
@@ -233,6 +271,10 @@ export function App() {
           ...(project === null ? {} : { project: project.path.split("/").at(-1) ?? project.path }),
         }
 
+  /* The single writer of `document.title` and the favicon. `ReturnBand`
+     deliberately refuses both so there cannot be two. */
+  usePageAttention({ subject, needsYou })
+
   const failure = treeError ?? startError ?? actionError
 
   return (
@@ -241,9 +283,23 @@ export function App() {
        A column, not the grid itself: both artboards put a full-width band
        between the header and the three columns, and only one band ever shows. */
     <div className="kr flex h-dvh flex-col overflow-hidden">
-      {subject !== null && view?.ended === null && <ReturnBand subject={subject} needsYou={needsYou} />}
+      <AppBar origin={origin} />
 
-      <div className="grid min-h-0 flex-1 grid-cols-[18rem_minmax(0,1fr)_14rem] overflow-hidden">
+      {/* Exactly one band, in the slot both artboards put it in. The orange one
+          wins: a run that needs you is never also a calm one. */}
+      {view?.waiting != null && view.waiting.sinceMs !== null ? (
+        <NeedsYouBand
+          project={project?.path.split("/").at(-1) ?? null}
+          taskRef={selected?.taskRef ?? null}
+          taskText={task?.text ?? null}
+          reason={view.waiting.reason}
+          startedAtMs={view.waiting.sinceMs}
+        />
+      ) : (
+        subject !== null && view?.ended === null && <ReturnBand subject={subject} needsYou={needsYou} />
+      )}
+
+      <div className="grid min-h-0 flex-1 grid-cols-[18rem_minmax(0,1fr)_16.25rem] overflow-hidden">
       {/* A flex column, because `Tree` draws its own panel as an `<aside
           className="basis-72 grow">` - and `grow` does nothing to a child of a
           block, so the panel ends at its content and the ground shows through
@@ -252,14 +308,36 @@ export function App() {
         <Tree projects={projects} selected={selected} onSelect={setSelected} />
       </div>
 
-      <div className="flex min-w-0 flex-col overflow-y-auto">
+      {/* The dotted ground is its **own absolutely positioned layer**, exactly
+          as the artboard draws it (`position:absolute;inset:0;pointer-events:
+          none`). It cannot go on the column itself: `.dots` carries a
+          `mask-image`, and a mask applies to the element's entire rendering,
+          children included - putting it on the container faded the digest and
+          erased the run record below the mask's 75% stop. */}
+      <main className="relative flex min-w-0 flex-col overflow-y-auto px-6 pb-10">
+        <div className="dots pointer-events-none absolute inset-0" aria-hidden="true" />
+        <div className="relative flex min-w-0 flex-col">
+        {project !== null && selected !== null && (
+          <Breadcrumb
+            project={project.path.split("/").at(-1) ?? project.path}
+            featureFile={selected.featureFile}
+            account={project.account}
+            {...(selected.taskRef === null ? {} : { taskRef: selected.taskRef })}
+            {...(task === null ? {} : { taskText: task.text })}
+          />
+        )}
+
         {failure !== null && (
           <p role="alert" className="m-4 rounded-[12px] border border-[#F3C6C9] bg-[#FDF2F3] px-4 py-3 text-[13px] leading-[1.5] text-[#D92D3A]">
             {failure}
           </p>
         )}
 
-        {gate !== null && <Gate {...gate} />}
+        {gate !== null && (
+          <div className="w-full max-w-[920px]">
+            <Gate {...gate} />
+          </div>
+        )}
 
         {/* Keyed by run, as Stream's rows are: the entrance is keyed on entry
             ids and a replayed log must reconcile rather than re-animate. */}
@@ -292,9 +370,12 @@ export function App() {
             </button>
           </div>
         )}
-      </div>
+        </div>
+      </main>
 
-      <div className="min-w-0 overflow-y-auto border-l border-edge bg-panel">
+      {/* No border or background here: `Sidebar` draws its own aside, faithfully
+          to the artboard, and repeating them painted a 2px seam. */}
+      <div className="flex min-w-0 flex-col overflow-y-auto">
         {view !== null && view.ceilingUsd !== null && (
           <Sidebar
             phases={view.phases}
