@@ -177,3 +177,12 @@ export function fault(key: string, cause: unknown): Response {
   console.error(`${key} failed:`, cause)
   return refuse(500, "the server failed to handle that request; its terminal has the reason")
 }
+
+// --- Registering a project --------------------------------------------------
+
+/** `what` names the thing that cannot be done, because this answers the tree,
+ * registration, removal, an edit and a draft, and "it cannot register a
+ * project" was already the wrong sentence for three of them. */
+export function noStore(what: string): Response {
+  return refuse(503, `refused: this server was launched without a project store, so it cannot ${what}`)
+}
