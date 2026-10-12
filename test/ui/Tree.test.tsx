@@ -735,6 +735,43 @@ describe("the tree", () => {
     expect(textOf(host)).toContain("$ vendor/bin/pest")
   })
 
+  /**
+   * `configDir` is carried, not drawn.
+   *
+   * It is the field that decides which Claude account a run actually bills to:
+   * `src/spawn.ts` sets `CLAUDE_CONFIG_DIR` from it and `src/run.ts` records the
+   * run's profile from it, while `project.account` is read by nothing outside
+   * `accountOf()` in `src/server.ts` and is only the chip's word. So a shell
+   * that cannot see this field cannot switch accounts - it moves the label and
+   * bills the same profile as before.
+   *
+   * Optional rather than required, for the reason `Project.configDir` gives:
+   * **absent means the default profile**, which is a real and common
+   * configuration rather than missing data.
+   *
+   * The assertion is that it reaches the type and stays out of the column. It
+   * is a filesystem path from the user's own machine, and the design gives it
+   * no cell; printing it would be a layout change nobody asked for.
+   */
+  test("a project carries its config directory without drawing it", () => {
+    const host = render(
+      <Tree
+        projects={[
+          {
+            path: "/home/me/code/your-app",
+            account: { kind: "work" },
+            testCmd: "npm test",
+            configDir: "/home/me/.claude-work",
+            features: [{ path: "docs/features/importer.md", tasks: [{ ref: "T1", text: "Parse", done: false }] }],
+          },
+        ]}
+      />,
+    )
+    expect(textOf(host)).toContain("$ npm test")
+    expect(textOf(host)).not.toContain(".claude-work")
+    expect(host.innerHTML).not.toContain(".claude-work")
+  })
+
   test("a work project never reads as personal", () => {
     const host = render(
       <Tree

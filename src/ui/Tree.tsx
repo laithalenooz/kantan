@@ -112,6 +112,22 @@ export interface TreeProject {
   account: Account
   /** e.g. `npm test`. Printed under the repo name as the design shows it. */
   testCmd: string
+  /**
+   * The Claude profile directory a run bills to, or absent for the default one.
+   *
+   * Carried but never drawn. It is the field that actually decides which
+   * account pays: `src/spawn.ts` sets `CLAUDE_CONFIG_DIR` from it and
+   * `src/run.ts` records the run's `profile` from it, while `account` above is
+   * read by nothing outside `accountOf()` in `src/server.ts` and is only the
+   * chip's word. A shell that cannot see this field cannot offer an account
+   * switch - it would move the label and bill the same profile as before.
+   *
+   * Optional rather than required, for the reason `Project.configDir` gives:
+   * **absent means the default profile**, a real and common configuration
+   * rather than missing data. That also keeps every existing construction
+   * site compiling.
+   */
+  configDir?: string
   features: TreeFeature[]
 }
 
