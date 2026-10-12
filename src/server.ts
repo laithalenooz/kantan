@@ -157,6 +157,20 @@ export interface StartRequest {
   featureFile: string
   /** The `T<n>` label inside that file. */
   taskRef: string
+  /**
+   * Start even though the repo has uncommitted work, so the agent continues
+   * from where the human left off.
+   *
+   * **Optional, and omitted rather than sent as `false`.** The port is a
+   * structural match against `createRunner` rather than an import, so this
+   * declaration and the machine's have to agree by hand; keeping it optional on
+   * both sides means an ordinary start is expressible without mentioning the
+   * flag at all, which is what a caller that has never heard of it sends.
+   *
+   * It does not waive an in-progress merge or an unresolved conflict - the
+   * machine refuses those whatever this says.
+   */
+  allowDirty?: boolean
 }
 
 /**
@@ -1765,7 +1779,7 @@ function nonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim() !== "" ? value : null
 }
 
-const START_KEYS = ["projectPath", "featureFile", "taskRef"] as const
+const START_KEYS = ["projectPath", "featureFile", "taskRef", "allowDirty"] as const
 const FEEDBACK_KEYS = ["text"] as const
 /** The same single key as feedback, and a separate constant on purpose: the two
  * routes are different actions on different conversations, and sharing the
@@ -1865,7 +1879,27 @@ async function startRun(req: Request, ctx: RouteContext): Promise<Response> {
     return badBody(START_KEYS, "a run is named by a project, a feature file and a task ref, each a non-empty string")
   }
 
-  const started = await runner.start({ projectPath, featureFile, taskRef })
+  // **A boolean, strictly.** The one key on this route that is not a string, so
+  // it owns a 400 no other start key has. `"true"`, `1` and `"yes"` are all
+  // refused rather than coerced: this waives the guard that stops an agent
+  // committing over work nobody asked it to touch, and a truthiness check would
+  // let `"false"` - which a form serialises readily - waive it. Absent is the
+  // ordinary start, which is the only value that may be inferred.
+  const rawAllowDirty = parsed.fields["allowDirty"]
+  if (rawAllowDirty !== undefined && typeof rawAllowDirty !== "boolean") {
+    return badBody(
+      START_KEYS,
+      "allowDirty is true or false, and says this one run may start even though the repo has uncommitted work; omit it for an ordinary start",
+    )
+  }
+  const allowDirty = rawAllowDirty === true
+
+  const started = await runner.start({
+    projectPath,
+    featureFile,
+    taskRef,
+    ...(allowDirty ? { allowDirty: true } : {}),
+  })
   if (!started.ok) return refuseRun(started)
   // 201: the run now exists and `runId` is how everything else addresses it,
   // the stream above included.

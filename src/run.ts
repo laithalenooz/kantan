@@ -10,6 +10,7 @@ import {
   createTaskBranch,
   recordBaseBranch,
   releaseRunLock,
+  dirtyPaths,
   requireCleanTreeForNewRun,
   requireUsableRepo,
   resumeTaskBranch,
@@ -151,6 +152,24 @@ export interface StartRunOptions {
   now?: Date
   /** See `ActionOptions.accepted`. */
   accepted?: () => void
+  /**
+   * Let this run start even though the repo has uncommitted work, so the agent
+   * continues from where the human left off. The user's workflow, in their
+   * words: *"I might want the agent to pick from where I've left in a dirty
+   * repo and proceed."*
+   *
+   * **Per run, set only when a human asked for it on that run, and never
+   * remembered.** It is not on `Project` for exactly that reason: a stored
+   * setting would quietly waive the guard for every future run of that repo,
+   * and the guard's whole job is stopping an agent committing over work nobody
+   * asked it to touch. An ordinary start is unaffected.
+   *
+   * It does **not** waive an in-progress merge, rebase, cherry-pick or bisect,
+   * nor an unresolved conflict - see `requireCleanTreeForNewRun`. Those are a
+   * broken tree rather than work in progress, and no checkbox reads as consent
+   * to a silently inherited merge parent.
+   */
+  allowDirty?: boolean
 }
 
 export interface ActionOptions {
@@ -242,6 +261,16 @@ interface ActiveRun {
   /** The base recorded at run start. Never re-derived: that is the
    * branch-stacking bug `recordBaseBranch` exists to prevent. */
   base: string | null
+  /**
+   * The paths that were already dirty when this run started, when it was
+   * explicitly allowed to start on a dirty tree. Empty for every ordinary run.
+   *
+   * On `ActiveRun` rather than read where it is needed, because the prompt that
+   * needs it most - `implementPrompt`, at gate approval - runs in a different
+   * action from the one that read git, and the only honest source by then is
+   * the log.
+   */
+  dirtyAtStart: readonly string[]
   planPath: string
   /** The bytes as this run parsed them. The mid-run-edit warning is
    * unreachable without them (docs/HANDOFF.md). */
@@ -684,7 +713,14 @@ export async function startRun(options: StartRunOptions): Promise<RunResult> {
 
     const recorded = await refusing("no-base", () => recordBaseBranch(repo))
     base = recorded
-    await refusing("dirty", () => requireCleanTreeForNewRun(repo))
+    // The list comes from the read that made the decision, never a second
+    // `git status`: a re-read could disagree with the one that permitted the
+    // start, and the log would then name files that were not what was waived.
+    const inherited = dirtyPaths(
+      await refusing("dirty", () =>
+        requireCleanTreeForNewRun(repo, { allowDirty: options.allowDirty === true }),
+      ),
+    )
     await refusing("branch-exists", () => createTaskBranch(repo, branch, recorded))
     created = branch
 
@@ -708,6 +744,10 @@ export async function startRun(options: StartRunOptions): Promise<RunResult> {
       taskRef: ref,
       featureFileHash: featureFileHash(feature.src),
       baseBranch: base,
+      // Only when there is something to record. An ordinary run has been
+      // proved clean and says nothing, so presence is a positive claim and
+      // absence is never "it started clean" - see `RunHeader.dirtyAtStart`.
+      ...(inherited.length === 0 ? {} : { dirtyAtStart: inherited }),
       budgetUsd,
       startedAt: now.toISOString(),
     })
@@ -720,6 +760,7 @@ export async function startRun(options: StartRunOptions): Promise<RunResult> {
       log,
       branch,
       base: recorded,
+      dirtyAtStart: inherited,
       planPath,
       feature,
       featureRel,
@@ -743,7 +784,7 @@ export async function startRun(options: StartRunOptions): Promise<RunResult> {
     active.set(runId, run)
     keepLock = true
     return await drive(run, () =>
-      planTurn(run, planPrompt({ task, planPath, testCmd: project.testCmd }), false),
+      planTurn(run, planPrompt({ task, planPath, testCmd: project.testCmd, dirty: inherited }), false),
     )
   } finally {
     // Every refusal from step 2 onward, and every fault before the run is
@@ -1357,7 +1398,7 @@ export async function approveGate(options: ActionOptions): Promise<RunResult> {
     run.signatures = []
     return await implementLoop(run, {
       phase: "implement",
-      prompt: implementPrompt({ task: run.taskSpec, planPath: run.planPath, testCmd: run.project.testCmd }),
+      prompt: implementPrompt({ task: run.taskSpec, planPath: run.planPath, testCmd: run.project.testCmd, dirty: run.dirtyAtStart }),
       spawn: "fresh",
     })
   })
@@ -2311,6 +2352,9 @@ async function rehydrate(options: ActionOptions): Promise<ActiveRun> {
       log,
       branch,
       base: header.baseBranch ?? null,
+      // From the log, which is the only place it survives the server that read
+      // git. Absent means nothing was recorded - never "it started clean".
+      dirtyAtStart: header.dirtyAtStart ?? [],
       planPath: folded.planPath ?? "",
       feature,
       featureRel,
@@ -2534,7 +2578,7 @@ async function continueFrom(run: ActiveRun): Promise<RunResult> {
       // is what `resumePrompt` exists for.
       return await planTurn(
         run,
-        planPrompt({ task: run.taskSpec, planPath: run.planPath, testCmd: run.project.testCmd }),
+        planPrompt({ task: run.taskSpec, planPath: run.planPath, testCmd: run.project.testCmd, dirty: run.dirtyAtStart }),
         true,
       )
     case "gate":
@@ -2564,7 +2608,7 @@ async function continueFrom(run: ActiveRun): Promise<RunResult> {
       if (!run.implementStarted) {
         return await implementLoop(run, {
           phase: "implement",
-          prompt: implementPrompt({ task: run.taskSpec, planPath: run.planPath, testCmd: run.project.testCmd }),
+          prompt: implementPrompt({ task: run.taskSpec, planPath: run.planPath, testCmd: run.project.testCmd, dirty: run.dirtyAtStart }),
           spawn: "fresh",
         })
       }
@@ -2599,6 +2643,13 @@ export interface StartRequest {
   featureFile: string
   /** The `T<n>` label inside that file. */
   taskRef: string
+  /**
+   * Start even though the repo has uncommitted work, so the agent continues
+   * from where the human left off. See `StartRunOptions.allowDirty`: explicit,
+   * per run, never remembered, and it does not waive an in-progress merge or an
+   * unresolved conflict.
+   */
+  allowDirty?: boolean
 }
 
 /**
@@ -2810,6 +2861,7 @@ export function createRunner(options: RunnerOptions = {}): Runner {
             task: { ref: request.taskRef },
             runId,
             accepted,
+            ...(request.allowDirty === true ? { allowDirty: true } : {}),
             ...(runsDir === undefined ? {} : { runsDir }),
           })
         },

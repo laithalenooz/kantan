@@ -22,6 +22,7 @@ import {
   isMergedIntoBase,
   recordBaseBranch,
   releaseRunLock,
+  dirtyPaths,
   requireCleanTreeForNewRun,
   requireUsableRepo,
   resumeTaskBranch,
@@ -194,7 +195,7 @@ test("the lock lives in the git dir, so no status shows it and no agent can comm
 
   expect(runLockPath(repo).startsWith(repo.gitDir + sep)).toBe(true)
   expect(await git(dir, "status", "--porcelain")).toBe("")
-  await expect(requireCleanTreeForNewRun(repo)).resolves.toBeUndefined()
+  await expect(requireCleanTreeForNewRun(repo)).resolves.toEqual([])
 })
 
 test("two symlinked spellings of one repo contend for the same lock", async () => {
@@ -308,7 +309,7 @@ test("a checkout left on an orch/ branch is refused as a base, so tasks cannot s
 
 test("a clean repo is clean enough to start a run", async () => {
   const { repo } = await repoWithCommit()
-  await expect(requireCleanTreeForNewRun(repo)).resolves.toBeUndefined()
+  await expect(requireCleanTreeForNewRun(repo)).resolves.toEqual([])
 })
 
 test("a modified tracked file blocks a new run, and the error names the file", async () => {
@@ -365,7 +366,7 @@ test("ignored build artefacts do not block a new run", async () => {
   await writeFile(join(dir, "build", "out.o"), "artefact")
   await writeFile(join(dir, "node_modules.txt"), "x")
 
-  await expect(requireCleanTreeForNewRun(repo)).resolves.toBeUndefined()
+  await expect(requireCleanTreeForNewRun(repo)).resolves.toEqual([])
 })
 
 test("an unmerged conflict blocks a new run with its own message, not advice to stash", async () => {
@@ -421,7 +422,7 @@ test("a submodule holding only untracked content does not block", async () => {
   await writeFile(join(dir, "sub", "build.log"), "artefact")
 
   expect(await git(dir, "status", "--porcelain")).toContain("sub")
-  await expect(requireCleanTreeForNewRun(repo)).resolves.toBeUndefined()
+  await expect(requireCleanTreeForNewRun(repo)).resolves.toEqual([])
 })
 
 test("the dirty-file list is capped rather than printing a whole repo", async () => {
@@ -1035,4 +1036,122 @@ test("a path with glob characters commits that file and not the one it would mat
   expect(landed).toContain("a[1].md")
   // The glob's victim is still untracked.
   expect(await git(dir, "status", "--porcelain")).toContain("?? a1.md")
+})
+
+// --- May this run start on a dirty tree? -----------------------------------
+// The user's workflow, in their words: "I might want the agent to pick from
+// where I've left in a dirty repo and proceed." A departure, so it is explicit
+// and per-run, and CLAUDE.md's skipping-guard rule applies.
+//
+// The dimension is **what kind of dirt is in the tree**, crossed with whether
+// this run was told it may start on it. The costs are sharply asymmetric:
+//
+// - Over-permitting is what this guard was written to prevent - an agent
+//   commits over work nobody asked it to touch. Worse for the two kinds below
+//   that are not "work in progress" at all: a conflicted file would be
+//   committed with its `<<<<<<<` markers in it, and an in-progress merge makes
+//   the agent's next commit silently inherit `MERGE_HEAD` as a second parent,
+//   which no later diff explains.
+// - Under-permitting costs the user the workflow they asked for, and the fix
+//   is one explicit opt-in on one run.
+//
+// So the opt-in permits exactly the two kinds a human can mean by "my
+// unfinished work" - tracked modifications and untracked files - and still
+// refuses the two that are a broken repo state rather than work.
+
+interface DirtRow {
+  what: string
+  make: (dir: string) => Promise<void>
+  /** Does an explicitly opted-in run start? */
+  allowed: boolean
+  why: string
+}
+
+const DIRT: DirtRow[] = [
+  {
+    what: "a clean tree",
+    make: async () => {},
+    allowed: true,
+    why: "the opt-in changes nothing when there is nothing to permit",
+  },
+  {
+    what: "a tracked modification",
+    make: async (dir) => await writeFile(join(dir, "a.txt"), "- [ ] T1 half rewritten\n"),
+    allowed: true,
+    why: "the workflow itself: unfinished work the agent is meant to continue from",
+  },
+  {
+    what: "an untracked file",
+    make: async (dir) => await writeFile(join(dir, "scratch.ts"), "// started this\n"),
+    allowed: true,
+    why: "a new file the human began is as much work in progress as an edit to an old one",
+  },
+  {
+    what: "a conflicted file",
+    make: async (dir) => await conflict(dir),
+    allowed: false,
+    why: "a conflicted file holds `<<<<<<<` markers, so an agent building on it commits them; this is a broken tree, not work in progress",
+  },
+  {
+    what: "a resolved merge that is still in progress",
+    make: async (dir) => {
+      await conflict(dir)
+      await writeFile(join(dir, "a.txt"), "ours\n")
+      await git(dir, "add", "a.txt")
+    },
+    allowed: false,
+    why: "MERGE_HEAD is still set, so the agent's next commit silently becomes a merge commit carrying it as a second parent - invisible in every later diff, and nothing a per-run opt-in can be read as consenting to",
+  },
+]
+
+for (const row of DIRT) {
+  test(`${row.what}: refused by default, ${row.allowed ? "permitted" : "still refused"} with allowDirty (${row.why})`, async () => {
+    const { dir, repo } = await repoWithCommit()
+    await row.make(dir)
+    const isClean = row.what === "a clean tree"
+
+    // The default is untouched for every ordinary start, which is the half of
+    // this that must not regress.
+    if (isClean) {
+      await expect(requireCleanTreeForNewRun(repo)).resolves.toEqual([])
+    } else {
+      expect(await messageOf(requireCleanTreeForNewRun(repo))).not.toBe("")
+    }
+
+    if (row.allowed) {
+      const permitted = await requireCleanTreeForNewRun(repo, { allowDirty: true })
+      expect(permitted.length).toBe(isClean ? 0 : 1)
+    } else {
+      // And the refusal still explains itself rather than mentioning the flag.
+      const message = await messageOf(requireCleanTreeForNewRun(repo, { allowDirty: true }))
+      expect(message).not.toBe("")
+    }
+  })
+}
+
+test("allowDirty reports the files it let through, so the run can record them", async () => {
+  // The log is the only channel that survives the server, and a reader looking
+  // at a surprising diff later needs to know the tree was not clean when the
+  // run began. That list has to come from the same `git status` the guard read:
+  // a second read could disagree with the one that made the decision.
+  const { dir, repo } = await repoWithCommit()
+  await writeFile(join(dir, "a.txt"), "- [ ] T1 half rewritten\n")
+  await writeFile(join(dir, "scratch.ts"), "// started this\n")
+
+  const permitted = await requireCleanTreeForNewRun(repo, { allowDirty: true })
+
+  expect(dirtyPaths(permitted).sort()).toEqual(["a.txt", "scratch.ts"])
+})
+
+test("the ordinary refusal keeps its stash advice, which the opt-in does not replace", async () => {
+  // The message is good and is still what every ordinary dirty start gets -
+  // including why a plain `git stash` leaves untracked files behind and the
+  // user hitting the same refusal again.
+  const { dir, repo } = await repoWithCommit()
+  await writeFile(join(dir, "untracked.ts"), "x\n")
+
+  const message = await messageOf(requireCleanTreeForNewRun(repo))
+  expect(message).toContain("untracked.ts")
+  expect(message).toContain("stash")
+  expect(message).toContain("-u")
 })

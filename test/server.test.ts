@@ -1489,6 +1489,33 @@ test("start passes the task through and answers 201 with the run id", async () =
   expect(res.body).not.toContain(l.token)
 })
 
+test("start forwards allowDirty, and refuses anything that is not a boolean", async () => {
+  // The only non-string key on this route, so it owns a 400 no other start key
+  // has. It waives the guard that stops an agent committing over work nobody
+  // asked it to touch, so a truthiness check is the one thing it must not be:
+  // `"false"` is what a form serialises readily, and under `Boolean(...)` it
+  // would waive the guard while reading like it did not.
+  const { l, fake } = await withRunner()
+
+  expect((await post(l, "/api/runs", JSON.stringify({ ...TASK, allowDirty: true }))).status).toBe(201)
+  expect(fake.calls).toEqual([{ name: "start", request: { ...TASK, allowDirty: true } }])
+
+  // `false` is accepted and means an ordinary start - the key is simply not
+  // forwarded, so the port cannot tell it from absent.
+  const { l: l2, fake: f2 } = await withRunner()
+  expect((await post(l2, "/api/runs", JSON.stringify({ ...TASK, allowDirty: false }))).status).toBe(201)
+  expect(f2.calls).toEqual([{ name: "start", request: TASK }])
+
+  for (const value of ["true", "false", 1, 0, "yes", null, {}]) {
+    const { l: l3, fake: f3 } = await withRunner()
+    const res = await post(l3, "/api/runs", JSON.stringify({ ...TASK, allowDirty: value }))
+    expect(res.status, JSON.stringify(value)).toBe(400)
+    expect(res.body, JSON.stringify(value)).toContain("allowDirty")
+    // Refused before the machine was touched.
+    expect(f3.calls, JSON.stringify(value)).toEqual([])
+  }
+})
+
 test("start refuses on a dirty repo, and git's own listing of the files reaches the client", async () => {
   // The double calls the real guards, so this proves the message src/git.ts
   // writes survives the whole way into the HTTP body. A bare "repo is dirty"

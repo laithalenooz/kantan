@@ -109,6 +109,26 @@ export interface RunHeader {
    * moving the user's checkout.
    */
   baseBranch?: string
+  /**
+   * The repo-relative paths that were **already dirty** when this run started,
+   * recorded only when the run was explicitly allowed to start on a dirty tree.
+   *
+   * The log is the only channel that survives the server, and this is the one
+   * fact a reader cannot recover any other way: looking at a surprising diff
+   * weeks later, they need to know the tree was not clean when the agent began,
+   * and which files it inherited. `git` cannot tell them - those changes are
+   * either committed by now or gone.
+   *
+   * **Presence is a positive claim; absence is not the opposite one.** A reader
+   * may render "started on a dirty tree, with these files" when it is here, and
+   * must not render "started clean" when it is not: every log written before
+   * this field existed is absent, as is every ordinary run - which the clean
+   * guard has already proved clean, but the log does not say so. The list is
+   * capped by nothing here: `requireCleanTreeForNewRun` returns what git
+   * reported, and a run with two hundred dirty files is a fact worth keeping
+   * whole.
+   */
+  dirtyAtStart?: string[]
   /** The ceiling this run was given. */
   budgetUsd: number
   /** Absolute, ISO 8601. */

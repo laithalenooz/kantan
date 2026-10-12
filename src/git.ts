@@ -228,18 +228,54 @@ export async function recordBaseBranch(repo: Repo): Promise<string> {
  * carrying the user's `MERGE_HEAD` as a second parent, which no later diff
  * explains. The same holds for a cherry-pick, a revert, a bisect and a rebase.
  */
-export async function requireCleanTreeForNewRun(repo: Repo): Promise<void> {
+export async function requireCleanTreeForNewRun(
+  repo: Repo,
+  opts?: { allowDirty?: boolean },
+): Promise<DirtyEntry[]> {
   const dirty = await dirtyEntries(repo)
   const operation = await inProgressOperation(repo)
+  // **Never waived, even with `allowDirty`.** An opt-in means "there is work in
+  // progress I want the agent to build on". It cannot be read as consent to an
+  // unfinished merge, rebase, cherry-pick or bisect: the agent's next commit
+  // would silently inherit `MERGE_HEAD` as a second parent, which no later diff
+  // explains and no human would connect back to a checkbox they ticked once.
   if (operation !== null) {
     throw new Error(
       `${repo.root} is in the middle of ${operation.what}, so a new run cannot start there: the agent's next commit would silently inherit it.${listing(dirty)}\nFinish it, or abandon it with \`${operation.abort}\`.`,
     )
   }
-  if (dirty.length === 0) return
+  if (dirty.length === 0) return []
+
+  if (opts?.allowDirty === true) {
+    // Conflicted paths are **not** work in progress, so the opt-in does not
+    // reach them either: a conflicted file holds `<<<<<<<` markers, and an
+    // agent told to build on it commits them. The asymmetry is the whole
+    // argument - permitting this costs a committed broken file that looks
+    // deliberate, while refusing costs one `git add` once the human has
+    // resolved it.
+    const conflicted = dirty.filter((entry) => entry.kind === "conflicted")
+    if (conflicted.length > 0) {
+      throw new Error(
+        `${repo.root}: ${count(conflicted.length, "file")} ${conflicted.length === 1 ? "has" : "have"} unresolved conflicts, so this run cannot start there even though it was allowed to start on a dirty tree. Conflict markers are not work in progress - an agent building on them would commit them.${listing(dirty)}\nResolve them, then start the run again.`,
+      )
+    }
+    return dirty
+  }
+
   throw new Error(
     `${repo.root}: ${count(dirty.length, "file")} ${dirty.length === 1 ? "has" : "have"} uncommitted changes, so starting a new run there could commit over work nobody asked kantan to touch.${listing(dirty)}\n${stashAdvice(dirty)}`,
   )
+}
+
+/** The repo-relative paths in `entries`, for a log or a prompt. A rename or a
+ * copy contributes the path it ended at, which is the one on disk now. */
+export function dirtyPaths(entries: readonly DirtyEntry[]): string[] {
+  const paths: string[] = []
+  for (const entry of entries) {
+    const [to] = entry.paths
+    if (to !== undefined && to !== "") paths.push(to)
+  }
+  return paths
 }
 
 /**
@@ -989,7 +1025,7 @@ function requireTaskBranch(branch: string): void {
 
 type DirtyKind = "tracked" | "untracked" | "conflicted"
 
-interface DirtyEntry {
+export interface DirtyEntry {
   code: string
   /** The path, plus the path it came from for a rename or a copy. */
   paths: string[]

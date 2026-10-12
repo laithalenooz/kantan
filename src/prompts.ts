@@ -133,6 +133,49 @@ The line is matched literally, so:
   commit message. It belongs in your message to me and nowhere else.`
 
 /**
+ * The human's unfinished work, when a run was explicitly allowed to start on a
+ * dirty tree.
+ *
+ * **The prompt is the only channel that can say whose work this is.** The agent
+ * arrives in a checkout holding changes it did not write, and every instinct a
+ * coding model has about an unexpected diff is the wrong one here: reverting
+ * it, `git checkout --`-ing it, stashing it, or sweeping it into a commit whose
+ * message describes something else. None of those is recoverable from the
+ * user's side - the whole reason they opted in is that the work is committed
+ * nowhere.
+ *
+ * Empty for every ordinary run, where the tree was proved clean and there is
+ * nothing to say. The files are listed rather than merely counted because "the
+ * tree is dirty" is not actionable: the agent has to be able to tell its own
+ * output from the human's.
+ */
+function inheritedWork(dirty: readonly string[]): string {
+  if (dirty.length === 0) return ""
+  return `
+## Files the human was already working on
+
+This checkout was **not** clean when this run started, and that was deliberate: a human
+asked for the work to continue from where they had left it. These files already had
+uncommitted changes before you began:
+
+${dirty.map((path) => `- ${path}`).join("\n")}
+
+That is their unfinished work. It is not a mistake, and it is not yours to undo.
+
+- Build on it. Read those files before you change them; they may already hold part of what
+  you are about to write.
+- Do **not** revert, discard, stash or check out any of them, and do not run
+  \`git checkout --\`, \`git restore\`, \`git reset\` or \`git stash\` against them. There is no
+  committed copy to get back - that is exactly why they are listed here.
+- Do not sweep them into a commit of your own unless your work really changed them. Name
+  the files you changed as a pathspec, as you would anyway, so their work stays theirs to
+  commit.
+- If one of them contradicts what the plan asks for, say so in your final message and do
+  the smallest thing that works. Do not resolve it by throwing their edit away.
+`
+}
+
+/**
  * The four clauses that change when a project has no test command.
  *
  * A project may have `testCmd: null`, and then the agent verifies its own work
@@ -299,12 +342,15 @@ export function planPrompt({
   task,
   planPath,
   testCmd,
+  dirty = [],
 }: {
   task: TaskSpec
   planPath: string
   /** `null` when the project has no suite, which changes who verifies the
    * work; see the clause helpers above. */
   testCmd: string | null
+  /** Paths the human was already working on; see `inheritedWork`. */
+  dirty?: readonly string[]
 }): string {
   return `/superpowers:writing-plans Write an implementation plan for one backlog task, exactly as instructed below.
 
@@ -351,7 +397,7 @@ plan file alongside it.
 Commit the plan file on the branch that is already checked out, so the gate does not
 sit on a dirty tree. Commit nothing else: name the plan file as a pathspec rather than
 staging everything, because the tree may hold work that is not yours.
-
+${inheritedWork(dirty)}
 ${TOOLS_CONTRACT}
 
 ${HEADLESS_CONTRACT}
@@ -373,10 +419,13 @@ export function implementPrompt({
   task,
   planPath,
   testCmd,
+  dirty = [],
 }: {
   task: TaskSpec
   planPath: string
   testCmd: string | null
+  /** Paths the human was already working on; see `inheritedWork`. */
+  dirty?: readonly string[]
 }): string {
   return `/superpowers:executing-plans Implement one backlog task from the approved plan named below, exactly as instructed.
 
@@ -413,7 +462,7 @@ ${tddRule(testCmd)}
   everything, because the tree may hold work that is not yours.
 - Leave ${task.featurePath} exactly as it is, and skip any step in the plan that would edit
   it or change ${task.ref}'s line in it. ${whoVerifies(testCmd)}
-
+${inheritedWork(dirty)}
 ${TOOLS_CONTRACT}
 
 ${HEADLESS_CONTRACT}

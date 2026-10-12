@@ -683,3 +683,51 @@ test("a no-command prompt still forbids the agent touching the backlog file", ()
   }
   expect(flat(selfCheck)).toContain(task.featurePath)
 })
+
+// --- Starting on a dirty tree ----------------------------------------------
+// The user's workflow: "I might want the agent to pick from where I've left in
+// a dirty repo and proceed." The prompt is the ONLY channel that can tell the
+// agent whose those changes are - git shows it a diff with no author.
+
+const DIRTY = ["src/importer.ts", "docs/notes.md"]
+
+test("an ordinary run's prompts say nothing about a dirty tree", () => {
+  // The default must not grow a paragraph about a situation that did not
+  // happen: every run would then carry instructions about files that do not
+  // exist, which is how a prompt teaches an agent to ignore a section.
+  for (const prompt of [plan, implement]) {
+    expect(flat(prompt)).not.toMatch(/already working on/i)
+    expect(flat(prompt)).not.toMatch(/was \*\*not\*\* clean/i)
+  }
+})
+
+test("a dirty start names the files and forbids every way of losing them", () => {
+  // The instinct list is the point. An agent that finds an unexpected diff
+  // reverts it, checks it out, stashes it, or sweeps it into its own commit -
+  // and none of those is recoverable, because the work is committed nowhere.
+  for (const build of [planPrompt, implementPrompt]) {
+    const out = flat(build({ task, planPath, testCmd: "npm test", dirty: DIRTY }))
+    for (const path of DIRTY) expect(out, path).toContain(path)
+    expect(out).toMatch(/not .*clean when this run started/i)
+    expect(out).toMatch(/git checkout --/)
+    expect(out).toMatch(/git restore/)
+    expect(out).toMatch(/git reset/)
+    expect(out).toMatch(/git stash/)
+    // And it says why there is no going back, which is what makes the rule
+    // stick rather than read as fussiness.
+    expect(out).toMatch(/no\s+committed copy/i)
+  }
+})
+
+test("a dirty start still tells the agent to commit by pathspec, so their work stays theirs", () => {
+  const out = flat(implementPrompt({ task, planPath, testCmd: "npm test", dirty: DIRTY }))
+  expect(out).toMatch(/pathspec/i)
+})
+
+test("the dirty section composes with a project that has no test command", () => {
+  // Two independent dimensions, so the matrix has four cells and this is the
+  // one both features touch at once.
+  const out = flat(implementPrompt({ task, planPath, testCmd: null, dirty: DIRTY }))
+  expect(out).toContain("src/importer.ts")
+  expect(out).not.toMatch(/runs the project's test command/i)
+})

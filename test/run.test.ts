@@ -50,7 +50,7 @@ const outPath = Bun.argv[3]
 if (jobPath === undefined || outPath === undefined) throw new Error("usage: driver <job> <out>")
 
 type Call = { m: string; projectPath?: string; featureFile?: string; taskRef?: string; text?: string }
-type Step = { action: string; text?: string; usd?: number; calls?: Call[] }
+type Step = { action: string; text?: string; usd?: number; allowDirty?: boolean; calls?: Call[] }
 const job = JSON.parse(await Bun.file(jobPath).text()) as {
   project: Record<string, unknown>
   featureFile: string
@@ -167,6 +167,7 @@ for (const step of job.steps) {
         runsDir: job.runsDir,
         ...(job.budgetUsd === undefined ? {} : { budgetUsd: job.budgetUsd }),
         ...(job.runId === undefined ? {} : { runId: job.runId }),
+        ...(step.allowDirty === true ? { allowDirty: true } : {}),
       })
       runId = r.runId
       results.push(r)
@@ -271,7 +272,12 @@ for (const step of job.steps) {
       throw new Error("unknown action " + step.action)
     }
   } catch (e) {
-    results.push({ error: (e as Error).message })
+    // The code as well as the message: a refusal's code is what the UI
+    // switches on - dirty is the only one it hangs stash advice off - so a
+    // test checking the prose alone would pass for a run refused as
+    // wrong-state with a message that happens to name a file.
+    // (No backticks here: this whole driver is a template literal.)
+    results.push({ error: (e as Error).message, code: (e as { code?: unknown }).code })
     break
   }
 }
@@ -435,6 +441,8 @@ interface Job {
     text?: string
     /** For the `raise` step: the new ceiling, in full. */
     usd?: number
+    /** For the `start` step: begin even though the repo is dirty. */
+    allowDirty?: boolean
     /** For the `runner` step: the port calls to make, in order. */
     calls?: {
       m: string
@@ -2364,3 +2372,83 @@ test("a blocked self-check is answered, and the check then runs again", async ()
   const records = await runLog(ws, first.runId)
   expect(records.at(-1)).toMatchObject({ kind: "end", state: "done", verifiedBy: "self-check" })
 }, 240_000)
+
+// ---------------------------------------------------------------------------
+// Starting on a dirty tree, on purpose
+// ---------------------------------------------------------------------------
+
+test("a dirty repo still refuses by default, and the refusal keeps its stash advice", async () => {
+  // The half that must not regress. Every ordinary start is unaffected, and the
+  // message is still the one that explains why a plain `git stash` leaves
+  // untracked files behind and the user hitting this again.
+  const ws = await workspace("dirty-default")
+  await writeFile(join(ws.repo, "half-written.ts"), "the human was editing this\n")
+
+  const out = await drive(ws, { steps: [{ action: "start" }] })
+
+  expect(String(out.results[0]?.["error"])).toContain("half-written.ts")
+  expect(String(out.results[0]?.["code"])).toBe("dirty")
+  expect((await readJsonl(ws.log)).length).toBe(0)
+  expect(await lockExists(ws)).toBe(false)
+}, 30_000)
+
+test("allowDirty starts the run, records the files in the header, and tells the agent", async () => {
+  const ws = await workspace("dirty-allowed")
+  await script(ws, [{ fixture: PLAN_FIXTURE }])
+  await writeFile(join(ws.repo, "half-written.ts"), "the human was editing this\n")
+  await writeFile(join(ws.repo, "a.txt"), "and this was already tracked\n")
+
+  const out = await drive(ws, { steps: [{ action: "start", allowDirty: true }] })
+  expect(out.results[0]).toMatchObject({ state: { kind: "waiting", reason: "gate" } })
+
+  // **The log is the only channel that survives the server.** Someone looking
+  // at a surprising diff weeks later cannot ask git which files the agent
+  // inherited - they are committed or gone by then.
+  const head = header(await runLog(ws, out.runId))
+  expect((head["dirtyAtStart"] as string[]).sort()).toEqual(["a.txt", "half-written.ts"])
+
+  // And the agent was told, by name, in the prompt it actually received.
+  const prompt = promptOf((await turns(ws))[0] ?? {})
+  expect(prompt).toContain("half-written.ts")
+  expect(prompt).toContain("a.txt")
+  expect(prompt).toContain("clean when this run started")
+}, 240_000)
+
+test("an ordinary run records no dirtyAtStart at all, so presence is a real claim", async () => {
+  // Absence must never be readable as "it started clean" - every log written
+  // before the field existed is absent too. An ordinary run has been proved
+  // clean by the guard, and says nothing.
+  const ws = await workspace("dirty-absent")
+  await script(ws, [{ fixture: PLAN_FIXTURE }])
+
+  const out = await drive(ws, { steps: [{ action: "start" }] })
+
+  expect(header(await runLog(ws, out.runId))["dirtyAtStart"]).toBeUndefined()
+}, 240_000)
+
+test("allowDirty does not waive an in-progress merge, however explicit it was", async () => {
+  // The asymmetry that makes this safe. An opt-in means "there is work I want
+  // continued"; it cannot mean "inherit my unfinished merge", because the
+  // agent's next commit would silently carry MERGE_HEAD as a second parent and
+  // no later diff would explain it.
+  const ws = await workspace("dirty-merge")
+  // Self-contained: a file this workspace tracks, then two divergent edits to
+  // it, so `git merge` leaves a real conflict and MERGE_HEAD set.
+  const contested = join(ws.repo, "contested.txt")
+  await writeFile(contested, "base\n")
+  await git(ws.repo, ["add", "contested.txt"])
+  await git(ws.repo, ["commit", "-m", "add contested.txt"])
+  await git(ws.repo, ["switch", "-c", "other"])
+  await writeFile(contested, "theirs\n")
+  await git(ws.repo, ["commit", "-am", "theirs"])
+  await git(ws.repo, ["switch", "main"])
+  await writeFile(contested, "ours\n")
+  await git(ws.repo, ["commit", "-am", "ours"])
+  await git(ws.repo, ["merge", "other"]).catch(() => undefined)
+
+  const out = await drive(ws, { steps: [{ action: "start", allowDirty: true }] })
+
+  expect(String(out.results[0]?.["code"])).toBe("dirty")
+  expect(String(out.results[0]?.["error"])).toMatch(/merge|conflict/i)
+  expect((await readJsonl(ws.log)).length).toBe(0)
+}, 30_000)
