@@ -499,7 +499,13 @@ export function App() {
        guard is `.kr, .kr *` — it does nothing until a root carries it.
        A column, not the grid itself: both artboards put a full-width band
        between the header and the three columns, and only one band ever shows. */
-    <div className="kr flex h-dvh flex-col overflow-hidden">
+    /* `min-h-dvh`, never `h-dvh overflow-hidden`. Every artboard's root is
+       `min-height:100vh` and every board is 1140-1780px tall at 1440 wide: the
+       design is a page that SCROLLS AS A WHOLE, not a fixed-height app with a
+       scrollbar per column. Pinning the shell to the viewport squeezed each
+       panel into a short column and clipped it - which is exactly what it
+       looked like. */
+    <div className="kr flex min-h-dvh flex-col">
       <AppBar origin={origin} />
 
       {/* Exactly one band, in the slot both artboards put it in. The orange one
@@ -516,12 +522,12 @@ export function App() {
         subject !== null && view?.ended === null && <ReturnBand subject={subject} needsYou={needsYou} />
       )}
 
-      <div className={`grid min-h-0 flex-1 overflow-hidden ${showRail ? "grid-cols-[18rem_minmax(0,1fr)_16.25rem]" : "grid-cols-[18rem_minmax(0,1fr)]"}`}>
-      {/* A flex column, because `Tree` draws its own panel as an `<aside
-          className="basis-72 grow">` - and `grow` does nothing to a child of a
-          block, so the panel ends at its content and the ground shows through
-          below it. Caught in a screenshot; no assertion would have seen it. */}
-      <div className="flex min-w-0 flex-col overflow-y-auto">
+      {/* `flex:1 1 288px` / `flex:999 1 560px` / `flex:1 1 260px`, wrapping,
+          exactly as every artboard draws it. `Tree` and `Sidebar` each render
+          their own `<aside>`, so they are the flex children directly - the
+          wrapper divs that used to hold them were a second box around a box
+          that already knew its own width. */}
+      <div className="flex flex-1 flex-wrap items-stretch">
         <Tree
           projects={projects}
           selected={selected}
@@ -539,7 +545,6 @@ export function App() {
           }}
           onAddProject={() => setPanel({ kind: "addRepo" })}
         />
-      </div>
 
       {/* Empty renders its own `<main>` and its own `.dots` layer, because
           `artboard.css` scopes the first-run dot geometry to `.kr-empty .dots`
@@ -549,6 +554,22 @@ export function App() {
           `tree` on a failed refetch - so without it an error would be silently
           swallowed on a tree that had loaded once. */}
       {noProjects && <Empty kind="no-projects" onAddProject={() => setPanel({ kind: "addRepo" })} />}
+
+      {/* `ProjectPanel` and `AddRepo` each render their own `<main>` and
+          `<aside>`: they replace the centre column AND the rail, exactly as
+          `Empty` does. Nested inside our `<main>` instead, their
+          `flex:999 1 560px` is read in a COLUMN context and becomes
+          `height:560px` - which sliced the card at 560 with 830 of content, the
+          clipping that looked like a layout bug and was a nesting one. */}
+      {panelProject !== null && (
+        <ProjectPanel
+          project={panelProject}
+          accounts={accountOptions}
+          onSwitchAccount={(account) => onSwitchAccount(panelProject.path, account)}
+          onSaveTestCmd={(cmd) => onSaveTestCmd(panelProject.path, cmd)}
+          onRemove={() => onRemoveProject(panelProject)}
+        />
+      )}
 
       {panel?.kind === "addRepo" && (
         <AddRepo
@@ -578,7 +599,10 @@ export function App() {
           `mask-image`, and a mask applies to the element's entire rendering,
           children included - putting it on the container faded the digest and
           erased the run record below the mask's 75% stop. */}
-      <main hidden={noProjects || nothingSelected} className="relative flex min-w-0 flex-col overflow-y-auto px-6 pb-10">
+      <main
+        hidden={noProjects || nothingSelected || panel?.kind === "project" || panel?.kind === "addRepo"}
+        className="relative flex min-w-0 flex-[999_1_560px] flex-col px-[clamp(16px,3vw,44px)] pt-6 pb-12"
+      >
         <div className="dots pointer-events-none absolute inset-0" aria-hidden="true" />
         <div className="relative flex min-w-0 flex-col">
         {project !== null && selected !== null && (
@@ -637,15 +661,6 @@ export function App() {
           <Stream rows={view.rows} maxHeight={atGate ? 520 : 640} footer={footerFor(view)} />
         )}
 
-        {panelProject !== null && (
-          <ProjectPanel
-            project={panelProject}
-            accounts={accountOptions}
-            onSwitchAccount={(account) => onSwitchAccount(panelProject.path, account)}
-            onSaveTestCmd={(cmd) => onSaveTestCmd(panelProject.path, cmd)}
-            onRemove={() => onRemoveProject(panelProject)}
-          />
-        )}
 
 
         </div>
@@ -653,9 +668,7 @@ export function App() {
 
       {/* No border or background here: `Sidebar` draws its own aside, faithfully
           to the artboard, and repeating them painted a 2px seam. */}
-      {showRail && (
-      <div className="flex min-w-0 flex-col overflow-y-auto">
-        {view !== null && view.ceilingUsd !== null && (
+      {showRail && view !== null && view.ceilingUsd !== null && (
           <Sidebar
             phases={view.phases}
             processes={view.processes}
@@ -664,8 +677,6 @@ export function App() {
             onStop={() => void send({ kind: "stop" })}
             stopDisabled={view.ended !== null}
           />
-        )}
-      </div>
       )}
       </div>
 
