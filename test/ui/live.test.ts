@@ -765,3 +765,61 @@ describe("removing a project", () => {
     await expect(removeProject("/busy", fetcher)).rejects.toThrow("in flight")
   })
 })
+
+/**
+ * A stop closes the phase it interrupted.
+ *
+ * Without this the ladder kept spinning on the phase the run was in, with its
+ * clock ticking, and `costStatus` in `Sidebar.tsx` reads the same steps - so
+ * the cost card went on saying "live" beside a run nobody was driving.
+ * Reported from use as "why is this still grayed out and says test running".
+ */
+describe("a run that was stopped", () => {
+  const stopped = (): RunView =>
+    foldRun(RUN, [
+      { kind: "phase", phase: "implement", state: "running", at: 1000, sessionId: "s1" },
+      { kind: "phase", phase: "test", state: "running", at: 2000 },
+      { kind: "human", action: "stop" },
+    ] as RunRecord[])
+
+  test("says so, and is not ended - a stopped run is resumable", () => {
+    const view = stopped()
+    expect(view.stopped).toBe(true)
+    expect(view.ended).toBeNull()
+  })
+
+  test("leaves no phase running, so nothing reads as live", () => {
+    const steps = stopped().phases
+    expect(steps.some((s) => s.state === "running")).toBe(false)
+    const test = steps.find((s) => s.phase === "test")
+    expect(test?.state).toBe("pending")
+    // The note carries the meaning; `pending`'s hollow mark only says "not
+    // running". `flagged` is the amber retry glyph, and a human pressing stop
+    // is not a fault.
+    expect(test?.note).toBe("stopped")
+    // And no clock to tick: `startedAtMs` would run a timer on a dead phase.
+    expect(test?.startedAtMs).toBeUndefined()
+  })
+
+  test("offers no gate, because nothing is listening for an approval", () => {
+    const view = foldRun(RUN, [
+      { kind: "phase", phase: "plan", state: "running", at: 1000, sessionId: "s1", planPath: "p.md" },
+      { kind: "phase", phase: "plan", state: "waiting", reason: "gate", at: 2000, detail: "p.md" },
+      { kind: "human", action: "stop" },
+    ] as RunRecord[])
+    expect(view.stopped).toBe(true)
+    expect(view.waiting).toBeNull()
+    expect(view.waitId).toBeNull()
+  })
+
+  /** A phase record after the stop is a resume: the run is moving again. */
+  test("a resume clears it", () => {
+    const view = foldRun(RUN, [
+      { kind: "phase", phase: "test", state: "running", at: 2000 },
+      { kind: "human", action: "stop" },
+      { kind: "phase", phase: "test", state: "running", at: 3000 },
+    ] as RunRecord[])
+    expect(view.stopped).toBe(false)
+    expect(view.phases.some((s) => s.state === "running")).toBe(true)
+  })
+})

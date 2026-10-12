@@ -212,6 +212,17 @@ export interface ProjectPanelProps {
   onAddTaskFile?: (path: string) => void | Promise<void>
   /** Absent hides every row's dismiss button. */
   onStopTracking?: (path: string) => void | Promise<void>
+  /**
+   * Starts a **new** task file. Absent hides the option.
+   *
+   * The artboard's own placement: the last option under "Found in the repo" in
+   * the combobox (`Project.dc.html`, "Create a new task file"), not a button of
+   * its own. It belongs there because it answers the same question as the rows
+   * above it - *where do the tasks come from* - and because the moment someone
+   * looks down that list and sees nothing that fits is exactly the moment they
+   * need it.
+   */
+  onNewTaskFile?: () => void
   className?: string
 }
 
@@ -1263,6 +1274,7 @@ export function ProjectPanel({
   taskFileCandidates,
   onAddTaskFile,
   onStopTracking,
+  onNewTaskFile,
   className,
 }: ProjectPanelProps): ReactElement {
   const reduced = usePrefersReducedMotion()
@@ -1345,6 +1357,7 @@ export function ProjectPanel({
             {...(taskFileCandidates === undefined ? {} : { taskFileCandidates })}
             {...(onAddTaskFile === undefined ? {} : { onAddTaskFile })}
             {...(onStopTracking === undefined ? {} : { onStopTracking })}
+            {...(onNewTaskFile === undefined ? {} : { onNewTaskFile })}
           />
 
           {budgetUsd !== undefined && onSaveBudget !== undefined && (
@@ -2031,7 +2044,11 @@ function TestCommandSection({
               font: "inherit",
               fontSize: 13.5,
               fontWeight: 560,
-              color: "#5B5BD6",
+              // `#4B4BC8`, the artboard's colour for a text button: "Create a
+              // new task file", "Add another account", "Start a new task file
+              // instead" are all this. `#5B5BD6` is in the artboards too, but
+              // for focus rings and running states rather than for links.
+              color: "#4B4BC8",
               cursor: clearing ? "default" : "pointer",
               textDecoration: "underline",
               textUnderlineOffset: 3,
@@ -2145,6 +2162,7 @@ function TaskFilesSection({
   taskFileCandidates,
   onAddTaskFile,
   onStopTracking,
+  onNewTaskFile,
 }: {
   project: TreeProject
   anim: (classes: string) => string | undefined
@@ -2152,6 +2170,7 @@ function TaskFilesSection({
   taskFileCandidates?: readonly TaskFileCandidate[]
   onAddTaskFile?: (path: string) => void | Promise<void>
   onStopTracking?: (path: string) => void | Promise<void>
+  onNewTaskFile?: () => void
 }): ReactElement {
   const [query, setQuery] = useState("")
   const [error, setError] = useState<string | null>(null)
@@ -2359,6 +2378,40 @@ function TaskFilesSection({
                 </button>
               )
             })}
+
+            {onNewTaskFile !== undefined && (
+              <button
+                type="button"
+                data-new-task-file
+                onClick={onNewTaskFile}
+                className="opt focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  width: "100%",
+                  minHeight: 42,
+                  padding: "0 12px",
+                  borderRadius: 10,
+                  border: 0,
+                  background: "transparent",
+                  textAlign: "left",
+                  fontSize: 13.5,
+                  fontWeight: 560,
+                  // The artboard's text-button colour. See `optionId`'s
+                  // neighbours for the rest of this palette.
+                  color: "#4B4BC8",
+                }}
+              >
+                <svg aria-hidden="true" viewBox="0 0 24 24" className="ic" style={{ width: 15, height: 15 }} {...LINE}>
+                  <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+                  <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+                  <path d="M12 12v6" />
+                  <path d="M9 15h6" />
+                </svg>
+                Create a new task file
+              </button>
+            )}
           </div>
         </div>
       )}

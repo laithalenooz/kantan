@@ -651,7 +651,18 @@ export function App() {
        panel into a short column and clipped it - which is exactly what it
        looked like. */
     <div className="kr flex min-h-dvh flex-col">
-      <AppBar origin={origin} />
+      <AppBar
+        origin={origin}
+        /* The initial screen is "nothing selected, no panel open" - there is no
+           router here, so home is a state rather than a URL. */
+        onHome={() => {
+          setSelected(null)
+          setPanel(null)
+          setProjectError(null)
+          setStartError(null)
+          setDirtyRefusal(null)
+        }}
+      />
 
       {/* Exactly one band, in the slot both artboards put it in. The orange one
           wins: a run that needs you is never also a calm one. */}
@@ -750,6 +761,15 @@ export function App() {
           {...(panelProject.budgetUsd === undefined
             ? {}
             : { budgetUsd: panelProject.budgetUsd, onSaveBudget: (usd: number) => onSaveBudget(panelProject.path, usd) })}
+          /* The artboard's placement for this: the last option in the task-file
+             combobox. The tree's own "New task file" row is the other way in,
+             and both open the same card. */
+          onNewTaskFile={() => {
+            setSelected(null)
+            setNewFileError(null)
+            setNewFileText("")
+            setPanel({ kind: "newTaskFile", projectPath: panelProject.path })
+          }}
           onRemove={() => onRemoveProject(panelProject)}
         />
       )}
@@ -991,6 +1011,10 @@ export function App() {
             ceilingUsd={view.ceilingUsd}
             windows={windowsFor(view, project?.account)}
             onStop={() => void send({ kind: "stop" })}
+            onResume={() => void send({ kind: "resume" })}
+            /* The footer swaps rather than greying out: a dead "Stop run" on a
+               run that is already stopped was the only control there. */
+            resumable={view.stopped && view.ended === null}
             /* `stopped` as well as `ended`: a stopped run is resumable, so it
                is not ended, but there is nothing left to stop either. Without
                it the button stayed enabled after a successful stop and looked

@@ -483,19 +483,36 @@ export function Empty(props: EmptyProps): ReactElement {
                 <button
                   type="button"
                   onClick={props.onAddProject}
-                  className="ghost"
+                  /* The artboard's `cta`, not a ghost.
+   
+                     There is only one empty screen in the design -
+                     `Empty.dc.html`, "Start with a repository." - and its one
+                     action is a black pill. This `no-selection` variant is this
+                     port's invention: the design never draws a centre column
+                     for "you have projects and have picked nothing", so nothing
+                     said what its button should look like and it was given the
+                     secondary treatment. Reported from use as "the add a
+                     repository button in the artifact its black but here its
+                     white", which is the right call: it is the only button on
+                     the screen, and the design's black is what "the thing to
+                     press" looks like here. Smaller than the first-run one -
+                     44px against 56px - because the first-run screen has
+                     nothing else to do and this one is also telling you to pick
+                     a task. */
+                  className="cta bg-ink hover:bg-ink-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo"
                   style={{
                     display: "inline-flex",
                     alignItems: "center",
                     gap: 8,
                     height: 44,
-                    padding: "0 18px 0 14px",
+                    padding: "0 20px 0 16px",
                     borderRadius: 999,
-                    border: "1px solid #DCDCE2",
-                    background: "#fff",
-                    color: "#3A3D45",
+                    border: 0,
+                    color: "#fff",
                     fontSize: 14.5,
-                    fontWeight: 600,
+                    fontWeight: 620,
+                    boxShadow:
+                      "0 10px 24px -12px rgba(17,18,22,.6),inset 0 1px 0 rgba(255,255,255,.16)",
                   }}
                 >
                   <Icon style={{ width: 16, height: 16, strokeWidth: 2.4 }}>

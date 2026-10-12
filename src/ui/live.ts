@@ -390,6 +390,25 @@ export function foldRun(runId: string, records: readonly RunRecord[]): RunView {
              resume re-parks it and the gate comes back. */
           waitId = null
           waiting = null
+          /* And the phase it was in is no longer running.
+   
+             Without this the ladder kept spinning on `test` with its clock
+             ticking, and `costStatus` in `Sidebar.tsx` reads the same steps -
+             so the cost card went on saying "live" beside a run nobody was
+             driving. Reported from use: "why is this still grayed out and says
+             test running".
+   
+             `pending`, not `flagged`: flagged is the amber retry glyph the
+             Return artboard gives a refine round that keeps going, and a human
+             pressing stop is not a fault. `pending`'s hollow mark says "not
+             running", which is exactly true, and the note says why. The
+             elapsed time it already had is kept - the phase did run - and
+             `startedAtMs` is dropped, or the rail would tick a clock on it. */
+          if (openPhase !== null) {
+            const { startedAtMs: _started, ...rest } = phases.get(openPhase) ?? {}
+            phases.set(openPhase, { ...rest, phase: openPhase, state: "pending", note: "stopped" })
+            openPhase = null
+          }
         }
         if (record.action === "approve") digest.push({ id: `${runId}#${i}`, kind: "approved" })
         if (record.action === "approve" || record.action === "feedback") {

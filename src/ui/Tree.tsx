@@ -1466,7 +1466,13 @@ function ProjectBlock({
             <button
               type="button"
               onClick={() => onNewTaskFile(project.path)}
-              className="trow -mx-1 mt-[6px] flex w-[calc(100%+0.5rem)] items-center gap-2 rounded-[10px] px-[10px] py-[7px] text-left text-[13px] font-[560] text-muted-500 hover:bg-[#EFEFF2] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo"
+              /* `text-indigo-deep`, which is what the artboard gives this
+                 control: `Project.dc.html`'s "Create a new task file" is
+                 `#4B4BC8`, as are its other text buttons ("Add another
+                 account", "Start a new task file instead"). It was `muted-500`
+                 here, which reads as another file row rather than as an
+                 action. */
+              className="trow -mx-1 mt-[6px] flex w-[calc(100%+0.5rem)] items-center gap-2 rounded-[10px] px-[10px] py-[7px] text-left text-[13px] font-[560] text-indigo-deep hover:bg-[#EFEFF2] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo"
             >
               <span
                 aria-hidden

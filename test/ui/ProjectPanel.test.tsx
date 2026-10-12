@@ -1958,3 +1958,77 @@ describe("motion stops when it is asked to", () => {
     expect(all("[data-ring-arc]").some((a) => (a.getAttribute("class") ?? "").includes("ring"))).toBe(false)
   })
 })
+
+/* ========================================================================== */
+/* Create a new task file                                                     */
+/* ========================================================================== */
+
+/**
+ * The artboard's own placement: the **last option under "Found in the repo"**
+ * in the combobox (`Project.dc.html`), not a button of its own. It belongs
+ * there because it answers the same question as the rows above it - where the
+ * tasks come from - and because looking down that list and seeing nothing that
+ * fits is exactly when it is needed.
+ */
+describe("creating a new task file", () => {
+  const CANDIDATES = [
+    { path: "docs/features/search.md", taskCount: 4 },
+    { path: "docs/roadmap.md", taskCount: 0 },
+  ] as const
+
+  test("is the last option in the combobox, and only when something can act", async () => {
+    const h = handlers()
+    await render(
+      <api.ProjectPanel
+        project={project("personal")}
+        accounts={ACCOUNTS}
+        taskFileCandidates={CANDIDATES}
+        onAddTaskFile={() => {}}
+        {...h.props}
+      />,
+    )
+    expect(maybe("[data-new-task-file]")).toBeNull()
+
+    let asked = 0
+    await render(
+      <api.ProjectPanel
+        project={project("personal")}
+        accounts={ACCOUNTS}
+        taskFileCandidates={CANDIDATES}
+        onAddTaskFile={() => {}}
+        onNewTaskFile={() => void asked++}
+        {...h.props}
+      />,
+    )
+
+    const option = one("[data-new-task-file]")
+    expect((option.textContent ?? "").trim()).toBe("Create a new task file")
+    // Last, after every candidate: the list is "here is what exists", and this
+    // is what to do when none of it fits.
+    const options = all('[data-new-task-file], .opt')
+    expect(options.at(-1)).toBe(option)
+
+    await click(option)
+    expect(asked).toBe(1)
+    // It asks; it does not add a file itself, and never a path.
+    expect(h.saved).toEqual([])
+  })
+
+  /** The artboard's colour for a text button, which its three others share. */
+  test("is drawn as a text action rather than another file row", async () => {
+    const h = handlers()
+    await render(
+      <api.ProjectPanel
+        project={project("personal")}
+        accounts={ACCOUNTS}
+        taskFileCandidates={CANDIDATES}
+        onAddTaskFile={() => {}}
+        onNewTaskFile={() => {}}
+        {...h.props}
+      />,
+    )
+    /* happy-dom keeps an inline colour verbatim rather than normalising it to
+       `rgb()`, so this compares the hex the artboard writes. */
+    expect(one<HTMLElement>("[data-new-task-file]").style.color).toBe("#4B4BC8")
+  })
+})

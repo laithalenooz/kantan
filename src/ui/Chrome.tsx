@@ -179,6 +179,18 @@ function usePrefersReducedMotion(): boolean {
 
 export interface AppBarProps {
   /**
+   * Back to the screen with nothing selected. Absent leaves the mark inert.
+   *
+   * The artboard draws the mark and the word as decoration, and this port kept
+   * them that way - which is the right default for a thing that does nothing,
+   * and the wrong one here: a brand in the top-left corner of an app is the one
+   * control every user already knows. Reported from use as "why is kantan not
+   * clickable to take me to default initial page". There is no router and no
+   * URL to go to, so this is the shell's own "clear the selection", which is
+   * exactly what that initial page is.
+   */
+  onHome?: () => void
+  /**
    * Where **kantan** is, spelled however the caller spells it, e.g.
    * `localhost:4317`.
    *
@@ -195,7 +207,7 @@ export interface AppBarProps {
   className?: string
 }
 
-export function AppBar({ origin, className }: AppBarProps) {
+export function AppBar({ origin, onHome, className }: AppBarProps) {
   return (
     <header
       className={className}
@@ -226,7 +238,30 @@ export function AppBar({ origin, className }: AppBarProps) {
         <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#FF6A1A" }} />
       </span>
 
-      <span style={{ fontSize: 17, fontWeight: 700, letterSpacing: "-.025em" }}>kantan</span>
+      {onHome === undefined ? (
+        <span style={{ fontSize: 17, fontWeight: 700, letterSpacing: "-.025em" }}>kantan</span>
+      ) : (
+        <button
+          type="button"
+          data-testid="home"
+          onClick={onHome}
+          /* The word, not the mark beside it: the mark is `aria-hidden` and a
+             button around a hidden graphic has no name. The word is the name. */
+          className="ghost rounded-[8px] px-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo"
+          style={{
+            border: 0,
+            background: "none",
+            font: "inherit",
+            fontSize: 17,
+            fontWeight: 700,
+            letterSpacing: "-.025em",
+            color: "inherit",
+            cursor: "pointer",
+          }}
+        >
+          kantan
+        </button>
+      )}
 
       {present(origin) && (
         <span

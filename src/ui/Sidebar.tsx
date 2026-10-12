@@ -210,6 +210,19 @@ export interface SidebarProps {
   onStop?: () => void
   /** Stop is offered while a run can still be stopped, which is most of the time. */
   stopDisabled?: boolean
+  /**
+   * Picks the run back up from where it stopped. Absent draws no resume.
+   *
+   * The footer offers **one** control, and which one depends on the run: a
+   * greyed-out "Stop run" on a run that is already stopped is a dead end, and
+   * it was the only thing there - reported from use as "I can't even fully stop
+   * and resume if I wanted to". `StartPanel` has the design's own "Resume run",
+   * but it is only drawn when there is no run on screen, so a stopped run with
+   * a rail could not reach it.
+   */
+  onResume?: () => void
+  /** The run is stopped, so the footer offers resume rather than stop. */
+  resumable?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -599,6 +612,8 @@ export function Sidebar({
   grinding = null,
   onStop,
   stopDisabled = false,
+  onResume,
+  resumable = false,
 }: SidebarProps) {
   const reduce = usePrefersReducedMotion()
 
@@ -661,7 +676,11 @@ export function Sidebar({
             <Grinding flag={grinding} spent={spent} reduce={reduce} onDismiss={dismiss} />
           )}
         </div>
-        <Stop onStop={onStop} disabled={stopDisabled} />
+        {resumable && onResume !== undefined ? (
+          <Resume onResume={onResume} />
+        ) : (
+          <Stop onStop={onStop} disabled={stopDisabled} />
+        )}
       </div>
     </aside>
   )
@@ -1314,6 +1333,37 @@ function Grinding({
  * It is an outline button, never the primary one, and it is the only control in
  * the rail — which is what keeps the grinding notice above it from competing.
  */
+/**
+ * The footer of a stopped run: pick it up again.
+ *
+ * Black, because it is the one thing to do on this screen and that is what the
+ * design's black means - `Start.dc.html` gives "Resume run" exactly this
+ * treatment (`background:#111216; color:#fff`). The note is the honest version
+ * of the promise beside Stop: it resumes from the last complete phase, which
+ * for a test means running the suite again and for an implement means the same
+ * conversation, so nothing is redone that was already finished.
+ */
+function Resume({ onResume }: { onResume: () => void }) {
+  return (
+    <div className="bf d5 flex shrink-0 flex-col gap-2 pt-3.5">
+      <button
+        type="button"
+        onClick={onResume}
+        aria-describedby="rail-resume-note"
+        className="cta flex h-11 w-full items-center justify-center gap-2 rounded-full border-0 bg-ink text-[14px] font-[620] text-white transition-colors hover:bg-ink-hover focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2"
+      >
+        <svg aria-hidden viewBox="0 0 24 24" className="size-3 fill-current">
+          <polygon points="6 3 20 12 6 21 6 3" />
+        </svg>
+        Resume run
+      </button>
+      <p id="rail-resume-note" className="m-0 text-center text-[12.5px] text-muted-500">
+        Picks up from the last phase it finished.
+      </p>
+    </div>
+  )
+}
+
 function Stop({ onStop, disabled }: { onStop?: (() => void) | undefined; disabled: boolean }) {
   return (
     <div className="bf d5 flex shrink-0 flex-col gap-2 pt-3.5">
