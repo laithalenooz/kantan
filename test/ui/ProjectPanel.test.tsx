@@ -2470,3 +2470,137 @@ describe("the project summary", () => {
     expect(said).not.toContain("npm test")
   })
 })
+
+/* ========================================================================== */
+/* Adding another account                                                     */
+/* ========================================================================== */
+
+/**
+ * The options are **derived from what is registered** - the distinct
+ * `(kind, configDir)` pairs across the tree, plus the default profile - so a
+ * machine with one project on one profile offers exactly one card, and there
+ * was no way to reach a second account from anywhere in the app.
+ * `AccountSwitch` has carried an `onAddAccount` since it was written and is
+ * mounted nowhere, so the form lived in a component nothing rendered.
+ */
+describe("adding another account", () => {
+  test("is not offered when nothing can act on it", async () => {
+    const h = handlers()
+    await render(<api.ProjectPanel project={project("personal")} accounts={ACCOUNTS} {...h.props} />)
+    expect(maybe("[data-add-account-open]")).toBeNull()
+  })
+
+  test("sends the kind and the folder, which is the pair that identifies one", async () => {
+    const h = handlers()
+    const added: unknown[] = []
+    await render(
+      <api.ProjectPanel
+        project={project("personal")}
+        accounts={ACCOUNTS}
+        onAddAccount={(a) => void added.push(a)}
+        {...h.props}
+      />,
+    )
+
+    await click(one("[data-add-account-open]"))
+    await typeInto(one("[data-add-account-label]"), "acme")
+    await typeInto(one("[data-add-account-dir]"), "~/.claude-acme")
+    await click(one('[data-add-account-kind="work"]'))
+    await click(byText("button", "Use this account"))
+
+    expect(added).toEqual([{ kind: "work", label: "acme", configDir: "~/.claude-acme" }])
+  })
+
+  /**
+   * The folder is what gets billed, so an obviously unusable one is refused in
+   * the form rather than after a run has spent on it. The store checks this too
+   * and its refusal would arrive just as well - saying it here is for the
+   * human, not for the data.
+   */
+  test("refuses a blank field and a relative folder, and sends nothing", async () => {
+    const h = handlers()
+    const added: unknown[] = []
+    await render(
+      <api.ProjectPanel
+        project={project("personal")}
+        accounts={ACCOUNTS}
+        onAddAccount={(a) => void added.push(a)}
+        {...h.props}
+      />,
+    )
+    await click(one("[data-add-account-open]"))
+
+    await click(byText("button", "Use this account"))
+    expect(added).toEqual([])
+    expect(prose()).toContain("both required")
+
+    await typeInto(one("[data-add-account-label]"), "acme")
+    await typeInto(one("[data-add-account-dir]"), ".claude-acme")
+    await click(byText("button", "Use this account"))
+    expect(added).toEqual([])
+    expect(prose()).toContain("absolute path")
+  })
+
+  /** `kind` is only the chip's word, but it is the word every surface prints,
+   *  so the human chooses it rather than having one guessed from a path. */
+  test("the kind is chosen, never derived from the folder name", async () => {
+    const h = handlers()
+    const added: { kind?: string }[] = []
+    await render(
+      <api.ProjectPanel
+        project={project("personal")}
+        accounts={ACCOUNTS}
+        onAddAccount={(a) => void added.push(a as { kind?: string })}
+        {...h.props}
+      />,
+    )
+    await click(one("[data-add-account-open]"))
+    await typeInto(one("[data-add-account-label]"), "personal laptop")
+    // A folder that reads "work" while the human picked personal.
+    await typeInto(one("[data-add-account-dir]"), "/home/me/.claude-work")
+    await click(one('[data-add-account-kind="personal"]'))
+    await click(byText("button", "Use this account"))
+
+    expect(added[0]?.kind).toBe("personal")
+  })
+
+  test("cancelling closes the form and sends nothing", async () => {
+    const h = handlers()
+    const added: unknown[] = []
+    await render(
+      <api.ProjectPanel
+        project={project("personal")}
+        accounts={ACCOUNTS}
+        onAddAccount={(a) => void added.push(a)}
+        {...h.props}
+      />,
+    )
+    await click(one("[data-add-account-open]"))
+    await typeInto(one("[data-add-account-dir]"), "~/.claude-acme")
+    await click(byText("button", "Cancel"))
+
+    expect(added).toEqual([])
+    expect(maybe("[data-add-account]")).toBeNull()
+    expect(one("[data-add-account-open]")).not.toBeNull()
+  })
+
+  test("a refusal from the server stays on the form, with the form still filled", async () => {
+    const h = handlers()
+    await render(
+      <api.ProjectPanel
+        project={project("personal")}
+        accounts={ACCOUNTS}
+        onAddAccount={() => Promise.reject(new Error("that folder is not readable"))}
+        {...h.props}
+      />,
+    )
+    await click(one("[data-add-account-open]"))
+    await typeInto(one("[data-add-account-label]"), "acme")
+    await typeInto(one("[data-add-account-dir]"), "~/.claude-acme")
+    await click(byText("button", "Use this account"))
+    await settle()
+
+    expect(prose()).toContain("that folder is not readable")
+    expect(one<HTMLInputElement>("[data-add-account-dir]").value).toBe("~/.claude-acme")
+  })
+})

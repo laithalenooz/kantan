@@ -419,6 +419,17 @@ export function App() {
     [guard],
   )
 
+  const onAddAccount = useCallback(
+    async (path: string, account: { kind: "personal" | "work"; label: string; configDir: string }): Promise<void> =>
+      /* An add *and* a switch, because kantan keeps no account registry: the
+         options are derived from the `(kind, configDir)` pairs in use, so the
+         way to make a new one exist is to put a project on it. The label is
+         not stored - `accountOf` in `src/server.ts` derives what the chip
+         prints - so only the two fields that change anything are sent. */
+      await guard(() => updateProject(path, { account: account.kind, configDir: account.configDir })),
+    [guard],
+  )
+
   const onSaveAdvanced = useCallback(
     async (path: string, change: Partial<AdvancedSettings>): Promise<void> =>
       /* Straight through: `PATCH /api/projects` is a partial update and the
@@ -734,6 +745,7 @@ export function App() {
           summary={projectSummary(panelProject, tree?.runs ?? {})}
           accounts={accountOptions}
           onSwitchAccount={(account) => onSwitchAccount(panelProject.path, account)}
+          onAddAccount={(account) => onAddAccount(panelProject.path, account)}
           onSaveTestCmd={(cmd) => onSaveTestCmd(panelProject.path, cmd)}
           /* `null`, which is the only spelling the store accepts for "no
              suite" - it refuses `""`, because `sh -c ""` exits 0. */

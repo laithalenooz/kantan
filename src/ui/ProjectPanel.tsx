@@ -183,6 +183,23 @@ export interface ProjectPanelProps {
    * send with it, and a handler that ignores it has to do so on purpose.
    */
   onSwitchAccount: (account: AccountOption) => void | Promise<void>
+  /**
+   * Points this project at a Claude profile folder it has not used before.
+   *
+   * Absent hides the control. It exists because the options are **derived from
+   * what is registered** - the distinct `(kind, configDir)` pairs across the
+   * tree, plus the default profile - so a machine with one project on one
+   * profile offers exactly one card, and there was no way to reach a second
+   * account from anywhere in the app. `AccountSwitch` has carried this handler
+   * since it was written and is mounted nowhere, so the form lived in a
+   * component nothing rendered.
+   *
+   * It is an *add plus a switch*, not a registry: kantan keeps no list of
+   * accounts, and `PATCH /api/projects` with `{ account, configDir }` is the
+   * whole operation. Naming it after what the human wants - another account -
+   * rather than after the field it writes.
+   */
+  onAddAccount?: (account: { kind: AccountKind; label: string; configDir: string }) => void | Promise<void>
   /** Called with a trimmed, non-empty command, once per change. */
   onSaveTestCmd: (cmd: string) => void | Promise<void>
   /**
@@ -349,7 +366,7 @@ function SummarySection({
           <div data-spend style={{ fontSize: 13.5, color: "#2A2C33" }}>
             {/* "At least", every time. See the docstring. */}
             At least <strong style={{ fontWeight: 650, fontVariantNumeric: "tabular-nums" }}>${summary.spentUsd.toFixed(2)}</strong>{" "}
-            spent across {summary.everRun} task{summary.everRun === 1 ? "" : "s"} that have run.{" "}
+            spent across {summary.everRun} task{summary.everRun === 1 ? " that has" : "s that have"} run.{" "}
             <span style={{ color: "#5F6370" }}>
               A run kantan is still driving reports a floor rather than a total, so this can only be low.
             </span>
@@ -1461,6 +1478,7 @@ export function ProjectPanel({
   project,
   accounts,
   onSwitchAccount,
+  onAddAccount,
   onSaveTestCmd,
   onClearTestCmd,
   summary,
@@ -1536,6 +1554,7 @@ export function ProjectPanel({
             stored={stored}
             checkedKey={checkedKey}
             ambiguous={ambiguous}
+            {...(onAddAccount === undefined ? {} : { onAddAccount })}
             accounts={accounts}
             animate={animate}
             anim={anim}
@@ -1716,6 +1735,7 @@ function AccountSection({
   animate,
   anim,
   switcher,
+  onAddAccount,
 }: {
   name: string
   stored: Account["kind"]
@@ -1727,8 +1747,43 @@ function AccountSection({
   animate: boolean
   anim: (classes: string) => string | undefined
   switcher: SwitchController
+  onAddAccount?: (account: { kind: AccountKind; label: string; configDir: string }) => void | Promise<void>
 }): ReactElement {
   const target = switcher.pending
+  const [adding, setAdding] = useState(false)
+  const [kind, setKind] = useState<AccountKind>("work")
+  const [label, setLabel] = useState("")
+  const [dir, setDir] = useState("")
+  const [addError, setAddError] = useState<string | null>(null)
+  const addIds = useId()
+
+  const submitAccount = (): void => {
+    const trimmedLabel = label.trim()
+    const trimmedDir = dir.trim()
+    if (trimmedLabel === "" || trimmedDir === "") {
+      setAddError("A name and a Claude config folder are both required.")
+      return
+    }
+    /* The folder is what gets billed, so an obviously unusable one is refused
+       here rather than after a run has spent on it. The store checks this too
+       and its refusal would arrive just as well - saying it in the form is for
+       the human, not for the data. */
+    if (!trimmedDir.startsWith("/") && !trimmedDir.startsWith("~")) {
+      setAddError("The folder has to be an absolute path, or start with ~ for your home directory.")
+      return
+    }
+    setAddError(null)
+    void (async () => {
+      try {
+        await onAddAccount?.({ kind, label: trimmedLabel, configDir: trimmedDir })
+        setLabel("")
+        setDir("")
+        setAdding(false)
+      } catch (cause) {
+        setAddError(messageOf(cause))
+      }
+    })()
+  }
   return (
     <div data-card-section className={anim("bf d1")} style={SECTION}>
       <h2 style={H2}>Claude account</h2>
@@ -1845,6 +1900,162 @@ function AccountSection({
           )
         })}
       </div>
+
+      {onAddAccount !== undefined && (
+        <div style={{ marginTop: 10 }}>
+          {adding ? (
+            <div
+              className={animate ? "pop" : undefined}
+              data-add-account
+              style={{
+                display: "grid",
+                gap: 10,
+                padding: 12,
+                borderRadius: 14,
+                border: "1px solid #E2E2E7",
+                background: "#FCFCFD",
+              }}
+            >
+              <p style={{ margin: 0, fontSize: 13, lineHeight: 1.5, color: "#4A4E59", maxWidth: "62ch" }}>
+                A Claude account <strong style={{ fontWeight: 620 }}>is</strong> a config folder — the one{" "}
+                <span className="m" style={{ fontSize: 12.5 }}>CLAUDE_CONFIG_DIR</span> points at. Name it, say where it
+                is, and {name} switches to it; every project that uses the same folder will offer it from then on.
+              </p>
+
+              <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit,minmax(min(200px,100%),1fr))" }}>
+                <div>
+                  <label htmlFor={`${addIds}-label`} style={{ display: "block", fontSize: 12.5, fontWeight: 560, color: "#4A4E59", marginBottom: 5 }}>
+                    What to call it
+                  </label>
+                  <input
+                    id={`${addIds}-label`}
+                    data-add-account-label
+                    value={label}
+                    placeholder="acme"
+                    onChange={(e) => {
+                      setLabel(e.target.value)
+                      setAddError(null)
+                    }}
+                    style={{ width: "100%", minHeight: 42, padding: "0 12px", borderRadius: 10, border: "1px solid #E2E2E7", background: "#fff", fontSize: 13.5, boxSizing: "border-box" }}
+                  />
+                </div>
+                <div>
+                  <label htmlFor={`${addIds}-dir`} style={{ display: "block", fontSize: 12.5, fontWeight: 560, color: "#4A4E59", marginBottom: 5 }}>
+                    Claude config folder
+                  </label>
+                  <input
+                    id={`${addIds}-dir`}
+                    data-add-account-dir
+                    className="m"
+                    value={dir}
+                    placeholder="~/.claude-acme"
+                    onChange={(e) => {
+                      setDir(e.target.value)
+                      setAddError(null)
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault()
+                        submitAccount()
+                      }
+                    }}
+                    style={{ width: "100%", minHeight: 42, padding: "0 12px", borderRadius: 10, border: "1px solid #E2E2E7", background: "#fff", fontSize: 13.5, boxSizing: "border-box" }}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <span style={{ display: "block", fontSize: 12.5, fontWeight: 560, color: "#4A4E59", marginBottom: 5 }}>
+                  Which kind of account
+                </span>
+                {/* `kind` is only the chip's word - `configDir` above is what
+                    gets billed - but it is the word every surface prints, so
+                    the human chooses it rather than having one guessed from a
+                    folder name. */}
+                <div role="radiogroup" aria-label="Account kind" style={{ display: "flex", gap: 8 }}>
+                  {(["personal", "work"] as const).map((option) => (
+                    <button
+                      key={option}
+                      type="button"
+                      role="radio"
+                      aria-checked={kind === option}
+                      data-add-account-kind={option}
+                      onClick={() => setKind(option)}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 7,
+                        height: 38,
+                        padding: "0 14px",
+                        borderRadius: 999,
+                        boxSizing: "border-box",
+                        border: kind === option ? "1.5px solid #111216" : "1px solid #E2E2E7",
+                        background: "#fff",
+                        fontSize: 13.5,
+                        fontWeight: 560,
+                        color: "#111216",
+                      }}
+                    >
+                      <KindIcon kind={option} size={13} />
+                      {option}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {addError !== null && (
+                <p role="alert" style={{ margin: 0, fontSize: 13, lineHeight: 1.5, color: "#D92D3A" }}>
+                  {addError}
+                </p>
+              )}
+
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                <button
+                  type="button"
+                  onClick={submitAccount}
+                  className={PILL_DARK}
+                  style={{ height: 40, padding: "0 16px", borderRadius: 999, border: 0, background: "#111216", color: "#fff", fontSize: 13.5, fontWeight: 620 }}
+                >
+                  Use this account
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAdding(false)
+                    setAddError(null)
+                  }}
+                  className={PILL_GHOST}
+                  style={{ height: 40, padding: "0 16px", borderRadius: 999, border: "1px solid #D9D9DF", background: "#fff", fontSize: 13.5, fontWeight: 560, color: "#1E2026" }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              data-add-account-open
+              onClick={() => setAdding(true)}
+              style={{
+                border: 0,
+                padding: 0,
+                background: "none",
+                font: "inherit",
+                fontSize: 13.5,
+                fontWeight: 560,
+                // The artboard's colour for a text button, as "Add another
+                // account" in `AddRepo.dc.html` has it.
+                color: "#4B4BC8",
+                cursor: "pointer",
+                textDecoration: "underline",
+                textUnderlineOffset: 3,
+              }}
+            >
+              Add another account
+            </button>
+          )}
+        </div>
+      )}
 
       {target !== null && (
         <div
