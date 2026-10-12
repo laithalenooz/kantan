@@ -495,6 +495,58 @@ describe("the copy, as the artboard writes it", () => {
     expect(said).not.toContain("npm test")
   })
 
+  /**
+   * The dimension `testCmd` gained a value on 2026-10-12, so by this repo's own
+   * rule it is enumerated rather than patched for the case that motivated it.
+   *
+   * `Project.testCmd` is `string | null`: the user decided a project may have
+   * no suite and the agent verifies instead. `docs/HANDOFF.md` makes the
+   * constraint on this card explicit - *"Every surface that today prints an
+   * exit code must distinguish the two … 'Self-checked by the agent - no test
+   * command' is true; a green tick is not."*
+   *
+   * The blank strings are in the table because the store refuses them
+   * (`""`, `"   "`, `"\t\n"` all refuse in `test/projects.test.ts`), so they
+   * cannot arrive from a valid record - but this card reads a tree over HTTP,
+   * not the store, and "kantan runs    until it exits 0" is the one reading no
+   * value of this field justifies. Under-claiming a verification is the cheap
+   * direction; over-claiming one gets work merged that nothing checked.
+   */
+  const COMMANDS: readonly (readonly [string, string | null, boolean])[] = [
+    ["a command", "npm test", true],
+    ["another command", "bun run check", true],
+    ["a command with surrounding space", "  npm test  ", true],
+    ["no command at all", null, false],
+    ["an empty command", "", false],
+    ["a whitespace command", "   ", false],
+    ["a tab and a newline", "\t\n", false],
+  ]
+
+  test.each(COMMANDS)("%s claims an exit code: %p -> %p", async (_name, testCmd: string | null, claims: boolean) => {
+    await render(panel(startProps({ testCmd })))
+    const said = prose()
+    expect(said.includes("until it exits 0")).toBe(claims)
+    expect(said.includes("verifies its own work")).toBe(!claims)
+  })
+
+  test("a project with no suite says so in the Tests field itself, not merely somewhere", async () => {
+    await render(panel(startProps({ testCmd: null })))
+    expect(one('[data-testid="test-cmd"]').textContent).toBe("Self-checked by the agent — no test command")
+    expect(prose()).not.toContain("exits 0")
+  })
+
+  /**
+   * Read off the element's own `textContent`, not `prose()`: that helper
+   * collapses runs of whitespace, so a component that trimmed or reflowed the
+   * command would pass an assertion made through it. A shell string's spacing
+   * is the user's, and `src/run.ts` hands it to `sh -c` verbatim.
+   */
+  test("a command keeps its own spacing, because it is a shell string", async () => {
+    await render(panel(startProps({ testCmd: "npm test  --  --runInBand" })))
+    expect(one('[data-testid="test-cmd"]').textContent).toBe("npm test  --  --runInBand")
+    expect(one('[data-testid="step-cmd"]').textContent).toBe("npm test  --  --runInBand")
+  })
+
   test("the steps are a numbered sequence, because the phases are one", async () => {
     await render(panel(VARIANTS.open()))
     const steps = all('[data-testid="step"]')

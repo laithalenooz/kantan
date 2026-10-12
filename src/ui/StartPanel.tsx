@@ -132,9 +132,21 @@ interface PanelCommon {
   /** The feature file as the project lists it, shown unshortened. */
   featureFile: string
   account: Account
-  /** The project's test command. Printed in step 3 and under "Tests", never a
-   *  literal `npm test`. */
-  testCmd: string
+  /**
+   * The project's test command, printed in step 3 and under "Tests".
+   *
+   * `null` is a real value, not a missing one: the user decided on 2026-10-12
+   * that a project may have no suite and the agent verifies its own work
+   * instead (`docs/HANDOFF.md`). `Project.testCmd` in `src/projects.ts` is
+   * already `string | null`; `TreeProject.testCmd` is still `string`, so the
+   * shell cannot deliver the null case until that widens too.
+   *
+   * What this card must not do is settled by that record: *"Every surface that
+   * today prints an exit code must distinguish the two … 'Self-checked by the
+   * agent - no test command' is true; a green tick is not."* So without a
+   * command, step 3 claims no exit code at all.
+   */
+  testCmd: string | null
   /** Percent of the account's 5-hour window already used, for the artboard's
    *  "41% used". Omitted rather than guessed. */
   usagePct?: number
@@ -257,6 +269,25 @@ function usePrefersReducedMotion(): boolean {
  * cheap direction.
  */
 const PLAIN_DECIMAL = /^\d+(?:\.\d+)?$/
+
+/**
+ * The command this project actually has, or `null` for a project that has
+ * none.
+ *
+ * Blank strings fold into `null` rather than being printed. The store refuses
+ * `""`, `"   "` and `"\t\n"` outright, so they cannot come from a valid
+ * record - but this card reads a tree over HTTP rather than the store, and
+ * "kantan runs    until it exits 0" is the one reading no value of this field
+ * justifies. Under-claiming a verification is the cheap direction here;
+ * over-claiming one gets work merged that nothing checked.
+ *
+ * The command itself is never trimmed for display: it is a shell string handed
+ * to `sh -c` verbatim, so its spacing is the user's.
+ */
+function commandOf(testCmd: string | null): string | null {
+  if (testCmd === null) return null
+  return testCmd.trim() === "" ? null : testCmd
+}
 
 /** The figure a run may be funded with, or `null` for every other string. */
 function parseCeiling(raw: string): number | null {
@@ -708,6 +739,7 @@ const REFUSAL: CSSProperties = {
 function OpenCard(props: StartShape & Wiring & { draft: string; setDraft: (value: string) => void }): ReactElement {
   const { task, featureFile, testCmd, account, blockedBy, reduced, anim, acting, refusal, fire, draft, setDraft } = props
 
+  const command = commandOf(testCmd)
   const offersCeiling = props.defaultCeilingUsd !== undefined
   const ceiling = offersCeiling ? parseCeiling(draft) : undefined
   const ceilingBad = offersCeiling && ceiling === null
@@ -816,12 +848,21 @@ function OpenCard(props: StartShape & Wiring & { draft: string; setDraft: (value
           <Step n={2} title="You decide" className={anim("bf d2")} accent>
             Approve the plan, or send it back with a note. Nothing else moves until you do.
           </Step>
-          <Step n={3} title="Build and test" className={anim("bf d3")}>
-            A fresh agent implements it. kantan runs{" "}
-            <span className="m" style={{ fontSize: 12.5 }}>
-              {testCmd}
-            </span>{" "}
-            until it exits 0.
+          {/* The only branch in the artboard's copy that the artboard does not
+              draw: it was drawn before a project could have no suite. With no
+              command there is no exit code, so the sentence claims none. */}
+          <Step n={3} title={command === null ? "Build and check" : "Build and test"} className={anim("bf d3")}>
+            {command === null ? (
+              <>A fresh agent implements it, then verifies its own work and records how it did — this project has no test command.</>
+            ) : (
+              <>
+                A fresh agent implements it. kantan runs{" "}
+                <span className="m" data-testid="step-cmd" style={{ fontSize: 12.5 }}>
+                  {command}
+                </span>{" "}
+                until it exits 0.
+              </>
+            )}
           </Step>
         </ol>
       </div>
@@ -843,7 +884,10 @@ function OpenCard(props: StartShape & Wiring & { draft: string; setDraft: (value
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           <span style={FIELD_LABEL}>Tests</span>
           <span
-            className="m"
+            /* The mono face is for machine values, so it is withheld from the
+               sentence that stands in for one. */
+            className={command === null ? undefined : "m"}
+            data-testid="test-cmd"
             style={{
               display: "flex",
               alignItems: "center",
@@ -853,9 +897,10 @@ function OpenCard(props: StartShape & Wiring & { draft: string; setDraft: (value
               background: "#F4F4F6",
               fontSize: 13.5,
               boxSizing: "border-box",
+              ...(command === null ? { color: "#5F6370" } : {}),
             }}
           >
-            {testCmd}
+            {command ?? "Self-checked by the agent — no test command"}
           </span>
         </div>
 
@@ -1270,11 +1315,14 @@ function InterruptedCard(props: ResumeShape & Wiring): ReactElement {
             Start over from planning
           </button>
         )}
-        <span style={{ fontSize: 13, color: "#4A4E59", flex: "1 1 220px" }}>
-          {props.onStartOver === undefined
-            ? "Resuming carries on from the last event the log recorded."
-            : "Starting over keeps this run in the history."}
-        </span>
+        {/* The artboard's aside explains the *second* button, so with no second
+            button there is nothing for it to explain. The earlier stand-in here
+            was invented copy that restated the lede. */}
+        {props.onStartOver !== undefined && (
+          <span style={{ fontSize: 13, color: "#4A4E59", flex: "1 1 220px" }}>
+            Starting over keeps this run in the history.
+          </span>
+        )}
         {refusal !== null && (
           <p data-testid="refusal" role="alert" style={REFUSAL}>
             {refusal}
