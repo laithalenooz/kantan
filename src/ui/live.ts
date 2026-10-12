@@ -17,7 +17,7 @@ import type { RunHeader, RunPhase, RunRecord, WaitReason } from "../runlog.ts"
 import type { DigestEntry } from "./Digest.tsx"
 import type { PlanSource } from "./Gate.tsx"
 import type { StreamRow } from "./Row.tsx"
-import type { TreeProject } from "./Tree.tsx"
+import type { Effort, PermissionMode, TreeProject } from "./Tree.tsx"
 import type { CostProcess, PhaseStep } from "./Sidebar.tsx"
 
 type ResultEvent = Extract<Event, { kind: "result" }>
@@ -941,6 +941,18 @@ export async function updateProject(
     /** `null` clears it, which is how a project returns to the default profile. */
     configDir?: string | null
     budgetUsd?: number
+    /**
+     * The settings that shape a run, which `PATCH /api/projects` accepts one at
+     * a time. Spread rather than nested, because the route takes flat keys and
+     * copies only the ones the body carried.
+     */
+    planModel?: string
+    implementModel?: string
+    planEffort?: Effort
+    implementEffort?: Effort
+    permissionMode?: PermissionMode
+    /** `null` means every tool, which is the store's default. */
+    allowedTools?: string[] | null
   },
   fetcher: typeof fetch = fetch,
 ): Promise<void> {

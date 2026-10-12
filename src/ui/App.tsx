@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { Tree, canResume, canStart, type Account, type TaskId, type TreeProject, type TreeTask } from "./Tree.tsx"
+import { Tree, canResume, canStart, type Account, type AdvancedSettings, type TaskId, type TreeProject, type TreeTask } from "./Tree.tsx"
 import { Gate, type GateProps } from "./Gate.tsx"
 import { Stream } from "./Stream.tsx"
 import { Sidebar, sumProcessCost, type AccountWindow } from "./Sidebar.tsx"
@@ -434,6 +434,15 @@ export function App() {
     [guard],
   )
 
+  const onSaveAdvanced = useCallback(
+    async (path: string, change: Partial<AdvancedSettings>): Promise<void> =>
+      /* Straight through: `PATCH /api/projects` is a partial update and the
+         store validates every field by name, so the one thing this layer must
+         not do is fill in the keys the human did not touch. */
+      await guard(() => updateProject(path, change)),
+    [guard],
+  )
+
   const onSaveBudget = useCallback(
     async (path: string, budgetUsd: number): Promise<void> => await guard(() => updateProject(path, { budgetUsd })),
     [guard],
@@ -758,6 +767,9 @@ export function App() {
               ...(summary === undefined ? {} : { summary }),
             }
           }}
+          {...(panelProject.advanced === undefined
+            ? {}
+            : { onSaveAdvanced: (change: Partial<AdvancedSettings>) => onSaveAdvanced(panelProject.path, change) })}
           {...(panelProject.budgetUsd === undefined
             ? {}
             : { budgetUsd: panelProject.budgetUsd, onSaveBudget: (usd: number) => onSaveBudget(panelProject.path, usd) })}

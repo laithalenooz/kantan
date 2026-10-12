@@ -103,6 +103,34 @@ export interface TreeTask {
   run?: TreeTaskRun
 }
 
+/** The five-value scale `src/projects.ts` validates against. */
+export type Effort = "low" | "medium" | "high" | "xhigh" | "max"
+
+/** What the agent may do without being asked, as `src/spawn.ts` passes it on. */
+export type PermissionMode = "acceptEdits" | "bypassPermissions"
+
+/**
+ * The settings a run is shaped by, which were hand-edit-only until the wire
+ * carried them.
+ *
+ * Spelled here rather than imported from `src/projects.ts`: that module reads
+ * files, and a **value** import of it poisons the browser bundle - the trap
+ * `src/runstate.ts` exists to work around. A type import would erase, but then
+ * two files would disagree silently the moment one changed, and this way a
+ * mismatch is a typecheck error in `src/server.ts` where the two meet.
+ */
+export interface AdvancedSettings {
+  /** The model the planning conversation runs on, e.g. `claude-opus-5-5`. */
+  planModel: string
+  /** The model the implement and refine conversations run on. */
+  implementModel: string
+  planEffort: Effort
+  implementEffort: Effort
+  permissionMode: PermissionMode
+  /** `null` means every tool. A list narrows it to those names. */
+  allowedTools: string[] | null
+}
+
 export interface TreeFeature {
   /** The path as the project lists it, shown verbatim and never shortened. */
   path: string
@@ -133,6 +161,15 @@ export interface TreeProject {
    * would read as a project that can spend nothing.
    */
   budgetUsd?: number
+  /**
+   * What each phase of a run uses, as the store holds it.
+   *
+   * One object rather than six fields, and optional as a whole: a tree from a
+   * server older than this page has none, and a panel that cannot read the set
+   * must not draw a form with half its fields blank - "unset" and "this wire
+   * does not carry it" look identical in a text input and mean opposite things.
+   */
+  advanced?: AdvancedSettings
   /**
    * The Claude profile directory a run bills to, or absent for the default one.
    *

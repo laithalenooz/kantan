@@ -3256,7 +3256,15 @@ test("a malformed edit body is refused before anything is written", async () => 
     { body: JSON.stringify({ path: 7 }), status: 400, why: "a number is not a path" },
     { body: JSON.stringify({ path: "repo", testCmd: "x" }), status: 400, why: "a relative path would name a different record per launch directory" },
     { body: JSON.stringify({ path: repo, testcmd: "x" }), status: 400, why: "the near-miss spelling, refused by name rather than dropped" },
-    { body: JSON.stringify({ path: repo, allowedTools: ["Read"] }), status: 400, why: "a field the store has but this route does not offer: a 400 naming what it takes, never a silent drop" },
+    /* `reportPath` has taken `allowedTools`' place in this row. The route
+       offers `allowedTools` now - the store has always validated it and only
+       the key list withheld it - while `reportPath` is still refused, and
+       deliberately: nothing in `src/run.ts` reads it, so a control for it would
+       store a value with no effect, which is worse than no control. */
+    { body: JSON.stringify({ path: repo, reportPath: "docs/report.md" }), status: 400, why: "a field the store has but this route does not offer: a 400 naming what it takes, never a silent drop" },
+    { body: JSON.stringify({ path: repo, planEffort: "sideways" }), status: 400, why: "an effort outside the five the store validates" },
+    { body: JSON.stringify({ path: repo, permissionMode: "yolo" }), status: 400, why: "a permission mode the store does not know" },
+    { body: JSON.stringify({ path: repo, planModel: "" }), status: 400, why: "a blank model would spawn the CLI with no model at all" },
     { body: JSON.stringify({ path: repo, testCmd: "npm test" }), status: 200, why: "the control: a well-formed edit" },
   ]
 
@@ -3527,6 +3535,19 @@ test("a registered repo comes back as a TreeProject, field for field, with its t
       // wire never carried it. `configDir` is absent here because this project
       // states none, and the key is omitted rather than sent as `null`.
       budgetUsd: 50,
+      // The six that shape a run, hand-edit-only until the wire carried them.
+      // One object, so a panel takes them or leaves them together: a half-read
+      // set would draw a form with some fields blank, and "unset" is
+      // indistinguishable from "this wire is older than this page" in a text
+      // input while meaning the opposite.
+      advanced: {
+        planModel: "claude-opus-5-5",
+        implementModel: "claude-sonnet-5-5",
+        planEffort: "high",
+        implementEffort: "medium",
+        permissionMode: "acceptEdits",
+        allowedTools: null,
+      },
       features: [
         {
           path: "docs/features/importer.md",
@@ -4746,4 +4767,79 @@ test("proposing needs all three fields", async () => {
   ]) {
     expect((await propose(l, body)).status).toBe(400)
   }
+})
+
+/**
+ * The six settings that were hand-edit-only.
+ *
+ * The store has held and validated them since it was written; only
+ * `EDITABLE_KEYS` withheld them, so `~/.orch/projects.json` was the single way
+ * to change the model a phase runs on. The refusals in the table above prove
+ * the validation still bites - this proves the acceptance, one field at a time,
+ * because `PATCH` is a partial update and the point is that touching one does
+ * not rewrite the rest.
+ */
+test("every advanced setting can be edited, one at a time, without disturbing the others", async () => {
+  const repo = await cleanRepo()
+  const store = await storeFile()
+  await addProject(store, defaults({ path: repo, testCmd: "bun test" }))
+  const l = await withTree(store)
+
+  const CHANGES: ReadonlyArray<[string, unknown]> = [
+    ["planModel", "claude-fable-5-1"],
+    ["implementModel", "claude-haiku-5-5"],
+    ["planEffort", "max"],
+    ["implementEffort", "low"],
+    ["permissionMode", "bypassPermissions"],
+    ["allowedTools", ["Read", "Edit"]],
+  ]
+
+  for (const [key, value] of CHANGES) {
+    const res = await call(l, {
+      path: REGISTER_PATH,
+      method: "PATCH",
+      body: JSON.stringify({ path: repo, [key]: value }),
+    })
+    expect(res.status, key).toBe(200)
+  }
+
+  // Every one landed, and the fields nobody touched are untouched.
+  const stored = (await loadProjects(store))[0]
+  expect(stored).toMatchObject({
+    planModel: "claude-fable-5-1",
+    implementModel: "claude-haiku-5-5",
+    planEffort: "max",
+    implementEffort: "low",
+    permissionMode: "bypassPermissions",
+    allowedTools: ["Read", "Edit"],
+    testCmd: "bun test",
+    budgetUsd: 50,
+  })
+
+  // And they reach the page: the panel cannot offer to change what it cannot read.
+  const { body } = await getTree(l)
+  expect(body.projects?.[0]?.advanced).toEqual({
+    planModel: "claude-fable-5-1",
+    implementModel: "claude-haiku-5-5",
+    planEffort: "max",
+    implementEffort: "low",
+    permissionMode: "bypassPermissions",
+    allowedTools: ["Read", "Edit"],
+  })
+})
+
+/** `null` is "every tool", which is the store's default and not an empty list. */
+test("allowedTools clears back to null, which means every tool", async () => {
+  const repo = await cleanRepo()
+  const store = await storeFile()
+  await addProject(store, defaults({ path: repo, testCmd: "bun test", allowedTools: ["Read"] }))
+  const l = await withTree(store)
+
+  const res = await call(l, {
+    path: REGISTER_PATH,
+    method: "PATCH",
+    body: JSON.stringify({ path: repo, allowedTools: null }),
+  })
+  expect(res.status).toBe(200)
+  expect((await loadProjects(store))[0]?.allowedTools).toBeNull()
 })

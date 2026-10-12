@@ -1411,6 +1411,20 @@ async function readProjects(ctx: RouteContext): Promise<Response> {
       // budget" - the store has had the field, and a default of $50, since
       // `projects.ts` was written.
       budgetUsd: project.budgetUsd,
+      // What each phase runs as. On the wire for the same reason the ceiling
+      // is: a panel cannot offer to change a setting it cannot read, and these
+      // were hand-edit-only until now. Sent as one object rather than six keys
+      // so the panel takes them or leaves them together - a half-read set
+      // would draw a form with some fields blank and no way to tell "unset"
+      // from "this wire is older than this page".
+      advanced: {
+        planModel: project.planModel,
+        implementModel: project.implementModel,
+        planEffort: project.planEffort,
+        implementEffort: project.implementEffort,
+        permissionMode: project.permissionMode,
+        allowedTools: project.allowedTools,
+      },
       features: read.features,
     })
   }
@@ -1879,7 +1893,33 @@ const REMOVE_KEYS = ["path"] as const
  * UI offering an account switcher must send both keys in one call; that it can
  * is pinned by test, as is the trap.
  */
-const EDITABLE_KEYS = ["testCmd", "account", "configDir", "budgetUsd"] as const
+/**
+ * What `PATCH /api/projects` may change.
+ *
+ * It was these four, and the store has held eleven since it was written - so
+ * `planModel`, `implementModel`, `planEffort`, `implementEffort`,
+ * `permissionMode` and `allowedTools` could only be changed by hand-editing
+ * `~/.orch/projects.json`. Nothing was wrong with the write path: `editProject`
+ * copies whichever of these keys the body carried and `updateProject` validates
+ * the merged record, naming the field in its own refusal. The only thing
+ * missing was the key being listed here, and a surface for it.
+ *
+ * `reportPath` stays out. It is the one field nothing in `src/run.ts` reads
+ * today, so a control for it would store a value with no effect - which is
+ * worse than no control, because it looks like it did something.
+ */
+const EDITABLE_KEYS = [
+  "testCmd",
+  "account",
+  "configDir",
+  "budgetUsd",
+  "planModel",
+  "implementModel",
+  "planEffort",
+  "implementEffort",
+  "permissionMode",
+  "allowedTools",
+] as const
 /** The identity, plus what may change. Derived rather than listed again, so the
  * body's allowlist and the set of keys the handler reads cannot drift: `path`
  * is taken as the record to edit and is never one of the changes. */

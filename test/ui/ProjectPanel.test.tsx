@@ -2032,3 +2032,216 @@ describe("creating a new task file", () => {
     expect(one<HTMLElement>("[data-new-task-file]").style.color).toBe("#4B4BC8")
   })
 })
+
+/* ========================================================================== */
+/* How runs are shaped                                                        */
+/* ========================================================================== */
+
+/**
+ * The six settings that were hand-edit-only.
+ *
+ * Collapsed by default, and that is the honest default rather than a tidy one:
+ * every field has a working value, and the two that can be set wrong cost real
+ * money (a model, an effort) or real safety (`bypassPermissions`). A section
+ * nobody opened is a section nobody got wrong.
+ */
+describe("the advanced section", () => {
+  const ADVANCED = {
+    planModel: "claude-opus-5-5",
+    implementModel: "claude-sonnet-5-5",
+    planEffort: "high",
+    implementEffort: "medium",
+    permissionMode: "acceptEdits",
+    allowedTools: null,
+  } as const
+
+  const withAdvanced = (over: Record<string, unknown> = {}) =>
+    project("personal", { advanced: { ...ADVANCED, ...over } } as never)
+
+  test("is not drawn without both the settings and a handler", async () => {
+    const h = handlers()
+    // Settings, no handler: a form with nothing to save it does nothing.
+    await render(<api.ProjectPanel project={withAdvanced()} accounts={ACCOUNTS} {...h.props} />)
+    expect(maybe("[data-advanced-toggle]")).toBeNull()
+
+    // Handler, no settings: a form of blanks cannot tell "unset" from "this
+    // wire is older than this page", and those mean opposite things.
+    await render(
+      <api.ProjectPanel project={project("personal")} accounts={ACCOUNTS} onSaveAdvanced={() => {}} {...h.props} />,
+    )
+    expect(maybe("[data-advanced-toggle]")).toBeNull()
+  })
+
+  test("starts collapsed, and opens to the stored values", async () => {
+    const h = handlers()
+    await render(
+      <api.ProjectPanel project={withAdvanced()} accounts={ACCOUNTS} onSaveAdvanced={() => {}} {...h.props} />,
+    )
+
+    const toggle = one("[data-advanced-toggle]")
+    expect(toggle.getAttribute("aria-expanded")).toBe("false")
+    expect(maybe('[data-advanced="planModel"]')).toBeNull()
+
+    await click(toggle)
+    expect(one("[data-advanced-toggle]").getAttribute("aria-expanded")).toBe("true")
+    expect(one<HTMLInputElement>('[data-advanced="planModel"]').value).toBe("claude-opus-5-5")
+    expect(one<HTMLInputElement>('[data-advanced="implementModel"]').value).toBe("claude-sonnet-5-5")
+    expect(one<HTMLSelectElement>('[data-advanced="planEffort"]').value).toBe("high")
+    expect(one<HTMLSelectElement>('[data-advanced="implementEffort"]').value).toBe("medium")
+  })
+
+  /** One key per change: `PATCH` is partial, and committing a model must not
+   *  rewrite an effort the human was still deciding about. */
+  test("saves one field at a time", async () => {
+    const changes: Record<string, unknown>[] = []
+    await render(
+      <api.ProjectPanel
+        project={withAdvanced()}
+        accounts={ACCOUNTS}
+        onSaveAdvanced={(c) => void changes.push(c as Record<string, unknown>)}
+        onSwitchAccount={() => {}}
+        onSaveTestCmd={() => {}}
+        onRemove={() => {}}
+      />,
+    )
+    await click(one("[data-advanced-toggle]"))
+
+    await typeInto(one('[data-advanced="planModel"]'), "claude-fable-5-1")
+    await blurOf(one('[data-advanced="planModel"]'))
+    expect(changes).toEqual([{ planModel: "claude-fable-5-1" }])
+  })
+
+  test("a model left unchanged, or emptied, saves nothing", async () => {
+    const changes: unknown[] = []
+    await render(
+      <api.ProjectPanel
+        project={withAdvanced()}
+        accounts={ACCOUNTS}
+        onSaveAdvanced={(c) => void changes.push(c)}
+        onSwitchAccount={() => {}}
+        onSaveTestCmd={() => {}}
+        onRemove={() => {}}
+      />,
+    )
+    await click(one("[data-advanced-toggle]"))
+
+    await blurOf(one('[data-advanced="planModel"]'))
+    expect(changes).toEqual([])
+
+    // Blank would spawn the CLI with no model at all. The store refuses it;
+    // this never sends it.
+    await typeInto(one('[data-advanced="planModel"]'), "   ")
+    await blurOf(one('[data-advanced="planModel"]'))
+    expect(changes).toEqual([])
+  })
+
+  /**
+   * Widening what the agent may do is one click and cannot be taken back for a
+   * run already in flight, so it asks. Narrowing never does: the cheap
+   * direction needs no ceremony.
+   */
+  /**
+   * Two tests rather than one, because `render` here re-renders into the same
+   * root: the section keeps its `open` state across a second call, so a blind
+   * second click on the toggle *closes* it. A fresh mount per case is what
+   * `beforeEach` is for.
+   */
+  const mount = (over: Record<string, unknown>, changes: Record<string, unknown>[]) =>
+    render(
+      <api.ProjectPanel
+        project={withAdvanced(over)}
+        accounts={ACCOUNTS}
+        onSaveAdvanced={(c) => void changes.push(c as Record<string, unknown>)}
+        onSwitchAccount={() => {}}
+        onSaveTestCmd={() => {}}
+        onRemove={() => {}}
+      />,
+    )
+
+  test("narrowing what the agent may do goes straight through", async () => {
+    const changes: Record<string, unknown>[] = []
+    await mount({ permissionMode: "bypassPermissions" }, changes)
+    await click(one("[data-advanced-toggle]"))
+
+    await click(one('[data-permission="acceptEdits"]'))
+    expect(changes).toEqual([{ permissionMode: "acceptEdits" }])
+    expect(maybe('[role="alertdialog"]')).toBeNull()
+  })
+
+  test("widening it asks first, and sends nothing until the answer", async () => {
+    const changes: Record<string, unknown>[] = []
+    await mount({}, changes)
+    await click(one("[data-advanced-toggle]"))
+
+    await click(one('[data-permission="bypassPermissions"]'))
+    expect(changes).toEqual([])
+    expect(one('[role="alertdialog"]')).not.toBeNull()
+    expect(prose()).toContain("any command as you")
+
+    await click(byText("button", "Allow any command"))
+    expect(changes).toEqual([{ permissionMode: "bypassPermissions" }])
+  })
+
+  test("declining the widening leaves it as it was", async () => {
+    const changes: Record<string, unknown>[] = []
+    await mount({}, changes)
+    await click(one("[data-advanced-toggle]"))
+
+    await click(one('[data-permission="bypassPermissions"]'))
+    await click(byText("button", "Keep it as it is"))
+    expect(changes).toEqual([])
+    expect(maybe('[role="alertdialog"]')).toBeNull()
+    expect(one('[data-permission="acceptEdits"]').getAttribute("aria-checked")).toBe("true")
+  })
+
+  /**
+   * An empty box means **every** tool, which is `null`. An empty *list* would
+   * mean the agent may use nothing, and every run would stop at its first file
+   * read - the two readings of a blank field are opposite, so the copy says
+   * which one this is and the handler sends `null`.
+   */
+  test("an emptied tools field sends null, not an empty list", async () => {
+    const changes: Record<string, unknown>[] = []
+    await render(
+      <api.ProjectPanel
+        project={withAdvanced({ allowedTools: ["Read", "Edit"] })}
+        accounts={ACCOUNTS}
+        onSaveAdvanced={(c) => void changes.push(c as Record<string, unknown>)}
+        onSwitchAccount={() => {}}
+        onSaveTestCmd={() => {}}
+        onRemove={() => {}}
+      />,
+    )
+    await click(one("[data-advanced-toggle]"))
+
+    const field = one<HTMLInputElement>('[data-advanced="allowedTools"]')
+    expect(field.value).toBe("Read, Edit")
+    expect(prose()).toContain("Leave it empty for every tool")
+
+    await typeInto(field, "   ")
+    await blurOf(field)
+    expect(changes).toEqual([{ allowedTools: null }])
+
+    await typeInto(one('[data-advanced="allowedTools"]'), " Read ,Bash(npm test) , ")
+    await blurOf(one('[data-advanced="allowedTools"]'))
+    expect(changes.at(-1)).toEqual({ allowedTools: ["Read", "Bash(npm test)"] })
+  })
+
+  /** A closed list would make a model that exists unreachable until someone
+   *  edited an array, and the fallback is the hand-editing this replaces. */
+  test("the model fields suggest rather than restrict", async () => {
+    const h = handlers()
+    await render(
+      <api.ProjectPanel project={withAdvanced()} accounts={ACCOUNTS} onSaveAdvanced={() => {}} {...h.props} />,
+    )
+    await click(one("[data-advanced-toggle]"))
+
+    const field = one('[data-advanced="planModel"]')
+    expect(field.tagName).toBe("INPUT")
+    const list = field.getAttribute("list")
+    expect(list).not.toBeNull()
+    const options = all(`#${CSS.escape(list ?? "")} option`).map((o) => o.getAttribute("value"))
+    expect(options).toContain("claude-opus-5-5")
+    expect(options).toContain("claude-haiku-5-5")
+  })
+})
