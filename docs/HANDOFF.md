@@ -1032,6 +1032,37 @@ frame, never on the disconnect.** A read that fails mid-stream deliberately
 sends no `eof`, and that case must keep retrying or a live run is stranded.
 Both directions are tested, and the fix is mutation-checked.
 
+### Task 26: the design detector was run, and what it found
+
+`~/.claude/skills/impeccable/scripts/impeccable detect --json src/ui`, after
+every visual-rework commit landed. **7 findings, 0 acted on, both deliberately.**
+
+**6 x `overused-font` (warning).** It flags Geist and Geist Mono as faces that
+"no longer feel distinctive". That is the typeface of the design the user
+approved - `DESIGN.md` names it, all five artboards load it, and the whole
+rework exists because the build had drifted from that design. Changing the type
+to satisfy a slop heuristic would undo the thing being fixed. Not a defect.
+
+**1 x `layout-transition` (warning)** - `src/ui/Sidebar.tsx`, the cost bar's
+`transition: width .6s`. The rule is right in general: animating width causes
+layout, and `transform: scaleX()` composites. Kept anyway, for two reasons
+specific to this element.
+
+- **`width` is the datum.** The comment at the site already says it: "the width
+  is the truth and the transition is the movement, so the DOM always carries
+  the real figure". Two tests read it. A `scaleX` would move the figure into a
+  transform matrix.
+- **`minWidth: 6px` is not expressible under `scaleX`.** It guarantees a
+  visible sliver for a run that has barely spent, and a scaled 6px minimum is
+  not a thing you can write.
+
+The cost is one 6px-tall element with no text, inside an `overflow-hidden`
+track, re-laid out when a `result` event changes the total - roughly once a
+turn. The general rule earns its keep on lists and cards, not here.
+
+Re-run the detector after any further UI work; these two are the expected
+output, so anything else is new.
+
 ## Settled: decisions with non-obvious reasons
 
 | Decision | Why it is not the obvious thing |
