@@ -686,8 +686,19 @@ export function AddTasks(props: AddTasksProps): ReactElement {
             Add tasks to {file}
           </h1>
           <p className="mt-2.5 max-w-[62ch] text-[15px] leading-[1.6] text-muted-700">
-            New tasks go at the end of <span className="m font-mono text-[13.5px]">{featureFile}</span> in your working
-            tree, {numbering}. Commit the file whenever you like.
+            {/* Two sentences that were true when this screen had no server
+                behind it and are not now. "At the end of the file" became "after
+                the last task": `appendTasks` inserts after that task's own
+                detail lines, so a trailing `## Notes` section keeps the tasks
+                out of it. And the commit is no longer the human's to make -
+                `POST /api/features/task` commits the one file, for the reason
+                `draftFeatureFile` gives: kantan changed a file inside someone's
+                repository, and leaving that loose in their working tree is the
+                inconsistency. A screen that told them to commit it themselves
+                would be describing work already done. */}
+            New tasks go after the last task in{" "}
+            <span className="m font-mono text-[13.5px]">{featureFile}</span>, {numbering}. kantan commits that one
+            file, so the change lands in your history rather than loose in your working tree.
           </p>
 
           {canAsk ? (

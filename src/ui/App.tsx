@@ -10,7 +10,7 @@ import { AddRepo, type Detection } from "./AddRepo.tsx"
 import { AddTasks } from "./AddTasks.tsx"
 import { ProjectPanel, type AccountOption } from "./ProjectPanel.tsx"
 import { StartPanel } from "./StartPanel.tsx"
-import { act, addTasks, detectPath, registerProject, removeProject, removeTask, startRun, taskKeyOf, updateProject, type RunView } from "./live.ts"
+import { act, addTasks, detectPath, draftFeature, registerProject, removeProject, removeTask, startRun, taskKeyOf, updateProject, type RunView } from "./live.ts"
 import { useAction, usePlan, useRun, useTree } from "./useRun.ts"
 import type { RunPhase } from "../runlog.ts"
 import type { AskingPhase } from "./Gate.tsx"
@@ -205,6 +205,8 @@ function useNow(): number {
 type Panel =
   | { kind: "addRepo" }
   | { kind: "addTasks"; projectPath: string; featureFile: string }
+  /** A **new** task file, for work none of the project's files is about. */
+  | { kind: "newTaskFile"; projectPath: string }
   | { kind: "project"; path: string }
   | null
 
@@ -469,6 +471,33 @@ export function App() {
     }
   }, [reload, removeBusy, removing, selected])
 
+  /** What the human typed for a new task file, and how that call is going. */
+  const [newFileText, setNewFileText] = useState("")
+  const [newFileBusy, setNewFileBusy] = useState(false)
+  const [newFileError, setNewFileError] = useState<string | null>(null)
+
+  const createTaskFile = useCallback(
+    async (projectPath: string): Promise<void> => {
+      const text = newFileText.trim()
+      if (text === "" || newFileBusy) return
+      setNewFileBusy(true)
+      setNewFileError(null)
+      try {
+        await draftFeature(projectPath, text)
+        setPanel(null)
+        setNewFileText("")
+        /* The tree is where the new file appears, and nothing else refetches
+           on its own. */
+        reload()
+      } catch (cause) {
+        setNewFileError(cause instanceof Error ? cause.message : String(cause))
+      } finally {
+        setNewFileBusy(false)
+      }
+    },
+    [newFileBusy, newFileText, reload],
+  )
+
   const onRemoveProject = useCallback(
     async (project: TreeProject): Promise<void> => {
       await guard(async () => {
@@ -659,6 +688,12 @@ export function App() {
             setRemoveError(null)
             setRemoving({ projectPath, featureFile, taskRef })
           }}
+          onNewTaskFile={(projectPath) => {
+            setSelected(null)
+            setNewFileError(null)
+            setNewFileText("")
+            setPanel({ kind: "newTaskFile", projectPath })
+          }}
         />
 
       {/* Empty renders its own `<main>` and its own `.dots` layer, because
@@ -754,6 +789,73 @@ export function App() {
           <p role="alert" className="m-4 rounded-[12px] border border-[#F3C6C9] bg-[#FDF2F3] px-4 py-3 text-[13px] leading-[1.5] text-[#D92D3A]">
             {failure}
           </p>
+        )}
+
+        {panel?.kind === "newTaskFile" && (
+          <section
+            aria-labelledby="kantan-new-file"
+            className="rounded-[20px] border border-edge bg-white p-6 shadow-[0_1px_2px_rgba(17,18,22,.04),0_18px_50px_-22px_rgba(17,18,22,.2)]"
+          >
+            <h1 id="kantan-new-file" className="m-0 text-[28px] font-[650] tracking-[-.02em]">
+              Describe the work
+            </h1>
+            <p className="mt-[10px] mb-5 max-w-[62ch] text-[14.5px] leading-[1.55] text-muted-700">
+              A sentence or two about what you want done, in your own words. kantan writes a new task file in{" "}
+              <span className="m font-mono text-[13px]">docs/features/</span>, breaks the work into tasks, and commits
+              the file. Nothing runs until you start a task. Use this for work none of the files in the tree is about —
+              to add to one that already fits, use its own{" "}
+              <span className="font-[560]">Add task</span> row instead.
+            </p>
+            <label htmlFor="kantan-new-file-text" className="block text-[13px] font-[560] text-muted-700">
+              What needs doing?
+            </label>
+            <textarea
+              id="kantan-new-file-text"
+              autoFocus
+              rows={5}
+              value={newFileText}
+              onChange={(e) => {
+                setNewFileText(e.target.value)
+                setNewFileError(null)
+              }}
+              placeholder="e.g. The importer should survive a crash halfway through a file and pick up where it stopped."
+              className="mt-2 w-full resize-y rounded-[12px] border border-edge-strong bg-white p-3 text-[14px] leading-[1.55] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-indigo"
+            />
+            {newFileError !== null && (
+              <p
+                role="alert"
+                className="mt-3 mb-0 rounded-[10px] border border-[#F3C6C9] bg-[#FDF2F3] px-3 py-[10px] text-[13px] leading-[1.5] text-[#D92D3A]"
+              >
+                {newFileError}
+              </p>
+            )}
+            <div className="mt-5 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={newFileText.trim() === "" || newFileBusy}
+                onClick={() => void createTaskFile(panel.projectPath)}
+                className="inline-flex h-12 items-center gap-2 rounded-full border-0 bg-ink px-5 text-[15px] font-[620] text-white disabled:bg-[#D9D9DF] disabled:text-muted-400"
+              >
+                {newFileBusy ? "Writing it…" : "Write the task file"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPanel(null)
+                  setNewFileText("")
+                  setNewFileError(null)
+                }}
+                className="ghost h-12 rounded-full border border-edge-strong bg-white px-5 text-[14px] font-[560] text-ink-deep"
+              >
+                Cancel
+              </button>
+              {newFileBusy && (
+                <span className="text-[13px] text-muted-500">
+                  An agent is reading the repository and drafting the tasks. This usually takes a few seconds.
+                </span>
+              )}
+            </div>
+          </section>
         )}
 
         {panel?.kind === "addTasks" && addTasksFor !== null && (

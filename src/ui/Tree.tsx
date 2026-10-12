@@ -840,6 +840,17 @@ export interface TreeProps {
    * task by ref, and there is nothing to send for a line that has none.
    */
   onRemoveTask?: (projectPath: string, featureFile: string, taskRef: string) => void
+  /**
+   * Asks to start a **new** task file in this project. Absent draws no row.
+   *
+   * Separate from `onAddTask`, which is per-file and therefore per-scope: the
+   * "+ Add task" row under `importer.md` can only add work that belongs to the
+   * importer. Reported from use as "why does it say *Add tasks to
+   * add-health-check-endpoint.md* when I wanted a task for a different
+   * scope?" - the answer was that there was no other way in, which is a gap
+   * rather than an answer.
+   */
+  onNewTaskFile?: (projectPath: string) => void
 }
 
 /** Does this triple address this task? Compared whole; a bare ref is ambiguous. */
@@ -905,6 +916,7 @@ export function Tree({
   accountSlot,
   onAddTask,
   onRemoveTask,
+  onNewTaskFile,
 }: TreeProps): ReactElement {
   const eyebrow = "text-[11.5px] font-semibold uppercase tracking-[.07em] text-muted-400"
   const ids = useId()
@@ -1094,6 +1106,7 @@ export function Tree({
             {...(accountSlot === undefined ? {} : { accountSlot })}
             {...(onAddTask === undefined ? {} : { onAddTask })}
             {...(onRemoveTask === undefined ? {} : { onRemoveTask })}
+            {...(onNewTaskFile === undefined ? {} : { onNewTaskFile })}
             project={project}
             first={index === 0}
             order={index}
@@ -1126,6 +1139,7 @@ function ProjectBlock({
   accountSlot,
   onAddTask,
   onRemoveTask,
+  onNewTaskFile,
 }: {
   onSelectProject?: (path: string) => void
   selectedProject?: string | null
@@ -1143,6 +1157,17 @@ function ProjectBlock({
    * task by ref, and there is nothing to send for a line that has none.
    */
   onRemoveTask?: (projectPath: string, featureFile: string, taskRef: string) => void
+  /**
+   * Asks to start a **new** task file in this project. Absent draws no row.
+   *
+   * Separate from `onAddTask`, which is per-file and therefore per-scope: the
+   * "+ Add task" row under `importer.md` can only add work that belongs to the
+   * importer. Reported from use as "why does it say *Add tasks to
+   * add-health-check-endpoint.md* when I wanted a task for a different
+   * scope?" - the answer was that there was no other way in, which is a gap
+   * rather than an answer.
+   */
+  onNewTaskFile?: (projectPath: string) => void
   project: TreeProject
   first: boolean
   /** Position in the column, which is the artboard's `.d1`-`.d9` stagger step. */
@@ -1306,6 +1331,33 @@ function ProjectBlock({
             </li>
           )
         })}
+
+        {/* After the files, not inside one: this is the only way to add work
+            that does not belong to a scope the project already has. The per-file
+            "+ Add task" row above can only ever add to the file it sits under,
+            which is what made "a task for a different scope" unreachable. */}
+        {onNewTaskFile !== undefined && (
+          <li>
+            <button
+              type="button"
+              onClick={() => onNewTaskFile(project.path)}
+              className="trow -mx-1 mt-[6px] flex w-[calc(100%+0.5rem)] items-center gap-2 rounded-[10px] px-[10px] py-[7px] text-left text-[13px] font-[560] text-muted-500 hover:bg-[#EFEFF2] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo"
+            >
+              <span
+                aria-hidden
+                className="grid size-[22px] shrink-0 place-items-center rounded-[7px] border border-dashed border-[#D2D3DA] text-ink"
+              >
+                <svg viewBox="0 0 24 24" className="ic size-[14px]" {...LINE}>
+                  <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+                  <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+                  <path d="M12 11v6" />
+                  <path d="M9 14h6" />
+                </svg>
+              </span>
+              New task file
+            </button>
+          </li>
+        )}
       </ul>
     </li>
   )

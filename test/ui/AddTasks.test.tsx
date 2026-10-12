@@ -331,9 +331,13 @@ describe("the file it is adding to", () => {
     /* Two spans with a chevron between them. The gap is `gap-2`, not a text
      * node, so `textContent` runs them together. */
     expect(all('nav[aria-label="Breadcrumb"] span').map((s) => s.textContent)).toEqual(["your-app", "importer.md"])
+    /* Both halves of this sentence changed when the route landed, and each was
+       a false promise until it did: `appendTasks` inserts after the last
+       task's own block rather than at the end of the file, and the server
+       commits the file rather than leaving it for the human. */
     expect(text("h1 + p")).toBe(
-      "New tasks go at the end of docs/features/importer.md in your working tree, numbered after T3. " +
-        "Commit the file whenever you like.",
+      "New tasks go after the last task in docs/features/importer.md, numbered after T3. " +
+        "kantan commits that one file, so the change lands in your history rather than loose in your working tree.",
     )
   })
 
