@@ -882,7 +882,10 @@ test("a connecting client gets the whole log from byte 0, in order", async () =>
   const records = await client.waitForRecords(5)
   expect(records.map(kindOf)).toEqual(["header", "phase", "cli", "phase", "human"])
   expect(records[0]).toMatchObject({ kind: "header", runId: "whole", featureFileHash: FEATURE_HASH })
-  expect(records[2]).toEqual({ kind: "cli", event: { type: "assistant", seq: 1 } })
+  /* `toMatchObject`, not `toEqual`: a `cli` record also carries `at`, the
+     epoch-ms stamp `CliRecord` grew so a rate-limit reading could be dated.
+     What this case is about is that the event arrives whole and in order. */
+  expect(records[2]).toMatchObject({ kind: "cli", event: { type: "assistant", seq: 1 } })
   await client.disconnect()
   await log.close()
 })
@@ -1107,7 +1110,9 @@ test("a record carrying newlines, carriage returns and multi-byte text survives 
   // A raw newline in the payload would end the SSE data line, and a raw blank
   // line would end the event: JSON.stringify escapes both, so one data: line
   // per record is always enough and no second framing layer is needed.
-  expect(records[1]).toEqual({ kind: "cli", event })
+  // `toMatchObject` for the reason above: `at` rides alongside `event`, and
+  // this case is about the payload surviving the framing untouched.
+  expect(records[1]).toMatchObject({ kind: "cli", event })
   expect(client.wire().split("\n").filter((line) => line.startsWith("data:"))).toHaveLength(2)
   await client.disconnect()
 })

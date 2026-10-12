@@ -63,10 +63,18 @@ export interface AccountUsage {
   windows?: Window[]
   /** The run the reading came from, so a human can go and look at it. */
   runId?: string
-  /** When that run started, ISO, as its header recorded it. The reading was
-   *  taken at some point after this - the log does not timestamp `cli`
-   *  records, so this is a lower bound and is labelled as one. */
+  /** When that run started, ISO, as its header recorded it. A **lower bound**
+   *  on when the reading was taken, and the only answer for a log written
+   *  before `CliRecord.at` existed. */
   seenDuringRunStartedAt?: string
+  /**
+   * When the reading itself was read from the CLI's stdout. Epoch ms.
+   *
+   * From `CliRecord.at`. **Absent for a log written before that field**, which
+   * is why `seenDuringRunStartedAt` stays: a surface shows this when it has it
+   * and falls back to the bound, rather than inventing a time.
+   */
+  takenAt?: number
 }
 
 /** The shape `rate_limit_event` carries. Read loosely: it is another process's
@@ -100,12 +108,13 @@ function windowsOf(info: RawLimit): Window[] {
 /** The newest reading in one log, with the profile its header names. */
 async function readingIn(
   path: string,
-): Promise<{ profile: string | null; status?: string; windows: Window[]; runId?: string; startedAt?: string } | null> {
+): Promise<{ profile: string | null; status?: string; windows: Window[]; runId?: string; startedAt?: string; takenAt?: number } | null> {
   let profile: string | null = null
   let runId: string | undefined
   let startedAt: string | undefined
   let status: string | undefined
   let windows: Window[] = []
+  let takenAt: number | undefined
   let seen = false
 
   for await (const record of replay(path)) {
@@ -127,6 +136,8 @@ async function readingIn(
     const raw = info as RawLimit
     status = typeof raw.status === "string" ? raw.status : undefined
     windows = windowsOf(raw)
+    const stamp = (record as { at?: unknown }).at
+    takenAt = typeof stamp === "number" && Number.isFinite(stamp) ? stamp : undefined
     seen = true
   }
   if (!seen) return null
@@ -136,6 +147,7 @@ async function readingIn(
     ...(status === undefined ? {} : { status }),
     ...(runId === undefined ? {} : { runId }),
     ...(startedAt === undefined ? {} : { startedAt }),
+    ...(takenAt === undefined ? {} : { takenAt }),
   }
 }
 
@@ -217,6 +229,7 @@ export async function accountUsage(options: {
       windows: reading.windows,
       ...(reading.runId === undefined ? {} : { runId: reading.runId }),
       ...(reading.startedAt === undefined ? {} : { seenDuringRunStartedAt: reading.startedAt }),
+      ...(reading.takenAt === undefined ? {} : { takenAt: reading.takenAt }),
     }
   })
 }

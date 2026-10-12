@@ -845,6 +845,9 @@ export interface AccountUsage {
   windows?: UsageWindow[]
   runId?: string
   seenDuringRunStartedAt?: string
+  /** When the reading was taken, epoch ms. Absent for a log written before
+   *  `CliRecord.at`; then `seenDuringRunStartedAt` is the only answer. */
+  takenAt?: number
 }
 
 /**

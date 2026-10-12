@@ -144,6 +144,24 @@ export interface HeaderRecord extends RunHeader {
 export interface CliRecord {
   kind: "cli"
   event: unknown
+  /**
+   * When this line was read from the CLI's stdout. Epoch milliseconds.
+   *
+   * Added because nothing else in the log dates a `cli` record, and one thing
+   * needs it: `src/accounts.ts` reports when a rate-limit reading was taken,
+   * and without this the best it could say was "during a run that started at
+   * T" - a lower bound that gets looser the longer a run goes on.
+   *
+   * **Optional, and absence means unknown**, per the policy `EndRecord`'s
+   * `verifiedBy` sets out: every log already on disk was written before this
+   * field existed, so a reader that defaulted it to the run's start - or worse,
+   * to now - would be inventing a timestamp. Writers set it on every record,
+   * so absence keeps meaning "an older log" rather than "this one".
+   *
+   * It does not break the byte-identical nesting this module promises: it is a
+   * sibling of `event`, and `event`'s bytes are still spliced untouched.
+   */
+  at?: number
 }
 
 export type RunPhase = "plan" | "gate" | "implement" | "test" | "refine"
@@ -476,8 +494,9 @@ class AppendOnlyRunLog implements RunLog {
         `${this.path}: a cli payload must be a JSON object, not ${Array.isArray(event) ? "an array" : String(event === null ? "null" : typeof event)}`,
       )
     }
-    // Spliced, not re-serialised: these bytes are the replay source.
-    return this.writeLine(`{"kind":"cli","event":${raw}}`)
+    // Spliced, not re-serialised: these bytes are the replay source. `at`
+    // goes before it so the splice stays a tail concatenation.
+    return this.writeLine(`{"kind":"cli","at":${Date.now()},"event":${raw}}`)
   }
 
   /** Queues `line` plus its terminator as one write. */

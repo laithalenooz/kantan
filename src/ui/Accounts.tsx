@@ -138,11 +138,19 @@ function Row({ account }: { account: AccountUsage }): ReactElement {
             ) : (
               <>
                 {windows[0]?.resetsAt !== undefined && <>Resets at {formatResetTime(windows[0].resetsAt)}. </>}
+                {/* The record's own stamp when the log has one, and the run's
+                    start when it does not. Those are different claims - an
+                    exact time against a lower bound - so they are worded
+                    differently rather than both printed as "reported at". A log
+                    written before `CliRecord.at` gets the honest, looser
+                    sentence. */}
                 {account.freshness === "live"
                   ? "A run is billing to this account now, so this updates as it reports."
-                  : account.seenDuringRunStartedAt === undefined
-                    ? "Reported by a run kantan has a log for."
-                    : `Reported during a run that started ${new Date(account.seenDuringRunStartedAt).toLocaleString()}.`}
+                  : account.takenAt !== undefined
+                    ? `Read at ${new Date(account.takenAt).toLocaleString()}.`
+                    : account.seenDuringRunStartedAt === undefined
+                      ? "Reported by a run kantan has a log for."
+                      : `Reported some time during a run that started ${new Date(account.seenDuringRunStartedAt).toLocaleString()}.`}
               </>
             )}
           </p>

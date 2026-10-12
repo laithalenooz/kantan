@@ -237,3 +237,64 @@ describe("accountUsage", () => {
     expect(got).toEqual([{ profile: null, freshness: "never" }])
   })
 })
+
+/* ========================================================================== */
+/* When a reading was taken                                                   */
+/* ========================================================================== */
+
+/**
+ * `CliRecord.at` was added so a reading could be dated. The policy is
+ * `verifiedBy`'s: **absence means unknown**, because every log already on disk
+ * was written before the field existed, and defaulting it to the run's start -
+ * or to now - would be inventing a timestamp.
+ */
+describe("accountUsage and the reading's own timestamp", () => {
+  test("reports `at` when the log has one", async () => {
+    const dir = await runsDir()
+    await writeFile(
+      join(dir, "stamped.jsonl"),
+      [
+        JSON.stringify({ kind: "header", runId: "r1", startedAt: "2026-10-12T09:00:00.000Z", projectPath: "/r", featureFile: "f.md", taskRef: "T1" }),
+        JSON.stringify({
+          kind: "cli",
+          at: NOW_MS - 90_000,
+          event: {
+            type: "rate_limit_event",
+            rate_limit_info: { status: "allowed", unifiedWindows: { five_hour: { utilization: 0.5, resetsAt: NOW_S + HOUR } } },
+          },
+        }),
+      ].join("\n") + "\n",
+    )
+    const [usage] = await accountUsage({ runsDir: dir, profiles: [null], now: NOW_MS })
+    expect(usage?.takenAt).toBe(NOW_MS - 90_000)
+    // And the lower bound is still carried, for a surface that wants both.
+    expect(usage?.seenDuringRunStartedAt).toBe("2026-10-12T09:00:00.000Z")
+  })
+
+  test("an older log has no `at`, and none is invented", async () => {
+    const dir = await runsDir()
+    await log(dir, "old.jsonl", { profile: null, fiveHour: { utilization: 0.5, resetsAt: NOW_S + HOUR } })
+    const [usage] = await accountUsage({ runsDir: dir, profiles: [null], now: NOW_MS })
+    expect(usage?.takenAt).toBeUndefined()
+    expect(usage?.seenDuringRunStartedAt).toBe("2026-10-12T10:00:00.000Z")
+  })
+
+  test("an `at` this reader cannot use is dropped rather than carried", async () => {
+    const dir = await runsDir()
+    for (const at of [null, "yesterday", Number.NaN]) {
+      await writeFile(
+        join(dir, "bad.jsonl"),
+        [
+          JSON.stringify({ kind: "header", runId: "r", startedAt: "2026-10-12T09:00:00.000Z", projectPath: "/r", featureFile: "f.md", taskRef: "T1" }),
+          JSON.stringify({
+            kind: "cli",
+            at,
+            event: { type: "rate_limit_event", rate_limit_info: { unifiedWindows: { five_hour: { utilization: 0.5, resetsAt: NOW_S + HOUR } } } },
+          }),
+        ].join("\n") + "\n",
+      )
+      const [usage] = await accountUsage({ runsDir: dir, profiles: [null], now: NOW_MS })
+      expect(usage?.takenAt, String(at)).toBeUndefined()
+    }
+  })
+})

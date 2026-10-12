@@ -150,10 +150,21 @@ test("every real event in plan-success.jsonl nests byte-identically", async () =
   const lines = await logLines(path)
   expect(lines).toHaveLength(raws.length + 1)
   for (const [i, raw] of raws.entries()) {
-    // The payload is the fixture's own bytes, spliced in, not a re-serialisation
-    // of them: the fixture writes `"type": "system"` with a space the writer
-    // would drop.
-    expect(lines[i + 1]).toBe(`{"kind":"cli","event":${raw}}`)
+    /* The payload is the fixture's own bytes, spliced in, not a
+       re-serialisation of them: the fixture writes `"type": "system"` with a
+       space the writer would drop.
+   
+       Asserted as a **suffix** rather than as the whole line, which is the
+       guarantee this test exists for. It used to compare the line exactly, and
+       adding `at` - a sibling of `event`, which does not touch `event`'s bytes
+       - broke it without breaking anything it was protecting. A suffix check
+       cannot be defeated by a future field in the prefix, and still fails the
+       moment a payload is re-serialised. */
+    expect(lines[i + 1]).toEndWith(`,"event":${raw}}`)
+    expect(lines[i + 1]).toStartWith(`{"kind":"cli",`)
+    // And the stamp is there, usable, on every record this version writes.
+    const at = (JSON.parse(lines[i + 1] ?? "{}") as { at?: unknown }).at
+    expect(typeof at, `record ${i}`).toBe("number")
   }
 })
 
