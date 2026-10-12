@@ -65,6 +65,15 @@
  */
 
 import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from "react"
+
+/* The three keystroke predicates, imported rather than restated.
+ *
+ * They live in `Tree.tsx` because the tree owns the `[data-task-row]` contract
+ * one of them reads, and because a second copy of a rule about when *not* to
+ * act would drift from this one - and the direction it drifted in would be the
+ * expensive one. The dependency is one-way: the tree knows nothing about the
+ * gate. */
+import { bareKeystroke, isTypingSurface, pointsAtAnotherTask } from "./Tree.tsx"
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react"
 import Markdown from "react-markdown"
 import type { Components } from "react-markdown"
@@ -1024,16 +1033,33 @@ export function Gate(props: GateProps) {
   }, [props, answer, fire])
 
   /**
-   * ⌘↵ / Ctrl+↵ approves — and must never do so while the human is writing an
-   * objection, which is the one input where their intent is the opposite.
+   * `a` and ⌘↵ / Ctrl+↵ approve — and neither may do so while the human is
+   * writing an objection, which is the one input where their intent is the
+   * opposite.
    *
-   * The dimension this reads is the event's target, and it can be: the reply
-   * box, another editable element, something else inside the card, or something
-   * else on the page entirely. Only the last two approve. Inside the reply box
-   * the chord sends the reply, which is what submitting a composer means, and
-   * does nothing at all when it is empty. Approving by accident costs a wrong
-   * implementation run; refusing by accident costs one click on a button that is
-   * right there, so every uncertain case fails toward refusing.
+   * Two keystrokes, one set of guards, because the cost of being wrong is the
+   * same for both: approving by accident starts an implementation run on a plan
+   * nobody agreed to, and refusing by accident costs one click on a button that
+   * is on screen. **Every uncertain case fails toward refusing.**
+   *
+   * The dimensions, enumerated:
+   *
+   * - **The keystroke.** `bareKeystroke` owns the letter: it is the one place
+   *   in this app that decides when a single character is a command rather than
+   *   text, and it reads the target, the modifiers, `isComposing` and
+   *   `defaultPrevented`. The chord's own shape is checked here, and then runs
+   *   through the same target test — through the same predicate, so the two can
+   *   no longer disagree about what counts as a text box.
+   * - **`event.repeat`.** Refused for both. A held key is as likely to be a
+   *   stuck one or an elbow as an intention, and neither action is worth
+   *   repeating.
+   * - **The target.** The reply box, any other typing surface, a task row other
+   *   than the current one, or anything else. Only the last approves. In the
+   *   reply box the *chord* sends the reply, which is what submitting a
+   *   composer means, and does nothing at all when it is empty; the *letter*
+   *   there is a letter, and is left alone so it reaches the box.
+   * - **A draft.** A reply in progress is an objection, so neither keystroke
+   *   approves while one exists.
    *
    * Registered only while there is something to approve, and torn down by the
    * effect's own cleanup. That is what makes the question shape unapprovable
@@ -1043,16 +1069,23 @@ export function Gate(props: GateProps) {
   useEffect(() => {
     if (!canApprove) return
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      /* Something nearer the keystroke already acted on it: a dialog, or the
-       * app-wide shortcuts. Two handlers for one chord is one too many. */
-      if (event.defaultPrevented) return
-      if (event.repeat || event.isComposing) return
-      if (event.key !== "Enter") return
-      if (!(event.metaKey || event.ctrlKey)) return
-      if (event.altKey || event.shiftKey) return
-
+      if (event.repeat) return
       const target = event.target
-      if (target === replyRef.current) {
+
+      /* Something nearer the keystroke already acted on it: a dialog, or the
+       * app-wide shortcuts. Two handlers for one chord is one too many.
+       * `bareKeystroke` makes the same check for the letter. */
+      const chord =
+        !event.defaultPrevented &&
+        !event.isComposing &&
+        event.key === "Enter" &&
+        (event.metaKey || event.ctrlKey) &&
+        !event.altKey &&
+        !event.shiftKey
+      const letter = bareKeystroke(event) === "a"
+      if (!chord && !letter) return
+
+      if (chord && target === replyRef.current) {
         if (reply.trim() === "") return
         event.preventDefault()
         sendBack()
@@ -1063,10 +1096,11 @@ export function Gate(props: GateProps) {
        * chord does nothing while one exists; Send back is a tab away, and so is
        * clearing the box. Refusing costs a click, approving costs a run. */
       if (reply.trim() !== "") return
-      if (target instanceof HTMLElement) {
-        const tag = target.tagName
-        if (target.isContentEditable || tag === "TEXTAREA" || tag === "INPUT" || tag === "SELECT") return
-      }
+      /* `j` moves focus through the tree without selecting, so focus can sit on
+       * a task the gate is not showing. Approving from there would approve a
+       * plan the human has stopped looking at; Enter first costs one keystroke. */
+      if (pointsAtAnotherTask(target)) return
+      if (chord && isTypingSurface(target)) return
       event.preventDefault()
       approve()
     }
@@ -1316,11 +1350,17 @@ export function Gate(props: GateProps) {
                 disabled={!loaded}
                 /* Advertised only while the listener is actually registered:
                    announcing a shortcut that does nothing is worse than none. */
-                aria-keyshortcuts={loaded ? "Meta+Enter Control+Enter" : undefined}
+                aria-keyshortcuts={loaded ? "a Meta+Enter Control+Enter" : undefined}
                 aria-describedby={loaded ? undefined : whyId}
               >
                 <CheckIcon className="kg-approve-icon" />
                 Approve plan
+                {/* Both keys are printed, not only announced. The artboard
+                    draws the chord alone, but a letter that can start an
+                    implementation run has to be discoverable by the person who
+                    might press it by accident - and the chip style is the one
+                    the artboard already uses. */}
+                <span className="kg-mono kg-kbd">A</span>
                 <span className="kg-mono kg-kbd">⌘↵</span>
               </button>
             </>

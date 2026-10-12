@@ -565,13 +565,44 @@ export function Sidebar({
 // Phases
 // ---------------------------------------------------------------------------
 
+/**
+ * A word for each state, because every glyph in this rail is `aria-hidden` and
+ * the tint that separates a waiting phase from a pending one is colour.
+ *
+ * Without these, a screen reader hears "plan 8s, gate, implement, test" - the
+ * sequence with its state stripped out, which is the only thing the rail is
+ * for. They are read, never seen: the glyph and the tint say the same thing to
+ * anyone who can see them, and a second copy on screen would be noise.
+ */
+const PHASE_STATE_WORD: Record<PhaseState, string> = {
+  done: "done",
+  waiting: "waiting for you",
+  running: "running now",
+  flagged: "flagged",
+  pending: "pending",
+}
+
+/**
+ * Which phase the run is actually at.
+ *
+ * The first one that is waiting or running, which is the only kind of step a
+ * sequence can be *on*: `done` is behind it, `pending` ahead, and `flagged` is
+ * a note about a phase that already finished. A ladder with none of them -
+ * every phase done - correctly marks nothing, rather than leaving the pointer
+ * on the last thing that moved.
+ */
+function currentStep(steps: readonly PhaseStep[]): PhaseStep | undefined {
+  return steps.find((step) => step.state === "running" || step.state === "waiting")
+}
+
 function Phases({ steps, reduce }: { steps: readonly PhaseStep[]; reduce: boolean }) {
+  const current = currentStep(steps)
   return (
     <section className={`${CARD} p-3`}>
       <h2 className={`${CARD_HEADING} mx-1.5 mt-0.5 mb-2`}>Phases</h2>
       <ol className="m-0 flex list-none flex-col gap-0.5 p-0">
         {steps.map((step) => (
-          <PhaseRow key={step.phase} step={step} reduce={reduce} />
+          <PhaseRow key={step.phase} step={step} reduce={reduce} isCurrent={step === current} />
         ))}
       </ol>
     </section>
@@ -603,7 +634,15 @@ const PHASE_NOTE_TONE: Record<PhaseState, string> = {
   pending: "text-muted-500",
 }
 
-function PhaseRow({ step, reduce }: { step: PhaseStep; reduce: boolean }) {
+function PhaseRow({
+  step,
+  reduce,
+  isCurrent,
+}: {
+  step: PhaseStep
+  reduce: boolean
+  isCurrent: boolean
+}) {
   const live = useLiveElapsed(step.startedAtMs)
   const tone = PHASE_TONE[step.state]
   const running = step.state === "running" || step.state === "waiting"
@@ -616,11 +655,13 @@ function PhaseRow({ step, reduce }: { step: PhaseStep; reduce: boolean }) {
     <li
       data-phase={step.phase}
       data-state={step.state}
+      aria-current={isCurrent ? "step" : undefined}
       className={`grid grid-cols-[18px_1fr_auto] items-center gap-2.5 px-2 py-[9px] text-sm ${tone.row}`}
     >
       <PhaseGlyph state={step.state} reduce={reduce} />
       <span className={`min-w-0 ${tone.name}`}>
         {PHASE_LABEL[step.phase]}
+        <span className="sr-only">, {PHASE_STATE_WORD[step.state]}</span>
         {step.note !== undefined && step.note !== "" && (
           <span className={`font-medium ${PHASE_NOTE_TONE[step.state]}`}> · {step.note}</span>
         )}
@@ -978,7 +1019,9 @@ function Grinding({
         {flag.failureHref !== undefined && (
           <a
             href={flag.failureHref}
-            className="inline-flex h-9 items-center rounded-full bg-[#5C3305] px-3.5 text-[13px] font-semibold text-[#FFFBEB] no-underline"
+            /* The notice's own ink, not the app's indigo: an indigo ring on an
+               amber plate is the pair this project has already got wrong once. */
+            className="inline-flex h-9 items-center rounded-full bg-[#5C3305] px-3.5 text-[13px] font-semibold text-[#FFFBEB] no-underline focus-visible:ring-2 focus-visible:ring-[#5C3305] focus-visible:ring-offset-2 focus-visible:ring-offset-[#FFFBEB]"
           >
             See the failure
           </a>
@@ -986,7 +1029,7 @@ function Grinding({
         <button
           type="button"
           onClick={onDismiss}
-          className="h-9 rounded-full border border-[#E9C46A] bg-transparent px-3.5 text-[13px] font-semibold text-[#5C3305]"
+          className="h-9 rounded-full border border-[#E9C46A] bg-transparent px-3.5 text-[13px] font-semibold text-[#5C3305] focus-visible:ring-2 focus-visible:ring-[#5C3305] focus-visible:ring-offset-2 focus-visible:ring-offset-[#FFFBEB]"
         >
           Let it run
         </button>

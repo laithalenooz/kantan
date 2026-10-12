@@ -16,7 +16,8 @@
  * - **Only `needs you` pulses. Only `running` spins.** Nothing else moves.
  */
 
-import type { ReactElement, ReactNode } from "react"
+import { useEffect, useId, useRef, useSyncExternalStore } from "react"
+import type { KeyboardEvent as ReactKeyboardEvent, ReactElement, ReactNode } from "react"
 
 /* Type-only, and deliberately so: `src/runindex.ts` opens files at module
  * scope, so a value import would drag `node:fs/promises` into the browser
@@ -233,6 +234,48 @@ const DESCRIPTIONS: Record<TaskState, string> = {
   grinding: "Many attempts on a task that is still running. It is a notice, never a block.",
 }
 
+/* -------------------------------------------------------------------------- */
+/* Motion preference                                                          */
+/* -------------------------------------------------------------------------- */
+
+const REDUCE_QUERY = "(prefers-reduced-motion: reduce)"
+
+function reduceQuery(): MediaQueryList | null {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return null
+  return window.matchMedia(REDUCE_QUERY)
+}
+
+function subscribeToReduce(onChange: () => void): () => void {
+  const query = reduceQuery()
+  if (query === null || typeof query.addEventListener !== "function") return () => {}
+  query.addEventListener("change", onChange)
+  return () => query.removeEventListener("change", onChange)
+}
+
+function readReduce(): boolean {
+  return reduceQuery()?.matches ?? false
+}
+
+/**
+ * Does this person want less movement?
+ *
+ * Read straight from the media feature, subscribed to, so turning the setting
+ * on while the page is open stops the glyphs. Motion's own `useReducedMotion()`
+ * is deliberately not consulted: it answers from a module-level singleton
+ * initialised at the first call anywhere in the process, which means it answers
+ * whatever the first component to call it saw - including `false` with the
+ * feature actually set. A live read cannot be stale, so there is nothing for
+ * the cached answer to add here.
+ *
+ * `MOTION_CSS` also guards the keyframes, and that guard stays: the two are
+ * belt and braces, and only this one is testable, because happy-dom's
+ * `getComputedStyle` does not evaluate `@media (prefers-reduced-motion)`
+ * (probed 2026-10-11) - so a CSS-only fallback could not be asserted at all.
+ */
+function usePrefersReducedMotion(): boolean {
+  return useSyncExternalStore(subscribeToReduce, readReduce, () => false)
+}
+
 /**
  * The two keyframes the design names, which `tokens.css` does not carry.
  *
@@ -273,6 +316,10 @@ export function StateGlyph({
   state: TaskState
   count?: number
 }): ReactElement {
+  /* The two marks that move read the preference themselves rather than taking
+   * it as a prop, because this component is used outside a tree too and a glyph
+   * that keeps spinning for someone who asked it not to is the whole failure. */
+  const reduce = usePrefersReducedMotion()
   switch (state) {
     case "open":
       return (
@@ -283,7 +330,12 @@ export function StateGlyph({
       )
     case "running":
       return (
-        <svg aria-hidden viewBox="0 0 24 24" className={`kantan-spin ${ICON}`}>
+        <svg
+          aria-hidden
+          data-motion={reduce ? "static" : "animated"}
+          viewBox="0 0 24 24"
+          className={`${reduce ? "" : "kantan-spin "}${ICON}`}
+        >
           <circle cx="12" cy="12" r="9" fill="none" stroke="#DCDCF6" strokeWidth="3" />
           <path
             d="M21 12a9 9 0 0 0-9-9"
@@ -298,7 +350,8 @@ export function StateGlyph({
       return (
         <span
           aria-hidden
-          className="kantan-pulse size-[14px] shrink-0 rounded-full bg-attention"
+          data-motion={reduce ? "static" : "animated"}
+          className={`${reduce ? "" : "kantan-pulse "}size-[14px] shrink-0 rounded-full bg-attention`}
         />
       )
     case "passed":
@@ -495,6 +548,87 @@ export function StateLabel({
   }
 }
 
+// --- Single-letter shortcuts ------------------------------------------------
+
+/**
+ * The one guard every bare-letter shortcut in this app goes through.
+ *
+ * It lives here, and the gate imports it, because two copies of a rule about
+ * when *not* to act would drift and the cheap direction would stop being the
+ * one both of them fail toward.
+ *
+ * Returns the character the keystroke means, or `null` when the keystroke is
+ * not ours. The dimensions it reads, enumerated, because a guard that decides
+ * to ignore a keystroke is a guess and its risk is its worst case:
+ *
+ * | Dimension | Values | Wrong in the permissive direction | Wrong the other way |
+ * |---|---|---|---|
+ * | `key` length | one character, or a name like `Enter`/`ArrowDown` | a named key fires a letter shortcut | nothing: no shortcut here is a named key |
+ * | modifiers | none, meta, ctrl, alt, shift, combinations | `Ctrl+A` stops selecting all, `⌘J` stops opening downloads | one click on a control that is on screen |
+ * | target | textarea, input of any type, select, contenteditable and its children, an ARIA textbox or combobox, anything else | a letter typed into a reply box runs the plan it objects to | one click |
+ * | `defaultPrevented` | set, unset | two handlers act on one keystroke | nothing: whoever set it already acted |
+ * | `isComposing` | set, unset | an IME's keystroke is stolen mid-word | nothing |
+ *
+ * `event.key` rather than `event.code`, deliberately: `code` is the physical
+ * key, so on AZERTY the key printed `A` reports `KeyQ` and the key printed `Q`
+ * would approve. Reading `key` means a layout that cannot produce `a`, `j` or
+ * `k` without a modifier simply has no shortcuts, which is the cheap failure.
+ *
+ * `repeat` is **not** read here, because its cost differs per caller: a held
+ * `j` scrolling the tree is useful, a held `a` approving is not. Each caller
+ * decides.
+ */
+export function bareKeystroke(event: KeyboardEvent): string | null {
+  if (event.defaultPrevented) return null
+  if (event.isComposing) return null
+  if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return null
+  if (event.key.length !== 1) return null
+  if (isTypingSurface(event.target)) return null
+  return event.key
+}
+
+/** The roles that take typed characters, so a letter in one of them is text. */
+const TEXT_ROLES = '[role="textbox"],[role="searchbox"],[role="combobox"],[role="spinbutton"]'
+
+/**
+ * Is this keystroke going into something that accepts typed characters?
+ *
+ * `isContentEditable` is used rather than the attribute because it is inherited
+ * (verified under happy-dom): the target of a keystroke inside an editable
+ * region is usually a child element, not the element carrying the attribute.
+ * The ARIA roles need `closest` for the same reason, since they are not
+ * reflected onto descendants.
+ *
+ * Every `input` counts, including a checkbox, where a letter does nothing. That
+ * is the cheap direction: the cost of being wrong here is one click.
+ */
+export function isTypingSurface(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  if (target.isContentEditable) return true
+  const tag = target.tagName
+  if (tag === "TEXTAREA" || tag === "INPUT" || tag === "SELECT" || tag === "OPTION") return true
+  return target.closest(TEXT_ROLES) !== null
+}
+
+/**
+ * Does this keystroke come from a task other than the one the screen is about?
+ *
+ * The hazard it exists for: `j` moves focus without selecting, so focus can sit
+ * on T3 while the gate still shows T2's plan. A bare `a` then would approve T2,
+ * a plan the human has stopped looking at. So an approval keystroke raised on a
+ * row that is not `aria-current` is refused — the human presses Enter first,
+ * which costs one keystroke, against a wrong implementation run.
+ *
+ * This is the one DOM-level contract between the tree and the gate: a task row
+ * is `[data-task-row]`, and exactly one of them carries `aria-current="true"`.
+ */
+export function pointsAtAnotherTask(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  const row = target.closest("[data-task-row]")
+  if (row === null) return false
+  return row.getAttribute("aria-current") !== "true"
+}
+
 // --- The column -------------------------------------------------------------
 
 /** The artboard's 16px line icons: `fill:none; stroke:currentColor`. */
@@ -532,6 +666,36 @@ export interface TreeProps {
   onAddProject?: () => void
 }
 
+/** Does this triple address this task? Compared whole; a bare ref is ambiguous. */
+function isSameTask(a: TaskId | null | undefined, b: TaskId): boolean {
+  return (
+    a != null &&
+    a.projectPath === b.projectPath &&
+    a.featureFile === b.featureFile &&
+    a.taskRef === b.taskRef
+  )
+}
+
+/**
+ * The first task a keystroke can land on, or `null` when none can.
+ *
+ * A line with no ref is skipped, because `src/run.ts` refuses it rather than
+ * inventing a ref, so it is text rather than a control - and the tab stop has
+ * to be something that can be activated.
+ */
+function firstNavigable(projects: readonly TreeProject[]): TaskId | null {
+  for (const project of projects) {
+    for (const feature of project.features) {
+      for (const task of feature.tasks) {
+        if (task.ref !== null) {
+          return { projectPath: project.path, featureFile: feature.path, taskRef: task.ref }
+        }
+      }
+    }
+  }
+  return null
+}
+
 /**
  * Projects, their feature files, and every task's state.
  *
@@ -539,6 +703,21 @@ export interface TreeProps {
  * task, and the centre column acts on it. A caller offering a start must ask
  * `canStart` first - `done-unmerged`, `passed`, `failed` and `interrupted` all
  * own a branch already, and `interrupted` wants `canResume` instead.
+ *
+ * **The hierarchy is nested lists, not `role="tree"`.** Both are real patterns;
+ * this one is the one this column can keep. A `tree` is a contract - every node
+ * reports `aria-expanded`, and arrow keys open and close them - and nothing
+ * here expands or collapses: a project and a feature file are always shown
+ * whole, by design. Claiming the role without the behaviour tells a screen
+ * reader user to press ArrowRight on a node that will never open, which is
+ * worse than the three nested lists they can already count their way through.
+ * What the task asked for - `j`, `k` and a visible focus ring - is provided
+ * either way, and the arrow keys are aliases so the habit transfers.
+ *
+ * **`j` and `k` move focus; they never select.** Moving is not opening. A
+ * selection is a fetch once this is wired to the server, so a keystroke that
+ * selected would mean one request per row scrolled past, and `Enter` would have
+ * nothing left to do.
  */
 export function Tree({
   projects,
@@ -547,6 +726,134 @@ export function Tree({
   onAddProject,
 }: TreeProps): ReactElement {
   const eyebrow = "text-[11.5px] font-semibold uppercase tracking-[.07em] text-muted-400"
+  const ids = useId()
+  const column = useRef<HTMLElement | null>(null)
+
+  /**
+   * The tree's single tab stop: the task the rest of the screen is about, or
+   * the first one when nothing is selected.
+   *
+   * One stop rather than one per row, because Tab is how a keyboard user leaves
+   * a region and a backlog of fifty tasks would otherwise be fifty presses.
+   * It is derived rather than held in state, so it cannot disagree with the
+   * selection — and since `Enter` selects whatever `j` focused, the stop
+   * follows the human one keystroke later.
+   */
+  const stop = (() => {
+    const first = firstNavigable(projects)
+    if (first === null) return null
+    const hasSelection = projects.some((project) =>
+      project.features.some((feature) =>
+        feature.tasks.some(
+          (task) =>
+            task.ref !== null &&
+            isSameTask(selected, {
+              projectPath: project.path,
+              featureFile: feature.path,
+              taskRef: task.ref,
+            }),
+        ),
+      ),
+    )
+    return hasSelection && selected != null ? selected : first
+  })()
+
+  /**
+   * Every row a keystroke can land on, read from the DOM in drawn order.
+   *
+   * From the DOM rather than from the props, because what moves is focus: the
+   * element is the thing to be focused, and deriving an index from the props
+   * and then looking the element up again is the same walk with one more place
+   * to disagree.
+   */
+  const navigableRows = (): HTMLElement[] => {
+    const root = column.current
+    if (root === null) return []
+    return [...root.querySelectorAll<HTMLElement>("button[data-task-row]")]
+  }
+
+  /**
+   * Move focus by one row, or to an end.
+   *
+   * With nothing in the tree focused, the first keystroke *enters* at the task
+   * the screen is about rather than at the top: landing on what you are already
+   * reading costs one extra `j`, and landing eight rows away from it costs
+   * finding your place again.
+   */
+  const moveFocus = (to: "next" | "previous" | "first" | "last", from: EventTarget | null): boolean => {
+    const rows = navigableRows()
+    if (rows.length === 0) return false
+    const land = (row: HTMLElement | undefined): boolean => {
+      if (row === undefined) return false
+      row.focus()
+      return true
+    }
+    if (to === "first") return land(rows[0])
+    if (to === "last") return land(rows[rows.length - 1])
+    const here = from instanceof HTMLElement ? from.closest("button[data-task-row]") : null
+    const at = here === null ? -1 : rows.indexOf(here as HTMLElement)
+    if (at === -1) {
+      const entry = rows.findIndex((row) => row.getAttribute("aria-current") === "true")
+      return land(rows[entry === -1 ? 0 : entry])
+    }
+    return land(rows[Math.min(rows.length - 1, Math.max(0, at + (to === "next" ? 1 : -1)))])
+  }
+
+  /*
+   * `j` and `k`, from anywhere on the page.
+   *
+   * Document-level because the point of a letter shortcut is reaching the tree
+   * without first tabbing to it, and `bareKeystroke` is what makes that safe:
+   * a `j` typed into the gate's reply box is text, not navigation.
+   *
+   * `event.repeat` is deliberately *not* filtered: a held `j` walking a long
+   * backlog is the behaviour someone pressing it twice is asking for, and the
+   * worst a repeat can do here is move focus one row too far, which `k` undoes.
+   *
+   * `Enter` is absent on purpose. Every navigable row is a `<button>`, so the
+   * browser already turns `Enter` and `Space` on a focused row into a click,
+   * and a document-level `Enter` listener is exactly how a textarea loses its
+   * newline.
+   */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const key = bareKeystroke(event)
+      if (key !== "j" && key !== "k") return
+      /* Consumed only if it actually moved. An empty tree has no business
+       * swallowing a letter the page might mean something else by. */
+      if (moveFocus(key === "j" ? "next" : "previous", event.target)) event.preventDefault()
+    }
+    document.addEventListener("keydown", onKeyDown)
+    return () => document.removeEventListener("keydown", onKeyDown)
+    // `moveFocus` reads the DOM through a ref, so it needs no deps of its own.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /*
+   * The arrow keys, and only from a row.
+   *
+   * Scoped to the column rather than the document because ArrowDown in a
+   * textarea moves the caret and in a scroller scrolls it, and both of those
+   * belong to whoever is focused. A row is the one place the meaning is ours.
+   */
+  const onColumnKeyDown = (event: ReactKeyboardEvent<HTMLElement>): void => {
+    if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return
+    const target = event.target
+    if (!(target instanceof HTMLElement) || target.closest("button[data-task-row]") === null) return
+    const to =
+      event.key === "ArrowDown"
+        ? "next"
+        : event.key === "ArrowUp"
+          ? "previous"
+          : event.key === "Home"
+            ? "first"
+            : event.key === "End"
+              ? "last"
+              : null
+    if (to === null) return
+    event.preventDefault()
+    moveFocus(to, target)
+  }
 
   if (projects.length === 0) {
     return (
@@ -565,6 +872,8 @@ export function Tree({
 
   return (
     <aside
+      ref={column}
+      onKeyDown={onColumnKeyDown}
       aria-label="Projects and tasks"
       className="box-border basis-72 grow border-r border-edge bg-panel px-[10px] pt-4 pb-7"
     >
@@ -573,7 +882,9 @@ export function Tree({
       <style>{MOTION_CSS}</style>
 
       <div className="flex items-center justify-between px-2 pb-[6px]">
-        <span className={eyebrow}>Projects</span>
+        <span className={eyebrow} id={`${ids}-projects`}>
+          Projects
+        </span>
         {onAddProject === undefined ? null : (
           <button
             type="button"
@@ -589,15 +900,22 @@ export function Tree({
         )}
       </div>
 
-      {projects.map((project, index) => (
-        <ProjectBlock
-          key={project.path}
-          project={project}
-          first={index === 0}
-          selected={selected}
-          onSelect={onSelect}
-        />
-      ))}
+      {/* Three nested lists: repositories, their task files, and the tasks in
+          each. The nesting is what carries the hierarchy and the position in it
+          ("3 of 7") without a single hand-written label. */}
+      <ul aria-labelledby={`${ids}-projects`} className="m-0 list-none p-0">
+        {projects.map((project, index) => (
+          <ProjectBlock
+            key={project.path}
+            project={project}
+            first={index === 0}
+            idPrefix={`${ids}-p${index}`}
+            selected={selected}
+            stop={stop}
+            onSelect={onSelect}
+          />
+        ))}
+      </ul>
     </aside>
   )
 }
@@ -605,23 +923,28 @@ export function Tree({
 function ProjectBlock({
   project,
   first,
+  idPrefix,
   selected,
+  stop,
   onSelect,
 }: {
   project: TreeProject
   first: boolean
+  idPrefix: string
   selected?: TaskId | null
+  stop: TaskId | null
   onSelect?: (task: TaskId) => void
 }): ReactElement {
+  const repoId = `${idPrefix}-repo`
   return (
-    <div className={first ? undefined : "mt-[6px] border-t border-[#ECECEF]"}>
+    <li className={first ? undefined : "mt-[6px] border-t border-[#ECECEF]"}>
       <div className="flex items-start gap-2 px-[10px] pt-[14px] pb-[2px]">
         <svg aria-hidden viewBox="0 0 24 24" className="mt-[2px] size-4 shrink-0 text-muted-400" {...LINE}>
           <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
         </svg>
         {/* The repo's own directory name. `title` carries the whole path, which
             is longer than this column and is not what the design shows. */}
-        <span data-repo title={project.path} className={`${ARBITRARY} text-sm font-[620]`}>
+        <span id={repoId} data-repo title={project.path} className={`${ARBITRARY} text-sm font-[620]`}>
           {repoName(project.path)}
         </span>
         <AccountChip account={project.account} />
@@ -634,35 +957,49 @@ function ProjectBlock({
         $ {project.testCmd}
       </div>
 
-      {project.features.map((feature, index) => (
-        <div key={feature.path}>
-          <div
-            className={`flex items-start gap-[6px] ${index === 0 ? "pt-[6px]" : "pt-[10px]"} pr-[10px] pb-[4px] pl-[14px] font-mono text-xs text-muted-500`}
-          >
-            <svg aria-hidden viewBox="0 0 24 24" className="mt-[3px] size-[13px] shrink-0" {...LINE}>
-              <path d="m6 9 6 6 6-6" />
-            </svg>
-            <span data-feature-path className={ARBITRARY}>
-              {feature.path}
-            </span>
-          </div>
+      <ul aria-labelledby={repoId} className="m-0 list-none p-0">
+        {project.features.map((feature, index) => {
+          const pathId = `${idPrefix}-f${index}`
+          return (
+            <li key={feature.path}>
+              <div
+                className={`flex items-start gap-[6px] ${index === 0 ? "pt-[6px]" : "pt-[10px]"} pr-[10px] pb-[4px] pl-[14px] font-mono text-xs text-muted-500`}
+              >
+                <svg aria-hidden viewBox="0 0 24 24" className="mt-[3px] size-[13px] shrink-0" {...LINE}>
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
+                <span id={pathId} data-feature-path className={ARBITRARY}>
+                  {feature.path}
+                </span>
+              </div>
 
-          {feature.tasks.map((task, position) => (
-            <TaskRow
-              key={`${feature.path}\u0000${task.ref ?? `#${position}`}`}
-              task={task}
-              id={{
-                projectPath: project.path,
-                featureFile: feature.path,
-                taskRef: task.ref,
-              }}
-              selected={selected}
-              onSelect={onSelect}
-            />
-          ))}
-        </div>
-      ))}
-    </div>
+              {/* Named by the path above it, so a screen reader reaching the
+                  tasks says which file they come from. */}
+              <ul aria-labelledby={pathId} className="m-0 list-none p-0">
+                {feature.tasks.map((task, position) => {
+                  const id: TaskId = {
+                    projectPath: project.path,
+                    featureFile: feature.path,
+                    taskRef: task.ref,
+                  }
+                  return (
+                    <li key={`${feature.path}\u0000${task.ref ?? `#${position}`}`}>
+                      <TaskRow
+                        task={task}
+                        id={id}
+                        selected={selected}
+                        isStop={task.ref !== null && isSameTask(stop, id)}
+                        onSelect={onSelect}
+                      />
+                    </li>
+                  )
+                })}
+              </ul>
+            </li>
+          )
+        })}
+      </ul>
+    </li>
   )
 }
 
@@ -717,20 +1054,18 @@ function TaskRow({
   task,
   id,
   selected,
+  isStop,
   onSelect,
 }: {
   task: TreeTask
   id: TaskId
   selected?: TaskId | null
+  /** Is this the tree's one Tab stop? See `Tree`'s `stop`. */
+  isStop: boolean
   onSelect?: (task: TaskId) => void
 }): ReactElement {
   const state = taskStateOf(task)
-  const isSelected =
-    task.ref !== null &&
-    selected != null &&
-    selected.projectPath === id.projectPath &&
-    selected.featureFile === id.featureFile &&
-    selected.taskRef === task.ref
+  const isSelected = task.ref !== null && isSameTask(selected, id)
 
   /* The glyph column keeps the spinning arc while a run grinds: the chip is the
      notice, and it rides in the label column (Return.dc.html). */
@@ -798,6 +1133,10 @@ function TaskRow({
       type="button"
       data-task-row
       aria-current={isSelected ? true : undefined}
+      /* The tree's one Tab stop. `-1` keeps every other row reachable by `j`,
+         `k` and the arrows - `.focus()` works on it - while Tab leaves the
+         column rather than walking the whole backlog. */
+      tabIndex={isStop ? 0 : -1}
       onClick={onSelect === undefined ? undefined : () => onSelect(id)}
       className={`${shape} ${look} border-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo`}
     >

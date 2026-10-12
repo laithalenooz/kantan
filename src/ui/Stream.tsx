@@ -299,6 +299,7 @@ export function Stream({ rows, maxHeight = 520, footer, className }: StreamProps
           onClick={() => setFollowing((prev) => !prev)}
           className={[
             "ml-auto inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-[12.5px]",
+            "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo",
             following
               ? "border-[#CFD0F7] bg-[#F3F3FE] font-semibold text-indigo-deeper"
               : "border-edge-soft bg-white font-medium text-muted-900 hover:bg-[#F6F6F8]",
@@ -326,8 +327,22 @@ export function Stream({ rows, maxHeight = 520, footer, className }: StreamProps
         /* Focusable because it scrolls: a keyboard user needs to reach it, and
          * a pointer user is the only one a bare overflow container serves. */
         tabIndex={0}
-        role="region"
+        /* `role="log"` is what an appended record is, and it is how a screen
+         * reader finds this region. Its implicit `aria-live="polite"` is
+         * overridden because it would be a lie here: rows are virtualized, so
+         * scrolling back mounts an old row as though it had just arrived, and
+         * the SSE replays the whole log from byte 0 on every reconnect with no
+         * marker to tell a replay from a live event. Announcing on arrival
+         * would read a reconnect out loud as a thousand new lines. What is
+         * worth announcing - the gate, a failed suite - is `role="status"` or
+         * `role="alert"` in the gate and the rail, where the state lives. */
+        role="log"
+        aria-live="off"
         aria-label="Run record, newest at the bottom"
+        /* The ring is drawn *inside* the scroller: this section is
+         * `overflow-clip` and the scroller fills it, so an outward ring would
+         * be cut off on three sides. */
+        className="focus-visible:outline-2 focus-visible:outline-indigo focus-visible:[outline-offset:-2px]"
         style={{ maxHeight, overflow: "auto" }}
       >
         <div data-stream-total style={{ height: totalSize, position: "relative" }}>

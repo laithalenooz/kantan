@@ -1115,4 +1115,40 @@ describe("the record's own chrome", () => {
     expect(mounted.viewport.getAttribute("tabindex")).toBe("0")
     expect(mounted.viewport.getAttribute("aria-label")).toContain("Run record")
   })
+
+  test("the record is a log, and never announces a row the scroller merely reached", async () => {
+    /*
+     * `role="log"` is the pattern for an appended record, and it is the right
+     * identity for this region. Its implicit `aria-live="polite"` is wrong
+     * here, though, and the override is not timidity: rows are **virtualized**,
+     * so scrolling back mounts old rows as if they had just arrived, and the
+     * SSE replays the whole log from byte 0 on every reconnect with no
+     * replay-versus-live marker. A polite live region would read a reconnect
+     * out loud as a thousand new events. The states worth announcing - the
+     * gate, a failed suite - are `role="status"` and `role="alert"` where they
+     * belong, in the gate and the rail.
+     */
+    const mounted = await mount(<api.Stream rows={syntheticLog(30)} />)
+    expect(mounted.viewport.getAttribute("role")).toBe("log")
+    expect(mounted.viewport.getAttribute("aria-live")).toBe("off")
+  })
+
+  test("every control in the record says where the keyboard is", async () => {
+    /*
+     * A completeness check, not a rendering one: Tailwind's compiler does not
+     * run under `bun test`, so what can be proved here is that no focusable
+     * element is *missing* a focus style - which is the defect that actually
+     * ships. That the ring is then visible and legible is checked in a real
+     * browser, because no DOM assertion can see it.
+     */
+    const mounted = await mount(<api.Stream rows={syntheticLog(60)} />)
+    const focusable = [
+      ...mounted.host.querySelectorAll<HTMLElement>(
+        'a[href], button, textarea, input, select, [tabindex]:not([tabindex="-1"])',
+      ),
+    ]
+    expect(focusable.length).toBeGreaterThan(2)
+    const unringed = focusable.filter((el) => !/\bfocus-visible:/.test(el.className))
+    expect(unringed.map((el) => `${el.tagName.toLowerCase()}: ${el.className}`)).toEqual([])
+  })
 })

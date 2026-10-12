@@ -1037,7 +1037,16 @@ export function Row({ row, index, top, measure, resize, open, onToggle, enter, d
         : {})}
     >
       {view.expandable ? (
-        <button type="button" aria-expanded={open} onClick={onToggle} className={`${grid} ${view.rowClass ?? ""} hover:bg-panel`}>
+        /* The ring is inset. A row is absolutely positioned and full width
+           inside a scroller, so a ring with a positive offset would be clipped
+           at the scroller's edges and would overlap the rows above and below
+           everywhere else. */
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={onToggle}
+          className={`${grid} ${view.rowClass ?? ""} hover:bg-panel focus-visible:outline-2 focus-visible:outline-indigo focus-visible:[outline-offset:-2px]`}
+        >
           {cells}
         </button>
       ) : (

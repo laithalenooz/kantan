@@ -45,6 +45,8 @@ import type { ReactElement } from "react"
 
 import { Gate } from "../../src/ui/Gate.tsx"
 import type { GateShape, PlanSource, QuestionShape } from "../../src/ui/Gate.tsx"
+import { Tree } from "../../src/ui/Tree.tsx"
+import type { TreeProject } from "../../src/ui/Tree.tsx"
 
 /**
  * `react-dom` is imported **after** happy-dom is registered, and that is not a
@@ -721,10 +723,342 @@ describe("the approve chord", () => {
 
   test("the chord is announced on the control that owns it, and only while it works", async () => {
     const { host } = await render(<Gate {...gateProps()} />)
-    expect(buttonNamed(host, /approve/i).getAttribute("aria-keyshortcuts")).toBe("Meta+Enter Control+Enter")
+    /* The letter shares the attribute with the chord; both approve, so both are
+     * announced on the control that owns them. */
+    expect(buttonNamed(host, /approve/i).getAttribute("aria-keyshortcuts")).toBe(
+      "a Meta+Enter Control+Enter",
+    )
 
     const { host: noPlan } = await render(<Gate {...gateProps({ plan: { status: "undictated" } })} />)
     expect(buttonNamed(noPlan, /approve/i).hasAttribute("aria-keyshortcuts")).toBe(false)
+  })
+})
+
+describe("`a` approves, and the one letter that does is the one that must not fire while typing", () => {
+  /*
+   * The trap this suite exists for: a document-level `a` handler makes the
+   * reply box unusable, because the first letter of "Actually, ..." approves the
+   * plan being objected to. So the guard is enumerated rather than sampled, and
+   * **every refusal here is paired with the same keystroke from the page**, in
+   * the same render. Without the pair, each of these would pass before the
+   * shortcut existed at all.
+   */
+
+  /** One bare letter, at whatever holds it. */
+  async function pressLetter(
+    target: EventTarget,
+    key = "a",
+    init: KeyboardEventInit = {},
+  ): Promise<void> {
+    await act(async () => {
+      target.dispatchEvent(
+        new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init }),
+      )
+    })
+  }
+
+  /** Something that takes typed characters, in the document, outside the card. */
+  function typingSurface(kind: string): HTMLElement {
+    if (kind === "contenteditable-child") {
+      const outer = document.createElement("div")
+      outer.setAttribute("contenteditable", "true")
+      outer.setAttribute("data-surface", "")
+      const inner = document.createElement("span")
+      inner.textContent = "half a sentence"
+      outer.append(inner)
+      document.body.append(outer)
+      return inner
+    }
+    const made =
+      kind === "textarea"
+        ? document.createElement("textarea")
+        : kind === "select"
+          ? document.createElement("select")
+          : kind.startsWith("input:")
+            ? Object.assign(document.createElement("input"), { type: kind.slice("input:".length) })
+            : document.createElement("div")
+    if (kind === "contenteditable") made.setAttribute("contenteditable", "true")
+    if (kind === "role=textbox") made.setAttribute("role", "textbox")
+    if (kind === "role=searchbox") made.setAttribute("role", "searchbox")
+    made.setAttribute("data-surface", "")
+    document.body.append(made)
+    return made
+  }
+
+  afterEach(() => {
+    for (const el of [...document.querySelectorAll("[data-surface]")]) el.remove()
+  })
+
+  test("a bare `a` from the page approves", async () => {
+    const calls: string[] = []
+    const { host } = await render(<Gate {...gateProps({ onApprove: () => calls.push("approve") })} />)
+    await pressLetter(host.ownerDocument.body)
+    expect(calls).toEqual(["approve"])
+  })
+
+  test("and it fires once, however many times it arrives", async () => {
+    const calls: string[] = []
+    const { host } = await render(<Gate {...gateProps({ onApprove: () => calls.push("approve") })} />)
+    await pressLetter(host.ownerDocument.body)
+    await pressLetter(host.ownerDocument.body)
+    await pressLetter(host.ownerDocument.body)
+    expect(calls).toEqual(["approve"])
+  })
+
+  test("`a` in the reply box is the letter a, even when the box is empty", async () => {
+    /* The empty box is the case that isolates the target guard. With a draft
+     * present the draft rule would refuse anyway, and a missing target guard
+     * would hide behind it. */
+    const calls: string[] = []
+    const { host } = await render(
+      <Gate
+        {...gateProps({
+          onApprove: () => calls.push("approve"),
+          onFeedback: () => calls.push("feedback"),
+        })}
+      />,
+    )
+    const reply = textareaNamed(host, /reply to the draft/i)
+    expect(reply.value).toBe("")
+
+    let swallowed = true
+    await act(async () => {
+      const event = new KeyboardEvent("keydown", { key: "a", bubbles: true, cancelable: true })
+      reply.dispatchEvent(event)
+      swallowed = event.defaultPrevented
+    })
+    expect(calls).toEqual([])
+    /* Not consumed either: the character has to reach the box. */
+    expect(swallowed).toBe(false)
+
+    await pressLetter(host.ownerDocument.body)
+    expect(calls).toEqual(["approve"])
+  })
+
+  const SURFACES = [
+    "textarea",
+    "input:text",
+    "input:search",
+    "input:password",
+    "input:email",
+    "input:number",
+    "input:checkbox",
+    "select",
+    "contenteditable",
+    "contenteditable-child",
+    "role=textbox",
+    "role=searchbox",
+  ] as const
+
+  for (const kind of SURFACES) {
+    test(`\`a\` typed into ${kind} approves nothing`, async () => {
+      const calls: string[] = []
+      const { host } = await render(<Gate {...gateProps({ onApprove: () => calls.push("approve") })} />)
+      const surface = typingSurface(kind)
+      surface.focus()
+      await pressLetter(surface)
+      expect(calls).toEqual([])
+
+      await pressLetter(host.ownerDocument.body)
+      expect(calls).toEqual(["approve"])
+    })
+  }
+
+  const MODIFIED: Array<[string, KeyboardEventInit]> = [
+    ["Ctrl+A, which selects all", { ctrlKey: true }],
+    ["⌘A, which selects all", { metaKey: true }],
+    ["Alt+a", { altKey: true }],
+    ["Shift+A", { shiftKey: true }],
+  ]
+
+  for (const [name, init] of MODIFIED) {
+    test(`${name} is not the shortcut`, async () => {
+      const calls: string[] = []
+      const { host } = await render(<Gate {...gateProps({ onApprove: () => calls.push("approve") })} />)
+      await pressLetter(host.ownerDocument.body, init.shiftKey === true ? "A" : "a", init)
+      expect(calls).toEqual([])
+
+      await pressLetter(host.ownerDocument.body)
+      expect(calls).toEqual(["approve"])
+    })
+  }
+
+  test("a held `a` is not an approval", async () => {
+    const calls: string[] = []
+    const { host } = await render(<Gate {...gateProps({ onApprove: () => calls.push("approve") })} />)
+    await pressLetter(host.ownerDocument.body, "a", { repeat: true })
+    expect(calls).toEqual([])
+
+    await pressLetter(host.ownerDocument.body)
+    expect(calls).toEqual(["approve"])
+  })
+
+  test("an `a` mid-composition belongs to the IME", async () => {
+    const calls: string[] = []
+    const { host } = await render(<Gate {...gateProps({ onApprove: () => calls.push("approve") })} />)
+    await pressLetter(host.ownerDocument.body, "a", { isComposing: true })
+    expect(calls).toEqual([])
+
+    await pressLetter(host.ownerDocument.body)
+    expect(calls).toEqual(["approve"])
+  })
+
+  test("an `a` something nearer already handled is left alone", async () => {
+    const calls: string[] = []
+    const { host } = await render(<Gate {...gateProps({ onApprove: () => calls.push("approve") })} />)
+    const swallow = (event: Event) => event.preventDefault()
+    document.addEventListener("keydown", swallow, true)
+    try {
+      await pressLetter(host.ownerDocument.body)
+      expect(calls).toEqual([])
+    } finally {
+      document.removeEventListener("keydown", swallow, true)
+    }
+    await pressLetter(host.ownerDocument.body)
+    expect(calls).toEqual(["approve"])
+  })
+
+  test("a draft in the reply box stops `a` approving from anywhere", async () => {
+    const calls: string[] = []
+    const { host } = await render(
+      <Gate
+        {...gateProps({
+          onApprove: () => calls.push("approve"),
+          onFeedback: (text: string) => calls.push(`feedback:${text}`),
+        })}
+      />,
+    )
+    await type(textareaNamed(host, /reply to the draft/i), "Not this way.")
+    await pressLetter(host.ownerDocument.body)
+    await pressLetter(buttonNamed(host, /send back/i))
+    expect(calls).toEqual([])
+    expect(textareaNamed(host, /reply to the draft/i).value).toBe("Not this way.")
+
+    /* Clearing the objection puts the shortcut back, so this is a rule about
+     * the draft rather than a listener that never worked. */
+    await type(textareaNamed(host, /reply to the draft/i), "")
+    await pressLetter(host.ownerDocument.body)
+    expect(calls).toEqual(["approve"])
+  })
+
+  test("`a` approves nothing when there is no readable plan", async () => {
+    const calls: string[] = []
+    const { host } = await render(
+      <Gate
+        {...gateProps({
+          plan: { status: "unreadable", path: DICTATED_PATH, why: "unreadable." },
+          onApprove: () => calls.push("approve"),
+        })}
+      />,
+    )
+    await pressLetter(host.ownerDocument.body)
+    expect(calls).toEqual([])
+  })
+
+  test("`a` cannot approve a question, in a tree that was the gate a moment ago", async () => {
+    const calls: string[] = []
+    const { host, rerender } = await render(
+      <Gate {...gateProps({ onApprove: () => calls.push("approve") })} />,
+    )
+    await rerender(<Gate {...questionProps()} />)
+    await pressLetter(host.ownerDocument.body)
+    expect(calls).toEqual([])
+  })
+
+  test("`a` is announced on the control that owns it, and only while it works", async () => {
+    const { host } = await render(<Gate {...gateProps()} />)
+    expect(buttonNamed(host, /approve/i).getAttribute("aria-keyshortcuts")).toBe(
+      "a Meta+Enter Control+Enter",
+    )
+
+    const { host: noPlan } = await render(<Gate {...gateProps({ plan: { status: "undictated" } })} />)
+    expect(buttonNamed(noPlan, /approve/i).hasAttribute("aria-keyshortcuts")).toBe(false)
+  })
+
+  test("the shortcut is printed on the button, not only announced", async () => {
+    /* A shortcut that can start an implementation run and is advertised only to
+     * a screen reader is a hazard to everyone else. Both keys are printed, in
+     * the key-chip style the artboard already uses for the chord. */
+    const { host } = await render(<Gate {...gateProps()} />)
+    const approve = buttonNamed(host, /approve/i)
+    const chips = [...approve.querySelectorAll(".kg-kbd")].map((chip) =>
+      (chip.textContent ?? "").trim(),
+    )
+    expect(chips).toEqual(["A", "\u2318\u21b5"])
+  })
+})
+
+describe("a keystroke aimed at a task the screen is no longer about", () => {
+  /*
+   * `j` moves focus without selecting, so focus can sit on one task while the
+   * gate still shows another's plan. Approving then would implement a plan the
+   * human has stopped looking at. Both approval keystrokes refuse on a row that
+   * is not `aria-current`, which costs one Enter.
+   *
+   * The real tree is rendered rather than a stand-in row, because the thing
+   * being tested is that the two columns agree on the contract.
+   */
+  const PROJECTS: TreeProject[] = [
+    {
+      path: "/home/me/code/your-app",
+      account: { kind: "personal" },
+      testCmd: "npm test",
+      features: [
+        {
+          path: "docs/features/importer.md",
+          tasks: [
+            { ref: "T1", text: "Parse the manifest", done: false },
+            { ref: "T2", text: "Map records to rows", done: false },
+          ],
+        },
+      ],
+    },
+  ]
+
+  const SELECTED = {
+    projectPath: "/home/me/code/your-app",
+    featureFile: "docs/features/importer.md",
+    taskRef: "T1",
+  }
+
+  async function screen(onApprove: () => void) {
+    const mounted = await render(
+      <>
+        <Tree projects={PROJECTS} selected={SELECTED} onSelect={() => {}} />
+        <Gate {...gateProps({ onApprove })} />
+      </>,
+    )
+    const rows = [...mounted.host.querySelectorAll<HTMLElement>("button[data-task-row]")]
+    const current = rows.find((row) => row.getAttribute("aria-current") === "true")
+    const other = rows.find((row) => row.getAttribute("aria-current") !== "true")
+    if (current === undefined || other === undefined) throw new Error("the tree rendered no pair of rows")
+    return { ...mounted, current, other }
+  }
+
+  test("`a` on another task's row refuses; on the current one it approves", async () => {
+    const calls: string[] = []
+    const { current, other } = await screen(() => calls.push("approve"))
+
+    await act(async () => {
+      other.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true, cancelable: true }))
+    })
+    expect(calls).toEqual([])
+
+    await act(async () => {
+      current.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true, cancelable: true }))
+    })
+    expect(calls).toEqual(["approve"])
+  })
+
+  test("the chord refuses there too, since the hazard is the same", async () => {
+    const calls: string[] = []
+    const { current, other } = await screen(() => calls.push("approve"))
+
+    await pressSubmitChord(other)
+    expect(calls).toEqual([])
+
+    await pressSubmitChord(current)
+    expect(calls).toEqual(["approve"])
   })
 })
 

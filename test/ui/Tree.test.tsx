@@ -12,7 +12,7 @@
  */
 
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
-import { afterAll, describe, expect, test } from "bun:test"
+import { afterAll, afterEach, describe, expect, test } from "bun:test"
 import type { ReactElement } from "react"
 
 /* Type-only, so neither import survives compilation: `src/runindex.ts` opens
@@ -1002,5 +1002,579 @@ describe("selecting a task", () => {
       root.unmount()
     })
     host.remove()
+  })
+})
+
+// --- Keyboard navigation ----------------------------------------------------
+
+/*
+ * `j` and `k` move through tasks, and the thing they move is **DOM focus**, not
+ * the selection. So these tests need a live root rather than the static markup
+ * the rest of this file renders: `useSyncExternalStore` answers with its server
+ * snapshot under `renderToStaticMarkup`, and nothing can be focused in a string.
+ */
+const { createRoot } = await import("react-dom/client")
+const { act } = await import("react")
+;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+const live: Array<{ host: HTMLElement; root: ReturnType<typeof createRoot> }> = []
+
+async function mount(node: ReactElement): Promise<HTMLElement> {
+  const host = document.createElement("div")
+  document.body.append(host)
+  const root = createRoot(host)
+  live.push({ host, root })
+  await act(async () => {
+    root.render(node)
+  })
+  return host
+}
+
+afterEach(async () => {
+  for (const entry of live.splice(0)) {
+    await act(async () => {
+      entry.root.unmount()
+    })
+    entry.host.remove()
+  }
+  for (const stray of [...document.querySelectorAll("[data-probe]")]) stray.remove()
+})
+
+/** One keystroke, dispatched at a real element, the way a browser would. */
+async function press(key: string, target: EventTarget, init: KeyboardEventInit = {}): Promise<void> {
+  await act(async () => {
+    target.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init }))
+  })
+}
+
+/**
+ * The task row that has focus, read as its text so a failure is legible.
+ *
+ * `<nothing>` covers every way of not being on a row, including `body`, which
+ * is what `document.activeElement` answers when nothing is focused at all.
+ */
+function focusedRow(): string {
+  const active = document.activeElement
+  if (!(active instanceof HTMLElement)) return "<nothing>"
+  const row = active.closest("[data-task-row]")
+  return row === null ? "<nothing>" : textOf(row)
+}
+
+/** Every row, as text, in the order they are drawn. */
+function rowTexts(host: HTMLElement): string[] {
+  return rows(host).map(textOf)
+}
+
+/** One entry of a list, named so a missing one fails as itself. */
+function nth(list: readonly string[], index: number): string {
+  const found = list.at(index)
+  if (found === undefined) throw new Error(`no row at ${index} in ${JSON.stringify(list)}`)
+  return found
+}
+
+/**
+ * An element of some other kind, in the document, that a keystroke can come
+ * from. `data-probe` so the teardown can find it again.
+ */
+function probe(kind: string): HTMLElement {
+  const el =
+    kind === "contenteditable-child"
+      ? (() => {
+          const outer = document.createElement("div")
+          outer.setAttribute("contenteditable", "true")
+          const inner = document.createElement("span")
+          inner.textContent = "half-written words"
+          outer.append(inner)
+          outer.setAttribute("data-probe", kind)
+          document.body.append(outer)
+          return inner
+        })()
+      : (() => {
+          const made =
+            kind === "textarea"
+              ? document.createElement("textarea")
+              : kind === "select"
+                ? document.createElement("select")
+                : kind.startsWith("input:")
+                  ? Object.assign(document.createElement("input"), { type: kind.slice("input:".length) })
+                  : document.createElement("div")
+          if (kind === "contenteditable") made.setAttribute("contenteditable", "true")
+          if (kind === "role=textbox") made.setAttribute("role", "textbox")
+          if (kind === "role=combobox") made.setAttribute("role", "combobox")
+          made.setAttribute("data-probe", kind)
+          document.body.append(made)
+          return made
+        })()
+  el.closest("[data-probe]")?.setAttribute("data-probe", kind)
+  return el
+}
+
+describe("j and k move through tasks", () => {
+  test("j walks down the rows and k walks back up", async () => {
+    const host = await mount(<Tree projects={projects()} />)
+    const order = rowTexts(host).filter((text) => !text.includes("no ref"))
+    expect(order.length).toBeGreaterThan(3)
+
+    await press("j", document.body)
+    expect(focusedRow()).toBe(nth(order, 0))
+
+    await press("j", document.activeElement ?? document.body)
+    expect(focusedRow()).toBe(nth(order, 1))
+
+    await press("j", document.activeElement ?? document.body)
+    expect(focusedRow()).toBe(nth(order, 2))
+
+    await press("k", document.activeElement ?? document.body)
+    expect(focusedRow()).toBe(nth(order, 1))
+  })
+
+  test("j crosses from one project's last task into the next project's first", async () => {
+    const host = await mount(<Tree projects={projects()} />)
+    const order = rowTexts(host).filter((text) => !text.includes("no ref"))
+    /* The fixture's first repo ends on `export.md`'s only task, and the second
+     * begins on `billing.md`'s first. Two feature files and two repos are
+     * crossed in one keystroke. */
+    expect(nth(order, 3)).toContain("Stream CSV export")
+    expect(nth(order, 4)).toContain("Ledger reconciliation")
+
+    await press("j", document.body)
+    for (let i = 1; i <= 3; i += 1) await press("j", document.activeElement ?? document.body)
+    expect(focusedRow()).toBe(nth(order, 3))
+    await press("j", document.activeElement ?? document.body)
+    expect(focusedRow()).toBe(nth(order, 4))
+  })
+
+  test("the ends clamp rather than wrapping", async () => {
+    const host = await mount(<Tree projects={projects()} />)
+    const order = rowTexts(host).filter((text) => !text.includes("no ref"))
+
+    await press("j", document.body)
+    await press("k", document.activeElement ?? document.body)
+    await press("k", document.activeElement ?? document.body)
+    expect(focusedRow()).toBe(nth(order, 0))
+
+    for (let i = 0; i < order.length + 3; i += 1) await press("j", document.activeElement ?? document.body)
+    expect(focusedRow()).toBe(nth(order, -1))
+  })
+
+  test("the first j enters at the task the rest of the screen is about", async () => {
+    await mount(
+      <Tree
+        projects={projects()}
+        selected={{
+          projectPath: "/home/me/code/your-app",
+          featureFile: "docs/features/importer.md",
+          taskRef: "T2",
+        }}
+      />,
+    )
+    await press("j", document.body)
+    expect(focusedRow()).toContain("Map records to rows")
+  })
+
+  test("moving is not opening: j and k never select", async () => {
+    const picked: TaskId[] = []
+    await mount(<Tree projects={projects()} onSelect={(id) => picked.push(id)} />)
+
+    await press("j", document.body)
+    await press("j", document.activeElement ?? document.body)
+    await press("k", document.activeElement ?? document.body)
+
+    expect(picked).toEqual([])
+    expect(focusedRow()).not.toBe("<nothing>")
+  })
+
+  test("a line with no ref is never focused, because nothing can be run on it", async () => {
+    const host = await mount(
+      <Tree
+        projects={[
+          {
+            path: "/home/me/code/your-app",
+            account: { kind: "personal" },
+            testCmd: "npm test",
+            features: [
+              {
+                path: "docs/features/importer.md",
+                tasks: [
+                  { ref: null, text: "a line with no ref", done: false },
+                  { ref: "T1", text: "a line with one", done: false },
+                ],
+              },
+            ],
+          },
+        ]}
+      />,
+    )
+    expect(rows(host).length).toBe(2)
+
+    await press("j", document.body)
+    expect(focusedRow()).toContain("a line with one")
+    await press("k", document.activeElement ?? document.body)
+    expect(focusedRow()).toContain("a line with one")
+  })
+
+  test("the task the screen is about is the tree's one tab stop", async () => {
+    const host = await mount(
+      <Tree
+        projects={projects()}
+        selected={{
+          projectPath: "/home/me/code/your-app",
+          featureFile: "docs/features/importer.md",
+          taskRef: "T2",
+        }}
+      />,
+    )
+    const tabbable = rows(host).filter((row) => row.getAttribute("tabindex") === "0")
+    expect(tabbable.length).toBe(1)
+    expect(textOf(tabbable[0] as Element)).toContain("Map records to rows")
+    /* Every other row is reachable by j and k, and by nothing else. */
+    const reachable = rows(host).filter((row) => row.tagName.toLowerCase() === "button")
+    expect(reachable.filter((row) => row.getAttribute("tabindex") === "-1").length).toBe(
+      reachable.length - 1,
+    )
+  })
+
+  test("with nothing selected the first task is the tab stop", async () => {
+    const host = await mount(<Tree projects={projects()} />)
+    const tabbable = rows(host).filter((row) => row.getAttribute("tabindex") === "0")
+    expect(tabbable.length).toBe(1)
+    expect(textOf(tabbable[0] as Element)).toContain("Parse the manifest")
+  })
+})
+
+describe("the arrow keys the hierarchy promises", () => {
+  test("ArrowDown and ArrowUp are aliases of j and k, from a focused row", async () => {
+    const host = await mount(<Tree projects={projects()} />)
+    const order = rowTexts(host).filter((text) => !text.includes("no ref"))
+
+    await press("j", document.body)
+    await press("ArrowDown", document.activeElement ?? document.body)
+    expect(focusedRow()).toBe(nth(order, 1))
+    await press("ArrowUp", document.activeElement ?? document.body)
+    expect(focusedRow()).toBe(nth(order, 0))
+  })
+
+  test("Home and End go to the first and last task", async () => {
+    const host = await mount(<Tree projects={projects()} />)
+    const order = rowTexts(host).filter((text) => !text.includes("no ref"))
+
+    await press("j", document.body)
+    await press("End", document.activeElement ?? document.body)
+    expect(focusedRow()).toBe(nth(order, -1))
+    await press("Home", document.activeElement ?? document.body)
+    expect(focusedRow()).toBe(nth(order, 0))
+  })
+
+  test("an arrow key that did not start in the tree is left alone", async () => {
+    await mount(<Tree projects={projects()} />)
+    const box = probe("textarea")
+    box.focus()
+    await press("ArrowDown", box)
+    expect(document.activeElement).toBe(box)
+  })
+})
+
+describe("what j and k refuse to act on", () => {
+  /*
+   * The dimension these read is the keystroke itself: its target, and the
+   * modifiers held with it. Both are enumerated rather than sampled, because a
+   * guard that guesses wrong in the permissive direction swallows a keystroke
+   * the browser or the operating system owns - `Ctrl+A` selects all, `⌘J` opens
+   * the browser's downloads - and a guard that guesses wrong the other way
+   * costs one click on a row that is right there.
+   */
+  const EDITABLE = [
+    "textarea",
+    "input:text",
+    "input:search",
+    "input:email",
+    "input:number",
+    "input:checkbox",
+    "select",
+    "contenteditable",
+    "contenteditable-child",
+    "role=textbox",
+    "role=combobox",
+  ] as const
+
+  for (const kind of EDITABLE) {
+    test(`a bare j typed into ${kind} moves nothing`, async () => {
+      await mount(<Tree projects={projects()} />)
+      const target = probe(kind)
+      target.focus()
+      await press("j", target)
+      expect(focusedRow()).toBe("<nothing>")
+
+      /* The control: the same keystroke from somewhere that is not a text
+       * surface does move. Without it this test passes before the feature
+       * exists. */
+      await press("j", document.body)
+      expect(focusedRow()).not.toBe("<nothing>")
+    })
+  }
+
+  const MODIFIED: Array<[string, KeyboardEventInit]> = [
+    ["meta", { metaKey: true }],
+    ["ctrl", { ctrlKey: true }],
+    ["alt", { altKey: true }],
+    ["shift", { shiftKey: true }],
+    ["ctrl and shift", { ctrlKey: true, shiftKey: true }],
+  ]
+
+  for (const [name, init] of MODIFIED) {
+    test(`j held with ${name} belongs to someone else`, async () => {
+      await mount(<Tree projects={projects()} />)
+      await press("j", document.body, init)
+      expect(focusedRow()).toBe("<nothing>")
+
+      await press("j", document.body)
+      expect(focusedRow()).not.toBe("<nothing>")
+    })
+  }
+
+  test("a capital J is not the shortcut", async () => {
+    await mount(<Tree projects={projects()} />)
+    await press("J", document.body, { shiftKey: true })
+    expect(focusedRow()).toBe("<nothing>")
+
+    await press("j", document.body)
+    expect(focusedRow()).not.toBe("<nothing>")
+  })
+
+  test("a keystroke something nearer already handled is not handled twice", async () => {
+    await mount(<Tree projects={projects()} />)
+    await act(async () => {
+      const event = new KeyboardEvent("keydown", { key: "j", bubbles: true, cancelable: true })
+      event.preventDefault()
+      document.body.dispatchEvent(event)
+    })
+    expect(focusedRow()).toBe("<nothing>")
+
+    await press("j", document.body)
+    expect(focusedRow()).not.toBe("<nothing>")
+  })
+
+  test("a keystroke mid-composition is the IME's, not ours", async () => {
+    await mount(<Tree projects={projects()} />)
+    await press("j", document.body, { isComposing: true })
+    expect(focusedRow()).toBe("<nothing>")
+
+    await press("j", document.body)
+    expect(focusedRow()).not.toBe("<nothing>")
+  })
+
+  test("the listener is gone once the tree unmounts", async () => {
+    const host = await mount(<Tree projects={projects()} />)
+    expect(rows(host).length).toBeGreaterThan(0)
+    await press("j", document.body)
+    expect(focusedRow()).not.toBe("<nothing>")
+    for (const entry of live.splice(0)) {
+      await act(async () => {
+        entry.root.unmount()
+      })
+      entry.host.remove()
+    }
+    await press("j", document.body)
+    expect(focusedRow()).toBe("<nothing>")
+  })
+})
+
+describe("opening the focused task", () => {
+  /*
+   * `Enter` is deliberately **not** intercepted anywhere: every focusable row
+   * is a `<button>`, and a browser turns `Enter` and `Space` on a focused
+   * button into a click. happy-dom does not (probed: a dispatched `Enter`
+   * keydown on a focused button fires no click), so what this suite can prove
+   * is the half that is ours - the row j landed on is the row that activates,
+   * and nothing swallows the keystroke on the way. The browser's half is
+   * checked in a real Chromium, not here.
+   */
+  test("the row j landed on is the row that opens", async () => {
+    const picked: TaskId[] = []
+    await mount(<Tree projects={projects()} onSelect={(id) => picked.push(id)} />)
+
+    await press("j", document.body)
+    await press("j", document.activeElement ?? document.body)
+    const landed = document.activeElement
+    expect(landed).toBeInstanceOf(HTMLElement)
+    expect((landed as HTMLElement).tagName.toLowerCase()).toBe("button")
+
+    await act(async () => {
+      ;(landed as HTMLElement).click()
+    })
+    expect(picked).toEqual([
+      {
+        projectPath: "/home/me/code/your-app",
+        featureFile: "docs/features/importer.md",
+        taskRef: "T2",
+      },
+    ])
+  })
+
+  test("Enter on a row is left for the browser to turn into a click", async () => {
+    await mount(<Tree projects={projects()} />)
+    await press("j", document.body)
+    const before = document.activeElement
+    expect(focusedRow()).not.toBe("<nothing>")
+
+    let prevented = false
+    await act(async () => {
+      const event = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })
+      ;(before as HTMLElement).dispatchEvent(event)
+      prevented = event.defaultPrevented
+    })
+    /* Not consumed, and focus has not moved: the button is still the one that
+     * will be clicked. */
+    expect(prevented).toBe(false)
+    expect(document.activeElement).toBe(before)
+  })
+})
+
+describe("the hierarchy a screen reader hears", () => {
+  test("projects, feature files and tasks are nested lists, not flat divs", async () => {
+    const host = await mount(<Tree projects={projects()} />)
+
+    const projectList = host.querySelector("ul")
+    expect(projectList).not.toBeNull()
+
+    /* Three levels: projects, their feature files, and the tasks in each. */
+    const depthOf = (el: Element): number => {
+      let depth = 0
+      let node: Element | null = el
+      while (node !== null) {
+        if (node.tagName.toLowerCase() === "ul") depth += 1
+        node = node.parentElement
+      }
+      return depth
+    }
+    const taskItems = rows(host).map((row) => row.closest("li"))
+    expect(taskItems.every((li) => li !== null)).toBe(true)
+    expect(new Set(taskItems.map((li) => depthOf(li as Element)))).toEqual(new Set([3]))
+  })
+
+  test("every feature file names the list of tasks under it", async () => {
+    const host = await mount(<Tree projects={projects()} />)
+    const taskLists = [...host.querySelectorAll("ul")].filter((list) =>
+      list.querySelector("[data-task-row]") !== null && list.querySelector("ul") === null,
+    )
+    /* One per feature file in the fixture: two in the first repo, one each in
+     * the other two. */
+    expect(taskLists.length).toBe(4)
+    for (const list of taskLists) {
+      const labelledBy = list.getAttribute("aria-labelledby")
+      expect(labelledBy).not.toBeNull()
+      const label = host.ownerDocument.getElementById(labelledBy as string)
+      expect(label).not.toBeNull()
+      expect(textOf(label as Element)).toMatch(/\.md$/)
+    }
+  })
+})
+
+describe("the column from the keyboard", () => {
+  test("every control says where the keyboard is", async () => {
+    /* A completeness check: Tailwind does not run under `bun test`, so what is
+     * provable here is that no focusable element is *missing* a focus style,
+     * which is the defect that ships. Visibility is a question for a browser. */
+    const host = await mount(<Tree projects={projects()} onAddProject={() => {}} />)
+    const focusable = [
+      ...host.querySelectorAll<HTMLElement>("a[href], button, textarea, input, select, [tabindex]"),
+    ]
+    expect(focusable.length).toBeGreaterThan(2)
+    const unringed = focusable.filter((el) => !/\bfocus-visible:/.test(el.className))
+    expect(unringed.map((el) => `${el.tagName.toLowerCase()}: ${el.className}`)).toEqual([])
+  })
+})
+
+describe("reduced motion holds the glyphs still", () => {
+  const REDUCE = "(prefers-reduced-motion: reduce)"
+
+  function setReducedMotion(on: boolean): void {
+    const settings = (globalThis as unknown as {
+      happyDOM?: { settings: { device: { prefersReducedMotion: string } } }
+    }).happyDOM?.settings
+    if (settings === undefined) throw new Error("happy-dom is not registered")
+    settings.device.prefersReducedMotion = on ? "reduce" : "no-preference"
+  }
+
+  afterEach(() => setReducedMotion(false))
+
+  /*
+   * The media feature is set, not a prop. happy-dom's `getComputedStyle` does
+   * **not** evaluate `@media (prefers-reduced-motion)` (probed), so the keyframe
+   * guard in the stylesheet cannot be the only fallback: it would be untestable
+   * here and invisible to any assertion. The glyph reads the feature itself and
+   * says what it did.
+   */
+  test("needs-you stops pulsing and running stops spinning", async () => {
+    setReducedMotion(true)
+    const host = await mount(<Tree projects={projects()} />)
+    const moving = [...host.querySelectorAll("[data-motion]")]
+    expect(moving.length).toBeGreaterThan(0)
+    expect(moving.map((el) => el.getAttribute("data-motion"))).toEqual(moving.map(() => "static"))
+    expect(host.querySelectorAll(".kantan-pulse, .kantan-spin").length).toBe(0)
+  })
+
+  test("and without the preference they really do move", async () => {
+    setReducedMotion(false)
+    const host = await mount(<Tree projects={projects()} />)
+    const moving = [...host.querySelectorAll("[data-motion]")]
+    expect(moving.length).toBeGreaterThan(0)
+    expect(moving.map((el) => el.getAttribute("data-motion"))).toEqual(moving.map(() => "animated"))
+    expect(host.querySelectorAll(".kantan-pulse").length).toBe(1)
+    expect(host.querySelectorAll(".kantan-spin").length).toBe(1)
+  })
+
+  /*
+   * Turning the preference on *while the page is open* is the case the cached
+   * answer gets wrong, and it cannot be driven through happy-dom's own media
+   * feature: `matchMedia` hands back a **new** `MediaQueryList` on every call
+   * and never fires `change` when the setting moves (probed 2026-10-11), so the
+   * object the component subscribed to is unreachable and silent.
+   *
+   * So this one test - and only this one - stands a single shared query object
+   * in for `matchMedia`, restored immediately after. It proves the glyph is
+   * *subscribed*; the two tests above prove the fallback exists, and those read
+   * the real feature.
+   */
+  test("turning the preference on while the page is open stops them", async () => {
+    const real = window.matchMedia.bind(window)
+    const listeners = new Set<() => void>()
+    let matches = false
+    const fake = {
+      media: REDUCE,
+      get matches() {
+        return matches
+      },
+      onchange: null,
+      addEventListener: (_type: string, cb: () => void) => void listeners.add(cb),
+      removeEventListener: (_type: string, cb: () => void) => void listeners.delete(cb),
+      addListener: (cb: () => void) => void listeners.add(cb),
+      removeListener: (cb: () => void) => void listeners.delete(cb),
+      dispatchEvent: () => true,
+    }
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      writable: true,
+      value: (query: string) => (query.includes("prefers-reduced-motion") ? fake : real(query)),
+    })
+
+    try {
+      const host = await mount(<Tree projects={projects()} />)
+      expect(host.querySelectorAll(".kantan-spin").length).toBe(1)
+      expect(listeners.size).toBeGreaterThan(0)
+
+      await act(async () => {
+        matches = true
+        for (const cb of [...listeners]) cb()
+      })
+      expect(host.querySelectorAll(".kantan-spin").length).toBe(0)
+      expect(host.querySelectorAll(".kantan-pulse").length).toBe(0)
+    } finally {
+      Object.defineProperty(window, "matchMedia", {
+        configurable: true,
+        writable: true,
+        value: real,
+      })
+    }
   })
 })

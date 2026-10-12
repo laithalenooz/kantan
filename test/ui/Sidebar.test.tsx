@@ -651,6 +651,82 @@ describe("cost", () => {
 })
 
 // ---------------------------------------------------------------------------
+// The keyboard, and state that is not only a colour
+// ---------------------------------------------------------------------------
+
+describe("the rail from the keyboard", () => {
+  test("every control says where the keyboard is", async () => {
+    /* A completeness check: Tailwind does not run here, so what is provable is
+     * that no focusable element is missing a focus style. Whether the ring is
+     * then visible is a question for a real browser.
+     *
+     * Reduced motion is on, and not for tidiness: the grinding notice slides in
+     * on a delayed Motion animation, and unmounting the rail before the delay
+     * elapses cancels it. happy-dom rejects the cancelled animation's `finished`
+     * promise, which Motion does not catch, and `bun test` reports that as an
+     * unhandled error between tests. A focus ring does not move, so the
+     * cheapest fix is not to start the animation. */
+    setReducedMotion(true)
+    await render(
+      rail({
+        grinding: { runId: "run-1", attempts: 6, failureHref: "#fail" },
+        onStop: () => {},
+      }),
+    )
+    const focusable = all('a[href], button, textarea, input, select, [tabindex]:not([tabindex="-1"])')
+    expect(focusable.length).toBeGreaterThan(2)
+    const unringed = focusable.filter((el) => !/\bfocus-visible:/.test(el.className))
+    expect(unringed.map((el) => `${el.tagName.toLowerCase()}: ${el.className}`)).toEqual([])
+  })
+})
+
+describe("a phase's state is readable, not only visible", () => {
+  /*
+   * Every phase glyph is `aria-hidden`, and the tint that distinguishes a
+   * waiting phase from a pending one is colour. So without a word for it, a
+   * screen reader hears "plan 8s, gate, implement, test" - the sequence with
+   * its state removed, which is the whole point of the rail.
+   */
+  test("each row names its state in words", async () => {
+    await render(rail({ phases: runningPhases() }))
+    const states = all("li[data-phase]").map((row) => ({
+      phase: row.dataset["phase"],
+      said: (row.textContent ?? "").toLowerCase(),
+    }))
+    expect(states.length).toBeGreaterThan(3)
+    for (const { phase, said } of states) {
+      const state = one(`li[data-phase="${phase}"]`).dataset["state"]
+      expect(state).toBeDefined()
+      expect(said).toContain(String(state))
+    }
+  })
+
+  test("the phase the run is actually at is the current step", async () => {
+    await render(rail({ phases: runningPhases() }))
+    const current = all("li[data-phase]").filter((row) => row.getAttribute("aria-current") === "step")
+    expect(current.length).toBe(1)
+    expect(current[0]?.dataset["phase"]).toBe("test")
+
+    /* At the gate it is the gate, not the last done phase. */
+    await render(rail({ phases: gatePhases() }))
+    const atGate = all("li[data-phase]").filter((row) => row.getAttribute("aria-current") === "step")
+    expect(atGate.map((row) => row.dataset["phase"])).toEqual(["gate"])
+  })
+
+  test("a finished ladder marks nothing as current", async () => {
+    await render(
+      rail({
+        phases: [
+          { phase: "plan", state: "done", elapsedMs: 8_000 },
+          { phase: "gate", state: "done", elapsedMs: 1_000 },
+        ],
+      }),
+    )
+    expect(all("li[data-phase][aria-current]").length).toBe(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Reduced motion
 // ---------------------------------------------------------------------------
 
@@ -694,6 +770,16 @@ describe("reduced motion", () => {
     expect(one('[data-testid="cost-bar"]').style.transition).toBe("none")
     /* The figures are still the truth. */
     expect(one('[data-testid="window-ring"]').getAttribute("stroke-dashoffset")).toBe("92.68")
+  })
+
+  test("and without the preference both really do transition", async () => {
+    /* The control for the test above. `transition: none` would pass it even if
+     * neither element had ever had a transition to suppress. */
+    setReducedMotion(false)
+    await render(rail())
+
+    expect(one('[data-testid="window-ring"]').style.transition).toContain("stroke-dashoffset")
+    expect(one('[data-testid="cost-bar"]').style.transition).toContain("width")
   })
 
   test("and the two glyphs that move stop moving", async () => {
