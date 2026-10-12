@@ -8,7 +8,8 @@ import type { Task } from "./backlog"
 import { draftFeature, type Draft } from "./draft"
 import { appendTasksToFile, listFeatureFiles, readFeature, removeTaskFromFile } from "./featurefile"
 import { runTests } from "./testrun"
-import { proposeTasks } from "./draft"
+import { askHaiku, proposeTasks } from "./draft"
+import type { Ask } from "./draft"
 import type { AppendResult, RemoveResult } from "./featurefile"
 import { commitPaths, requireUsableRepo, taskBranchName } from "./git"
 import type { Repo } from "./git"
@@ -352,6 +353,18 @@ export interface ServerOptions {
    */
   projectsFile?: string
   /**
+   * How the two drafting routes reach a model. Defaults to `askHaiku`.
+   *
+   * Injectable for the reason `runsDir` is, only sharper: without it those
+   * routes have **no testable happy path at all**, because exercising one
+   * spawns the real `claude` binary and bills a real account. `POST
+   * /api/features` consequently had none, and the first test to try - for
+   * `POST /api/features/propose` - made a billed call from `bun test` and took
+   * five seconds doing it. A suite that can spend money is a suite nobody can
+   * run freely.
+   */
+  ask?: Ask
+  /**
    * The run ids the machine holds a process for **right now**, asked at the
    * moment the tree is rendered.
    *
@@ -404,6 +417,9 @@ export interface RouteContext {
    * case every unfinished run reads as `interrupted`. Nullable rather than
    * optional, for the same reason as the two above. */
   liveRunIds: (() => Iterable<string>) | null
+  /** How the drafting routes reach a model. Never `null`: there is a real
+   * default, and a route with no way to ask is a route that cannot work. */
+  ask: Ask
 }
 
 /**
@@ -2922,7 +2938,7 @@ async function proposeFeatureTasks(req: Request, ctx: RouteContext): Promise<Res
 
   let tasks: string[]
   try {
-    tasks = await proposeTasks(existing, text)
+    tasks = await proposeTasks(existing, text, ctx.ask)
   } catch (cause) {
     // The model's failures are the caller's to read, as the drafter's are: an
     // empty reply, a reply with nothing task-shaped in it. 502, because the
@@ -2961,7 +2977,7 @@ async function draftFeatureFile(req: Request, ctx: RouteContext): Promise<Respon
 
   let draft: Draft
   try {
-    draft = await draftFeature(text)
+    draft = await draftFeature(text, ctx.ask)
   } catch (cause) {
     // The model's failures are the caller's to read: an empty reply, a title
     // that slugs to nothing, a draft its own parser cannot round-trip.
@@ -3072,6 +3088,7 @@ export function createServer(opts: ServerOptions = {}): Launch {
     runner: opts.runner ?? null,
     projectsFile: opts.projectsFile ?? null,
     liveRunIds: opts.liveRunIds ?? null,
+    ask: opts.ask ?? askHaiku,
     hosts: new Set(),
     origins: new Set(),
   }

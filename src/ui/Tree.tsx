@@ -908,6 +908,94 @@ function isSameTask(a: TaskId | null | undefined, b: TaskId): boolean {
  * to be something that can be activated.
  */
 /**
+ * What a project amounts to, counted from the tree the page already has.
+ *
+ * Derived rather than fetched, deliberately: every figure here is already on
+ * the wire, so a summary endpoint would be a second reading of the same bytes
+ * and a second thing to keep in step with `taskStateOf`.
+ *
+ * `spentUsd` is a **floor and says so**, because its parts are. `RunSummary`
+ * in `src/runindex.ts` uses the largest `total_cost_usd` it actually read for
+ * a run with no `end` record, and cost resets per process - so one unfinished
+ * run already under-reports, and a sum of them under-reports further.
+ * Presenting that as a total would be the one number in this panel a human
+ * might budget against.
+ *
+ * `verified` exists because of the project's spine rule: nothing may claim a
+ * verification it did not observe. A summary saying "6 done" where two were
+ * self-checked and one came from a log older than the field would be exactly
+ * the over-claim `verificationOf` was written to prevent, so the three are
+ * counted apart and `unknown` is never folded into either.
+ */
+export interface ProjectSummary {
+  taskFiles: number
+  tasks: number
+  /** Ticked in the markdown, whatever any run says. */
+  done: number
+  byState: Readonly<Record<TaskState, number>>
+  /** Tasks with a run of any kind in the index. */
+  everRun: number
+  /** A floor, never a total. See above. */
+  spentUsd: number
+  verified: { testCommand: number; selfCheck: number; unknown: number }
+}
+
+/**
+ * The costs a tree carries, keyed as `src/runindex.ts` keys them.
+ *
+ * A structural type rather than `RunRef` from `src/ui/live.ts`: this module is
+ * imported by that one, and the figure is the only field a summary reads.
+ */
+export type RunCosts = Readonly<Record<string, { costUsd: number }>>
+
+export function projectSummary(project: TreeProject, runs: RunCosts = {}): ProjectSummary {
+  const byState: Record<TaskState, number> = {
+    open: 0,
+    running: 0,
+    "needs-you": 0,
+    passed: 0,
+    failed: 0,
+    stalled: 0,
+    "done-unmerged": 0,
+    interrupted: 0,
+    grinding: 0,
+  }
+  const verified = { testCommand: 0, selfCheck: 0, unknown: 0 }
+  let tasks = 0
+  let done = 0
+  let everRun = 0
+  let spentUsd = 0
+
+  for (const feature of project.features) {
+    for (const task of feature.tasks) {
+      tasks += 1
+      if (task.done) done += 1
+      byState[taskStateOf(task)] += 1
+      if (task.run === undefined) continue
+      everRun += 1
+      /* Only a run that *ended done* has a verification to report, which is
+         what `verificationOf` enforces - so the three counts here add up to
+         the tasks that finished, not to `everRun`. */
+      if (task.run.state.kind === "done") {
+        const reading = verificationOf(task.run.state)
+        if (reading === "test-command") verified.testCommand += 1
+        else if (reading === "self-check") verified.selfCheck += 1
+        else verified.unknown += 1
+      }
+      if (task.ref === null) continue
+      /* The same NUL join `taskKeyOf` in `src/ui/live.ts` and `taskKey` in
+         `src/runindex.ts` use. Spelled here rather than imported because
+         `runindex` is a **value** import that reaches `node:fs/promises` and
+         poisons the browser bundle - the trap `src/runstate.ts` exists for. */
+      const cost = runs[`${project.path}\u0000${feature.path}\u0000${task.ref}`]?.costUsd
+      if (typeof cost === "number" && Number.isFinite(cost)) spentUsd += cost
+    }
+  }
+
+  return { taskFiles: project.features.length, tasks, done, byState, everRun, spentUsd, verified }
+}
+
+/**
  * What identifies a task file in the collapsed set: the project **and** the
  * path.
  *

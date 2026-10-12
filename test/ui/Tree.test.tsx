@@ -43,6 +43,7 @@ try {
 }
 
 const { renderToStaticMarkup } = await import("react-dom/server")
+const api = await import("../../src/ui/Tree.tsx")
 const {
   StateGlyph,
   StateLabel,
@@ -51,7 +52,7 @@ const {
   canStart,
   canResume,
   TASK_STATES,
-} = await import("../../src/ui/Tree.tsx")
+} = api
 type TaskState = (typeof TASK_STATES)[number]
 
 afterAll(async () => {
@@ -1883,5 +1884,153 @@ describe("the task-file disclosure", () => {
   test("an open file prints no task count beside its name", () => {
     const host = render(<Tree projects={projects()} />)
     expect(host.querySelectorAll("[data-feature-count]")).toHaveLength(0)
+  })
+})
+
+/* ========================================================================== */
+/* projectSummary                                                             */
+/* ========================================================================== */
+
+/**
+ * Derived from the tree the page already has, so the figures cannot drift from
+ * the rows beside them: `taskStateOf` is the one reading, and this counts what
+ * it says rather than re-deciding.
+ *
+ * Two of these assertions are about the project's spine rather than about
+ * arithmetic. `spentUsd` is a **floor** because its parts are, and `verified`
+ * keeps `test-command`, `self-check` and `unknown` apart because nothing may
+ * claim a verification it did not observe.
+ */
+describe("projectSummary", () => {
+  const { projectSummary } = api as unknown as {
+    projectSummary: (p: TreeProject, runs?: Record<string, { costUsd: number }>) => {
+      taskFiles: number
+      tasks: number
+      done: number
+      byState: Record<string, number>
+      everRun: number
+      spentUsd: number
+      verified: { testCommand: number; selfCheck: number; unknown: number }
+    }
+  }
+
+  const PATH = "/home/me/code/app"
+  const proj = (features: TreeProject["features"]): TreeProject => ({
+    path: PATH,
+    account: { kind: "personal" },
+    testCmd: "npm test",
+    features,
+  })
+  const key = (file: string, ref: string) => `${PATH}\u0000${file}\u0000${ref}`
+
+  test("counts the files, the tasks and the ticks", () => {
+    const got = projectSummary(
+      proj([
+        { path: "a.md", tasks: [{ ref: "T1", text: "x", done: true }, { ref: "T2", text: "y", done: false }] },
+        { path: "b.md", tasks: [{ ref: "T1", text: "z", done: false }] },
+      ]),
+    )
+    expect(got.taskFiles).toBe(2)
+    expect(got.tasks).toBe(3)
+    expect(got.done).toBe(1)
+    expect(got.everRun).toBe(0)
+    expect(got.spentUsd).toBe(0)
+  })
+
+  test("a project with nothing in it counts to zero rather than throwing", () => {
+    const got = projectSummary(proj([]))
+    expect(got).toMatchObject({ taskFiles: 0, tasks: 0, done: 0, everRun: 0, spentUsd: 0 })
+    expect(Object.values(got.byState).every((n) => n === 0)).toBe(true)
+  })
+
+  test("groups by the same reading the rows use", () => {
+    const got = projectSummary(
+      proj([
+        {
+          path: "a.md",
+          tasks: [
+            { ref: "T1", text: "a", done: false },
+            { ref: "T2", text: "b", done: false, run: { state: { kind: "waiting", reason: "gate" }, branch: "x" } },
+            { ref: "T3", text: "c", done: false, run: { state: { kind: "running", phase: "test" }, branch: "x" } },
+            { ref: "T4", text: "d", done: false, run: { state: { kind: "failed", why: "nope" }, branch: "x" } },
+          ],
+        },
+      ]),
+    )
+    expect(got.byState["open"]).toBe(1)
+    expect(got.byState["needs-you"]).toBe(1)
+    expect(got.byState["running"]).toBe(1)
+    expect(got.byState["failed"]).toBe(1)
+    expect(got.everRun).toBe(3)
+  })
+
+  /** The spine rule, as a count: three readings, never folded together. */
+  test("keeps the three verifications apart, and only for runs that finished", () => {
+    const got = projectSummary(
+      proj([
+        {
+          path: "a.md",
+          tasks: [
+            { ref: "T1", text: "a", done: true, run: { state: { kind: "done", merged: true, verifiedBy: "test-command" }, branch: "x" } },
+            { ref: "T2", text: "b", done: true, run: { state: { kind: "done", merged: true, verifiedBy: "self-check" }, branch: "x" } },
+            // A log written before the field existed: unknown, never a pass.
+            { ref: "T3", text: "c", done: true, run: { state: { kind: "done", merged: true }, branch: "x" } },
+            // Not done, so it has no verification to report at all.
+            { ref: "T4", text: "d", done: false, run: { state: { kind: "failed", why: "nope" }, branch: "x" } },
+          ],
+        },
+      ]),
+    )
+    expect(got.verified).toEqual({ testCommand: 1, selfCheck: 1, unknown: 1 })
+    // Three finished, four ran: the counts are of finished runs, not of runs.
+    expect(got.everRun).toBe(4)
+  })
+
+  test("sums the costs the runs map holds, keyed as runindex keys them", () => {
+    const got = projectSummary(
+      proj([
+        { path: "a.md", tasks: [{ ref: "T1", text: "a", done: true, run: { state: { kind: "done", merged: true }, branch: "x" } }] },
+        { path: "b.md", tasks: [{ ref: "T1", text: "b", done: true, run: { state: { kind: "done", merged: true }, branch: "x" } }] },
+      ]),
+      { [key("a.md", "T1")]: { costUsd: 1.25 }, [key("b.md", "T1")]: { costUsd: 2.5 } },
+    )
+    expect(got.spentUsd).toBeCloseTo(3.75, 6)
+  })
+
+  /** Every feature file has a `T1`, so the key has to carry the file too. */
+  test("does not credit one file's cost to another's task of the same ref", () => {
+    const got = projectSummary(
+      proj([{ path: "a.md", tasks: [{ ref: "T1", text: "a", done: false, run: { state: { kind: "failed", why: "x" }, branch: "x" } }] }]),
+      { [key("b.md", "T1")]: { costUsd: 9.99 } },
+    )
+    expect(got.spentUsd).toBe(0)
+  })
+
+  /** A figure this reader cannot use leaves the floor where it was, rather
+   *  than making every later total `NaN`. */
+  test("an unusable cost is skipped, not propagated", () => {
+    const got = projectSummary(
+      proj([
+        { path: "a.md", tasks: [
+          { ref: "T1", text: "a", done: false, run: { state: { kind: "failed", why: "x" }, branch: "x" } },
+          { ref: "T2", text: "b", done: false, run: { state: { kind: "failed", why: "x" }, branch: "x" } },
+        ] },
+      ]),
+      {
+        [key("a.md", "T1")]: { costUsd: Number.NaN },
+        [key("a.md", "T2")]: { costUsd: 2 },
+      },
+    )
+    expect(got.spentUsd).toBe(2)
+  })
+
+  /** A line with no ref owns no branch and no run, so it has no cost to find. */
+  test("a refless line is counted as a task and looked up for nothing", () => {
+    const got = projectSummary(
+      proj([{ path: "a.md", tasks: [{ ref: null, text: "a line with no ref", done: false }] }]),
+    )
+    expect(got.tasks).toBe(1)
+    expect(got.everRun).toBe(0)
+    expect(got.spentUsd).toBe(0)
   })
 })

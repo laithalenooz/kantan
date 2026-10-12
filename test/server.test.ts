@@ -21,6 +21,7 @@ import { taskKey } from "../src/runindex"
 import { createRunLog, runLogPath } from "../src/runlog"
 import type { RunHeader, RunLog, RunRecord } from "../src/runlog"
 import { ROUTES, TOKEN_EXEMPT, createServer, type Launch, type RouteContext } from "../src/server"
+import type { Ask } from "../src/draft"
 import type { Acted, Runner, StartRequest, Started } from "../src/server"
 /* Type-only, so nothing of the component - React included - is loaded by this
  * suite or by the server. The payload is the component's own type, borrowed
@@ -38,10 +39,39 @@ import type { TreeProject } from "../src/ui/Tree.tsx"
 const launched: Launch[] = []
 
 /** A loopback launch on an OS-assigned port, stopped when the suite ends. */
+/**
+ * A refusing model, which every launch here gets unless it asks for one.
+ *
+ * Structural rather than careful. `askHaiku` spawns the real `claude` binary
+ * and bills a real account, so a route that reaches a model is a test that
+ * costs money and takes seconds - and the first one to do it did so by
+ * accident, in a case that was only ever about a guard. Defaulting to a throw
+ * means a billed call cannot happen without someone writing `ask` down.
+ */
+const NO_MODEL: Ask = async () => {
+  throw new Error("this launch has no model; pass `ask` to exercise a drafting route")
+}
+
 function serve(opts: Parameters<typeof createServer>[0] = {}): Launch {
-  const l = createServer({ port: 0, ...opts })
+  const l = createServer({ port: 0, ask: NO_MODEL, ...opts })
   launched.push(l)
   return l
+}
+
+/** A launch whose model answers `reply`, and the prompts it was given. */
+function serveAsking(reply: string, opts: Parameters<typeof createServer>[0] = {}): {
+  l: Launch
+  prompts: string[]
+} {
+  const prompts: string[] = []
+  const l = serve({
+    ...opts,
+    ask: async (prompt: string) => {
+      prompts.push(prompt)
+      return reply
+    },
+  })
+  return { l, prompts }
 }
 
 afterAll(() => {
@@ -1274,6 +1304,12 @@ test("an id runLogPath refuses becomes a 400, not an unhandled rejection", async
     runner: null,
     projectsFile: null,
     liveRunIds: null,
+    /* Refuses rather than answers: a route that reaches a model in a test
+       nobody pointed at one is a billed call, and that is a failure to see
+       rather than to tolerate. */
+    ask: async () => {
+      throw new Error("this context has no model; inject `ask` to exercise a drafting route")
+    },
   }
 
   // Both `:id` reads, not only the stream: the plan route refuses an id the
@@ -1811,6 +1847,12 @@ test("an id runLogPath refuses is a 4xx and never reaches the machine", async ()
     runner: fake.runner,
     projectsFile: null,
     liveRunIds: null,
+    /* Refuses rather than answers: a route that reaches a model in a test
+       nobody pointed at one is a billed call, and that is a failure to see
+       rather than to tolerate. */
+    ask: async () => {
+      throw new Error("this context has no model; inject `ask` to exercise a drafting route")
+    },
   }
 
   for (const key of [APPROVE, FEEDBACK, ANSWER, RAISE, RESUME, STOP]) {
@@ -3378,6 +3420,21 @@ async function withTree(store: string, opts: Parameters<typeof createServer>[0] 
   return serve({ runsDir: await runsDir(), projectsFile: store, ...opts })
 }
 
+/** `withTree`, with a model that answers `reply`. */
+async function withTreeAsking(
+  store: string,
+  reply: string,
+): Promise<{ l: Launch; prompts: string[] }> {
+  const prompts: string[] = []
+  const l = await withTree(store, {
+    ask: async (prompt: string) => {
+      prompts.push(prompt)
+      return reply
+    },
+  })
+  return { l, prompts }
+}
+
 /** `repo` registered in a store of its own, through the store's own writer so
  * the records are ones `loadProjects` accepts. */
 async function storeOf(...repos: string[]): Promise<string> {
@@ -4716,14 +4773,50 @@ test("an unregistered project cannot have a command run in it", async () => {
  * flight is fine. Refusing would make the screen unusable for as long as a run
  * takes, for a call whose whole output is text on a page.
  */
-test("proposing reads the file, writes nothing, and is allowed during a run", async () => {
+test("proposing answers the model's tasks, and writes nothing", async () => {
+  const repo = await cleanRepo()
+  const path = await withFeature(repo, "importer.md", FEATURE)
+  const before = await readFile(path, "utf8")
+  const store = await storeFile()
+  await addProject(store, defaults({ path: repo, testCmd: "bun test" }))
+  const { l, prompts } = await withTreeAsking(store, "Handle a missing column\nReport the row number\n")
+
+  const res = await propose(l, {
+    projectPath: repo,
+    featureFile: "docs/features/importer.md",
+    text: "make the importer sturdier",
+  })
+
+  expect(res.status).toBe(200)
+  expect((JSON.parse(res.body) as { tasks: string[] }).tasks).toEqual([
+    "Handle a missing column",
+    "Report the row number",
+  ])
+  // The file's current contents reach the prompt, so the proposals fit it and
+  // do not repeat it.
+  expect(prompts[0]).toContain("T1 Read the CSV")
+  expect(prompts[0]).toContain("make the importer sturdier")
+  // And nothing was written: this route proposes.
+  expect(await readFile(path, "utf8")).toBe(before)
+})
+
+/**
+ * Unlike the three task routes, a run in flight does **not** refuse a propose:
+ * nothing is written and nothing is committed, so none of their reasons apply,
+ * and refusing would make the screen unusable for as long as a run takes.
+ */
+test("proposing is allowed while a run is in flight", async () => {
   const repo = await cleanRepo()
   const path = await withFeature(repo, "importer.md", FEATURE)
   const before = await readFile(path, "utf8")
   const dir = await runsDir()
   const store = await storeFile()
   const live = "77777777-7777-4777-8777-777777777777"
-  const l = serve({ runsDir: dir, projectsFile: store, liveRunIds: () => [live] })
+  const { l } = serveAsking("Handle a missing column\n", {
+    runsDir: dir,
+    projectsFile: store,
+    liveRunIds: () => [live],
+  })
   await logNamingProject(dir, live, (await requireUsableRepo(repo)).root)
   await register(l, { path: repo, testCmd: "npm test" })
 
@@ -4733,11 +4826,58 @@ test("proposing reads the file, writes nothing, and is allowed during a run", as
     text: "make the importer sturdier",
   })
 
-  // 502 here means it reached the model and the model is not available in a
-  // test; what matters is that it was not refused as a conflict, and that the
-  // file is untouched either way.
-  expect(res.status).not.toBe(409)
+  expect(res.status).toBe(200)
   expect(await readFile(path, "utf8")).toBe(before)
+})
+
+/** A reply the drafter cannot read is the caller's to see, as a 502: the
+ *  request was fine and something upstream was not. */
+test("a reply with nothing task-shaped in it is a 502", async () => {
+  const repo = await cleanRepo()
+  await withFeature(repo, "importer.md", FEATURE)
+  const store = await storeFile()
+  await addProject(store, defaults({ path: repo, testCmd: "bun test" }))
+  const { l } = await withTreeAsking(store, "# Just a heading\n")
+
+  const res = await propose(l, {
+    projectPath: repo,
+    featureFile: "docs/features/importer.md",
+    text: "x",
+  })
+  expect(res.status).toBe(502)
+})
+
+/**
+ * `POST /api/features` had no happy-path test at all, for the reason this one
+ * needed a harness: exercising it reached the real binary. It writes a whole
+ * new file and commits it, which is the half `propose` deliberately does not.
+ */
+test("drafting a feature file writes it, parses it, and commits it", async () => {
+  const repo = await cleanRepo()
+  const store = await storeFile()
+  await addProject(store, defaults({ path: repo, testCmd: "bun test" }))
+  const { l, prompts } = await withTreeAsking(
+    store,
+    "# Resumable imports\n- [ ] T1 Record where the import stopped\n- [ ] T2 Pick it up from there\n",
+  )
+
+  const res = await call(l, {
+    path: "/api/features",
+    method: "POST",
+    body: JSON.stringify({ projectPath: repo, text: "the importer should survive a crash" }),
+  })
+
+  expect(res.status).toBe(201)
+  const body = JSON.parse(res.body) as { path: string }
+  expect(body.path).toBe("docs/features/resumable-imports.md")
+  expect(prompts[0]).toContain("the importer should survive a crash")
+
+  const written = await readFile(join(repo, body.path), "utf8")
+  expect(written).toContain("- [ ] T1 Record where the import stopped")
+  // Committed, because kantan wrote into someone's repository: leaving it
+  // untracked is what closed the loop this route exists to open.
+  expect(await gitSays(repo, "log", "-1", "--pretty=%s")).toContain("docs/features/resumable-imports.md")
+  expect(await gitSays(repo, "status", "--porcelain")).toBe("")
 })
 
 test("proposing refuses a task file outside the project, and one that is not there", async () => {

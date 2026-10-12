@@ -2332,3 +2332,141 @@ describe("accountOptionsFor", () => {
     expect(all('[role="radio"][data-card]').filter((el) => el.getAttribute("aria-checked") === "true")).toHaveLength(1)
   })
 })
+
+/* ========================================================================== */
+/* Where this project is                                                      */
+/* ========================================================================== */
+
+/**
+ * Reported as missing: clicking a project went straight to a form. The summary
+ * is first in the card because "what is in here and what has it cost" is the
+ * question a human opens a project with.
+ *
+ * Two of its figures are shaped by rules rather than by taste, and those are
+ * the assertions that matter here: the spend says **at least**, and
+ * self-checked work is counted apart from work a test command passed.
+ */
+describe("the project summary", () => {
+  const summary = (over: Record<string, unknown> = {}) => ({
+    taskFiles: 2,
+    tasks: 4,
+    done: 1,
+    byState: {
+      open: 2,
+      running: 0,
+      "needs-you": 1,
+      passed: 1,
+      failed: 0,
+      stalled: 0,
+      "done-unmerged": 0,
+      interrupted: 0,
+      grinding: 0,
+    },
+    everRun: 2,
+    spentUsd: 3.5,
+    verified: { testCommand: 1, selfCheck: 0, unknown: 0 },
+    ...over,
+  })
+
+  test("is not drawn when the shell does not supply one", async () => {
+    const h = handlers()
+    await render(<api.ProjectPanel project={project("personal")} accounts={ACCOUNTS} {...h.props} />)
+    expect(maybe("[data-summary]")).toBeNull()
+  })
+
+  test("counts the tasks, and drops the rows that would read zero", async () => {
+    const h = handlers()
+    await render(
+      <api.ProjectPanel project={project("personal")} accounts={ACCOUNTS} summary={summary() as never} {...h.props} />,
+    )
+    expect(prose()).toContain("4 tasks across 2 files")
+    expect(one("[data-stat='tasks']").textContent).toContain("4")
+    expect(one("[data-stat='ticked']").textContent).toContain("1")
+    expect(one("[data-stat='needs you']").textContent).toContain("1")
+    // Nothing is running and nothing failed, so neither row is drawn: a stat
+    // reading 0 is noise in a row of figures.
+    expect(maybe("[data-stat='running']")).toBeNull()
+    expect(maybe("[data-stat='stopped or failed']")).toBeNull()
+  })
+
+  /**
+   * The spend is a floor and must say so. Its parts are floors - `RunSummary`
+   * keeps the largest `total_cost_usd` it read for a run with no `end` record -
+   * and this is the one number in the panel someone might budget against.
+   */
+  test("the spend is presented as a floor, never as a total", async () => {
+    const h = handlers()
+    await render(
+      <api.ProjectPanel project={project("personal")} accounts={ACCOUNTS} summary={summary() as never} {...h.props} />,
+    )
+    const said = one("[data-spend]").textContent ?? ""
+    expect(said).toContain("At least")
+    expect(said).toContain("$3.50")
+    expect(said).toContain("can only be low")
+  })
+
+  /** The spine rule, on a surface: nothing claims a verification it did not
+   *  observe, so the three readings are three sentences. */
+  test("names self-checked work as self-checked, and an older log as neither", async () => {
+    const h = handlers()
+    await render(
+      <api.ProjectPanel
+        project={project("personal")}
+        accounts={ACCOUNTS}
+        summary={summary({ verified: { testCommand: 2, selfCheck: 1, unknown: 1 } }) as never}
+        {...h.props}
+      />,
+    )
+    const said = one("[data-verification]").textContent ?? ""
+    expect(said).toContain("2")
+    expect(said).toContain("npm test")
+    expect(said).toContain("checked by the agent itself")
+    expect(said).toContain("does not record how it was checked")
+    // And never the word that would fold them together.
+    expect(said).not.toContain("verified")
+  })
+
+  test("says plainly when nothing has run, rather than printing zeroes", async () => {
+    const h = handlers()
+    await render(
+      <api.ProjectPanel
+        project={project("personal")}
+        accounts={ACCOUNTS}
+        summary={summary({ everRun: 0, spentUsd: 0, verified: { testCommand: 0, selfCheck: 0, unknown: 0 } }) as never}
+        {...h.props}
+      />,
+    )
+    expect(maybe("[data-spend]")).toBeNull()
+    expect(maybe("[data-verification]")).toBeNull()
+  })
+
+  test("an empty project is told what to do rather than shown an empty grid", async () => {
+    const h = handlers()
+    await render(
+      <api.ProjectPanel
+        project={project("personal", { features: [] })}
+        accounts={ACCOUNTS}
+        summary={summary({ taskFiles: 0, tasks: 0, done: 0, everRun: 0, spentUsd: 0 }) as never}
+        {...h.props}
+      />,
+    )
+    expect(prose()).toContain("No tasks yet")
+    expect(maybe("[data-stat='tasks']")).toBeNull()
+  })
+
+  /** A project with no test command cannot name one in the summary either. */
+  test("does not name a test command the project does not have", async () => {
+    const h = handlers()
+    await render(
+      <api.ProjectPanel
+        project={project("personal", { testCmd: null })}
+        accounts={ACCOUNTS}
+        summary={summary() as never}
+        {...h.props}
+      />,
+    )
+    const said = one("[data-verification]").textContent ?? ""
+    expect(said).toContain("a test command")
+    expect(said).not.toContain("npm test")
+  })
+})

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { Tree, canResume, canStart, type Account, type AdvancedSettings, type TaskId, type TreeProject, type TreeTask } from "./Tree.tsx"
+import { Tree, canResume, canStart, projectSummary, type Account, type AdvancedSettings, type TaskId, type TreeProject, type TreeTask } from "./Tree.tsx"
 import { Gate, type GateProps } from "./Gate.tsx"
 import { Stream } from "./Stream.tsx"
 import { Sidebar, sumProcessCost, type AccountWindow } from "./Sidebar.tsx"
@@ -728,6 +728,10 @@ export function App() {
       {panelProject !== null && (
         <ProjectPanel
           project={panelProject}
+          /* Derived here because the shell is the only place holding both
+             halves: the tasks come off the project, the costs off the tree's
+             separate runs map. */
+          summary={projectSummary(panelProject, tree?.runs ?? {})}
           accounts={accountOptions}
           onSwitchAccount={(account) => onSwitchAccount(panelProject.path, account)}
           onSaveTestCmd={(cmd) => onSaveTestCmd(panelProject.path, cmd)}
