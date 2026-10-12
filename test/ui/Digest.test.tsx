@@ -511,7 +511,8 @@ describe("the timeline", () => {
     await render(digest({ entries: [{ id: id(6), kind: "escalation", effort: "high", identicalFailures: 3 }] }))
     const row = flat(entryOfKind("escalation").textContent)
     expect(row).toContain("effort: high")
-    expect(row).toContain("3")
+    /* The artboard's own words, and the count it was given. */
+    expect(row).toContain("Three identical failures")
 
     /* An effort this build has never heard of is still printed. */
     await render(digest({ entries: [{ id: id(6), kind: "escalation", effort: "max" }] }))

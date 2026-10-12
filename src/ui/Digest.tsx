@@ -285,6 +285,26 @@ function times(n: number): string {
   return words[n] ?? `${n} times`
 }
 
+/**
+ * Small numbers as words, which is the artboard's register for counted things
+ * ("Three identical failures", "the third identical failure"). Digits take
+ * over where the words stop being easier to read than the number.
+ */
+const CARDINALS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"]
+const ORDINALS = ["zeroth", "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth"]
+
+function cardinal(n: number): string {
+  return CARDINALS[n] ?? `${n}`
+}
+
+function ordinal(n: number): string {
+  return ORDINALS[n] ?? `${n}th`
+}
+
+function capitalise(word: string): string {
+  return word.charAt(0).toUpperCase() + word.slice(1)
+}
+
 function fileCount(n: number): string {
   return n === 1 ? "1 file" : `${n} files`
 }
@@ -327,6 +347,10 @@ export interface StateReading {
   tint: string
   /** Readable text on `tint`. */
   ink: string
+  /** The band's hairline. `Return.dc.html` gives `#D6D7FA` for the one band it
+   * draws; the rest take the state's own colour at a quarter, so no value is
+   * invented for a plate the design never showed. */
+  border: string
   glyph: Glyph
   /** `state.why`, or where an interrupted run resumes. Printed verbatim. */
   detail?: string
@@ -343,8 +367,8 @@ export interface StateReading {
 }
 
 /** Shared by the states that are neither running nor waiting on a person. */
-const CALM_PLATE = { tint: "#F1F1F4", ink: "#3A3D45" }
-const ATTENTION_PLATE = { tint: "#FFF1E8", ink: "#9A3B06" }
+const CALM_PLATE = { tint: "#F1F1F4", ink: "#3A3D45", border: "#E7E7EB" }
+const ATTENTION_PLATE = { tint: "#FFF1E8", ink: "#9A3B06", border: "#FFD2B5" }
 
 export function stateReading(state: RunState): StateReading {
   switch (state.kind) {
@@ -355,6 +379,7 @@ export function stateReading(state: RunState): StateReading {
         core: "#5B5BD6",
         tint: "#E8E9FD",
         ink: "#20205E",
+        border: "#D6D7FA",
         glyph: "running",
         parked: false,
       }
@@ -493,8 +518,10 @@ export function digestProse(entries: readonly DigestEntry[], state: RunState): s
 
   if (escalation !== undefined) {
     const after =
-      escalation.identicalFailures === undefined ? "" : `After ${escalation.identicalFailures} identical failures, `
-    sentences.push(`${after}kantan raised the effort to ${escalation.effort}.`)
+      escalation.identicalFailures === undefined
+        ? ""
+        : `After the ${ordinal(escalation.identicalFailures)} identical failure, `
+    sentences.push(`${after}kantan raised the effort level to ${escalation.effort}.`)
   }
 
   const reading = stateReading(state)
@@ -502,7 +529,7 @@ export function digestProse(entries: readonly DigestEntry[], state: RunState): s
     case "running":
       sentences.push(
         failed > 0
-          ? "It is still running. You can let it run, or read the failure in the run record below."
+          ? "It is still running. You can let it run, or look at the failure below."
           : "It is still running, and nothing is blocked.",
       )
       break
@@ -830,7 +857,7 @@ export function ReturnBand({ subject, needsYou, className }: ReturnBandProps) {
         reduced ? "" : BAND_CLASS,
         className ?? "",
       ].join(" ")}
-      style={{ background: reading.tint, color: reading.ink, borderBottomColor: reading.core + "40" }}
+      style={{ background: reading.tint, color: reading.ink, borderBottomColor: reading.border }}
     >
       <style>{DIGEST_CSS}</style>
       <BandGlyph reading={reading} reduced={reduced} />
@@ -949,8 +976,10 @@ function EntryBody({ entry, comparison }: { entry: DigestEntry; comparison: "sam
       return (
         <span className="text-[14.5px] font-[560] text-[#20205E]">
           {entry.identicalFailures === undefined
-            ? "The effort was raised"
-            : `${entry.identicalFailures} identical failures, so the effort was raised`}
+            ? `Effort was raised to ${entry.effort}`
+            : entry.identicalFailures === 1
+              ? `One identical failure, so effort was raised to ${entry.effort}`
+              : `${capitalise(cardinal(entry.identicalFailures))} identical failures, so effort was raised to ${entry.effort}`}
         </span>
       )
 
@@ -979,25 +1008,28 @@ function EntryBody({ entry, comparison }: { entry: DigestEntry; comparison: "sam
         </span>
       )
 
-    case "tests":
+    case "tests": {
+      /* One span for the sentence, so the separators are the only spacing in
+       * it — a flex gap between the parts reads as a double space, which the
+       * artboard does not have. The chip is the only sibling, and the gap is
+       * for it. */
+      const said = entry.attempt === undefined ? false : true
       return (
         <span className="flex min-w-0 flex-wrap items-center gap-2 text-[14.5px]">
-          {entry.attempt === undefined ? null : <span>Attempt {entry.attempt}</span>}
-          {entry.summary === undefined ? null : (
-            <span className="font-semibold">
-              {entry.attempt === undefined ? null : "· "}
-              {entry.summary}
-            </span>
-          )}
-          {comparison === undefined ? null : (
-            <span className="text-muted-500">
-              {entry.attempt === undefined || entry.summary !== undefined ? null : "· "}
-              {comparison === "same" ? "same failure" : "a different failure"}
-            </span>
-          )}
+          <span className="min-w-0 [overflow-wrap:anywhere]">
+            {said ? `Attempt ${entry.attempt}` : null}
+            {entry.summary === undefined ? null : `${said ? " · " : ""}${entry.summary}`}
+            {comparison === undefined ? null : (
+              <span className="text-muted-500">
+                {said || entry.summary !== undefined ? " · " : ""}
+                {comparison === "same" ? "same failure" : "a different failure"}
+              </span>
+            )}
+          </span>
           {entry.grinding === true ? <GrindingChip /> : null}
         </span>
       )
+    }
   }
 }
 
@@ -1106,14 +1138,20 @@ export function Digest({
         <div className="mb-3.5 flex flex-wrap items-center gap-x-3 gap-y-2 text-[13px] text-muted-700">
           <Clock className="size-[15px] shrink-0 text-indigo-deep" />
           <span className="font-[620] text-[#2E2E8A]">While you were away</span>
-          <span
-            data-testid="digest-state"
-            data-state={subject.state.kind}
-            className="rounded-full px-2 py-[2px] text-[11.5px] font-[620]"
-            style={{ background: reading.tint, color: reading.ink }}
-          >
-            {reading.label}
-          </span>
+          {/* `Return.dc.html` draws the running card, and its eyebrow carries
+            * no state chip: the heading says "Still going" and the band above
+            * says the rest. The other eight states have no artboard and no
+            * heading that names them as plainly, so they get the chip. */}
+          {subject.state.kind === "running" ? null : (
+            <span
+              data-testid="digest-state"
+              data-state={subject.state.kind}
+              className="rounded-full px-2 py-[2px] text-[11.5px] font-[620]"
+              style={{ background: reading.tint, color: reading.ink }}
+            >
+              {reading.label}
+            </span>
+          )}
           {strip.length === 0 ? null : (
             <span data-testid="digest-away" className={`${MONO} text-xs`}>
               {strip.join(" · ")}
