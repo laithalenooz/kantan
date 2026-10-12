@@ -404,8 +404,16 @@ export function App() {
 
   const onSwitchAccount = useCallback(
     async (path: string, account: AccountOption): Promise<void> => {
-      // Carries the profile, never just the word. See `accountOptions`.
-      await guard(() => updateProject(path, { account: account.kind }))
+      /* The profile as well as the word, and the comment that used to sit here
+         claiming so was the whole defect: `account` is only a label.
+         `src/spawn.ts` sets `CLAUDE_CONFIG_DIR` from `configDir` and `src/run.ts`
+         keys the rate-limit window on it, so a PATCH carrying the word alone
+         moved the chip and kept billing the same profile - the one thing the
+         confirmation exists to prevent. `null` is how an option with no folder
+         sends the project back to the default one. */
+      await guard(() =>
+        updateProject(path, { account: account.kind, configDir: account.configDir ?? null }),
+      )
     },
     [guard],
   )
@@ -624,6 +632,9 @@ export function App() {
           accounts={accountOptions}
           onSwitchAccount={(account) => onSwitchAccount(panelProject.path, account)}
           onSaveTestCmd={(cmd) => onSaveTestCmd(panelProject.path, cmd)}
+          /* `null`, which is the only spelling the store accepts for "no
+             suite" - it refuses `""`, because `sh -c ""` exits 0. */
+          onClearTestCmd={() => onSaveTestCmd(panelProject.path, null)}
           onRemove={() => onRemoveProject(panelProject)}
         />
       )}

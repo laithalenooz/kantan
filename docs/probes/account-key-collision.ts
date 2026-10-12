@@ -18,6 +18,8 @@
  *
  * Prints "returned" if a fix has made the render terminate.
  */
+import type { createElement as CreateElement } from "react"
+
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 GlobalRegistrator.register()
 
@@ -31,7 +33,7 @@ const accounts = [
 ]
 
 /** The collision on its own, with no kantan code involved. */
-function Colliding(): unknown {
+function Colliding(): ReturnType<typeof CreateElement> {
   return createElement(
     "div",
     null,
