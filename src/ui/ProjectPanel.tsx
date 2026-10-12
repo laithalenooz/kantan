@@ -279,6 +279,49 @@ function optionId(option: { kind: Account["kind"]; configDir?: string }): string
   return `${option.kind}/${option.configDir ?? ""}`
 }
 
+/**
+ * The accounts to choose between, derived from what is registered.
+ *
+ * An account **is** a profile directory: `src/spawn.ts` sets
+ * `CLAUDE_CONFIG_DIR` from `configDir` and `src/run.ts` records the run's
+ * profile from it, while `account` is only the chip's word. So the options are
+ * the distinct `(kind, configDir)` pairs across the tree, plus the default
+ * profile so there is always somewhere to switch to.
+ *
+ * Here, exported and pure, because `App.tsx` built this inline and keyed it on
+ * the **label** while setting no `configDir` at all - under a docstring that
+ * said it did both. Two projects reading "personal" therefore produced two
+ * options with the same `optionId`, which is the duplicate React key that hung
+ * a render hard enough to take a 3 GB cgroup with it (`CLAUDE.md`, "A duplicate
+ * React key took the whole machine down"). It also made `profileAmbiguous`
+ * true for a project that was perfectly unambiguous, so the panel said it could
+ * not tell which profile a project ran on while checking none of its cards.
+ *
+ * Keyed on `optionId`, so the map itself makes a collision unrepresentable
+ * rather than leaving it to be noticed.
+ */
+export function accountOptionsFor(
+  projects: ReadonlyArray<{ account: Account; configDir?: string }>,
+): AccountOption[] {
+  const byId = new Map<string, AccountOption>()
+  /* Seeded first so a project that genuinely runs on the default profile
+     overwrites it with its own label rather than sitting beside it. */
+  byId.set(optionId({ kind: "personal" }), { kind: "personal", label: "default profile" })
+  for (const project of projects) {
+    const kind = project.account.kind
+    // `unknown` is the absence of an answer, not a third account: offering it
+    // as something to switch *to* would let a human choose "nobody has said".
+    if (kind !== "personal" && kind !== "work") continue
+    const option: AccountOption = {
+      kind,
+      label: project.account.label ?? kind,
+      ...(project.configDir === undefined ? {} : { configDir: project.configDir }),
+    }
+    byId.set(optionId(option), option)
+  }
+  return [...byId.values()]
+}
+
 /** The pair a project stores, in the same spelling `optionId` produces. */
 function storedId(project: { account: Account; configDir?: string }): string {
   return optionId({ kind: project.account.kind, ...(project.configDir === undefined ? {} : { configDir: project.configDir }) })

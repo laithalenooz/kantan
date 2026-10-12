@@ -8,7 +8,7 @@ import { AppBar, Breadcrumb, NeedsYouBand, usePageAttention } from "./Chrome.tsx
 import { Empty } from "./Empty.tsx"
 import { AddRepo, type Detection } from "./AddRepo.tsx"
 import { AddTasks } from "./AddTasks.tsx"
-import { ProjectPanel, type AccountOption } from "./ProjectPanel.tsx"
+import { ProjectPanel, accountOptionsFor, type AccountOption } from "./ProjectPanel.tsx"
 import { StartPanel } from "./StartPanel.tsx"
 import { act, addTasks, detectPath, draftFeature, proposeTasks, registerProject, removeProject, removeTask, runTestCommand, startRun, summaryOf, taskKeyOf, updateProject, type RunView } from "./live.ts"
 import { useAction, usePlan, useRun, useTree } from "./useRun.ts"
@@ -381,27 +381,12 @@ export function App() {
     panel?.kind === "project" ? (projects.find((p) => p.path === panel.path) ?? null) : null
   const noProjects = treeError === null && tree !== null && projects.length === 0 && panel === null
 
-  /**
-   * The accounts to choose between, derived from what is registered.
-   *
-   * An account IS a profile directory: `src/spawn.ts` sets
-   * `CLAUDE_CONFIG_DIR` from `configDir` and `src/run.ts` records the run's
-   * profile from it, while `account` is only the chip's word. So the options
-   * are the distinct `configDir`s across the tree plus the default profile,
-   * and switching carries the directory - not the label - or it changes
-   * nothing at all.
-   */
-  const accountOptions: AccountOption[] = useMemo(() => {
-    const byKey = new Map<string, AccountOption>()
-    byKey.set("", { kind: "personal", label: "default profile" })
-    for (const p of projects) {
-      if (p.account.kind === "personal" || p.account.kind === "work") {
-        const label = p.account.label ?? p.account.kind
-        byKey.set(label, { kind: p.account.kind, label })
-      }
-    }
-    return [...byKey.values()]
-  }, [projects])
+  /* `accountOptionsFor` owns this now, keyed on `optionId`. It was inline here,
+     keyed on the label and setting no `configDir` - so two projects reading
+     "personal" made two options with the same id, which is the duplicate React
+     key that hangs a render, and made the panel claim it could not tell which
+     profile an unambiguous project used. */
+  const accountOptions: AccountOption[] = useMemo(() => accountOptionsFor(projects), [projects])
 
   const guard = useCallback(async (work: () => Promise<void>): Promise<void> => {
     setProjectError(null)

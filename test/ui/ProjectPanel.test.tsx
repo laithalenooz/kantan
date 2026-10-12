@@ -88,6 +88,7 @@ interface Api {
   act: typeof import("react").act
   createRoot: typeof import("react-dom/client").createRoot
   ProjectPanel: typeof import("../../src/ui/ProjectPanel.tsx").ProjectPanel
+  accountOptionsFor: typeof import("../../src/ui/ProjectPanel.tsx").accountOptionsFor
   AccountSwitch: typeof import("../../src/ui/ProjectPanel.tsx").AccountSwitch
   ringOffset: typeof import("../../src/ui/Sidebar.tsx").ringOffset
   percentLabel: typeof import("../../src/ui/Sidebar.tsx").percentLabel
@@ -161,6 +162,7 @@ beforeAll(async () => {
     act: react.act,
     createRoot: client.createRoot,
     ProjectPanel: panel.ProjectPanel,
+    accountOptionsFor: panel.accountOptionsFor,
     AccountSwitch: panel.AccountSwitch,
     ringOffset: sidebar.ringOffset,
     percentLabel: sidebar.percentLabel,
@@ -2243,5 +2245,90 @@ describe("the advanced section", () => {
     const options = all(`#${CSS.escape(list ?? "")} option`).map((o) => o.getAttribute("value"))
     expect(options).toContain("claude-opus-5-5")
     expect(options).toContain("claude-haiku-5-5")
+  })
+})
+
+/* ========================================================================== */
+/* accountOptionsFor                                                          */
+/* ========================================================================== */
+
+/**
+ * A deduplication, so CLAUDE.md's skipping-guard rule applies: the dimension is
+ * **what makes two accounts the same account**, and the answer is the
+ * `(kind, configDir)` pair, never the label.
+ *
+ * The expensive direction is already recorded twice. `App.tsx` keyed this on
+ * the label and set no `configDir`, so two projects reading "personal"
+ * produced two options with one `optionId` - the duplicate React key that hung
+ * a render hard enough to take a 3 GB cgroup with it - and made
+ * `profileAmbiguous` true for a project that was perfectly unambiguous, so the
+ * panel said it could not tell which profile a project ran on while checking
+ * none of its cards. The cheap direction is one option too many, which is a
+ * card nobody picks.
+ */
+describe("accountOptionsFor", () => {
+  const p = (kind: Account["kind"], configDir?: string, label?: string) => ({
+    account: { kind, ...(label === undefined ? {} : { label }) },
+    ...(configDir === undefined ? {} : { configDir }),
+  })
+
+  test("always offers the default profile, even with nothing registered", () => {
+    expect(api.accountOptionsFor([])).toEqual([{ kind: "personal", label: "default profile" }])
+  })
+
+  test("never produces two options with the same id, which is the whole point", () => {
+    const options = api.accountOptionsFor([
+      p("personal"),
+      p("personal", undefined, "personal"),
+      p("personal", "~/.claude"),
+      p("personal", "~/.claude"),
+      p("work", "~/.claude-work"),
+      p("work", "~/.claude-work", "acme"),
+      p("work", "~/.claude-globex", "globex"),
+    ])
+    const ids = options.map((o: { kind: string; configDir?: string }) => `${o.kind}/${o.configDir ?? ""}`)
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  test("two folders of one word are two options, which `kind` alone cannot say", () => {
+    const options = api.accountOptionsFor([
+      p("work", "/home/you/.claude-acme", "acme"),
+      p("work", "/home/you/.claude-globex", "globex"),
+    ])
+    expect(options.filter((o) => o.kind === "work").map((o) => o.configDir)).toEqual([
+      "/home/you/.claude-acme",
+      "/home/you/.claude-globex",
+    ])
+  })
+
+  test("carries the folder, because switching on the word alone changes nothing", () => {
+    const [, work] = api.accountOptionsFor([p("work", "~/.claude-work", "work")])
+    expect(work?.configDir).toBe("~/.claude-work")
+  })
+
+  /** A project on the default profile takes that entry over, rather than
+   *  sitting beside an option that means the same thing. */
+  test("a project on the default profile replaces the seeded label", () => {
+    const options = api.accountOptionsFor([p("personal", undefined, "my laptop")])
+    expect(options).toEqual([{ kind: "personal", label: "my laptop" }])
+  })
+
+  /** `unknown` is the absence of an answer, not a third account: offering it
+   *  would let a human choose "nobody has said". */
+  test("an unknown account is not something to switch to", () => {
+    expect(api.accountOptionsFor([p("unknown")])).toEqual([{ kind: "personal", label: "default profile" }])
+  })
+
+  /** And the panel can then tell which one a project runs as. */
+  test("a project's own pair matches exactly one of the options it is given", async () => {
+    const h = handlers()
+    const registered = [p("personal", "~/.claude", "personal"), p("work", "~/.claude-work", "work")]
+    const options = api.accountOptionsFor(registered)
+
+    await render(
+      <api.ProjectPanel project={project("personal")} accounts={options as never} {...h.props} />,
+    )
+    expect(prose()).not.toContain("cannot tell which profile")
+    expect(all('[role="radio"][data-card]').filter((el) => el.getAttribute("aria-checked") === "true")).toHaveLength(1)
   })
 })
