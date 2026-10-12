@@ -234,22 +234,44 @@ export function App() {
   const task = findTask(projects, selected)
   const project = projectFor(projects, selected)
 
-  const onStart = useCallback(async () => {
-    if (selected === null || selected.taskRef === null || selectedKey === null) return
-    setStartError(null)
-    try {
-      const id = await startRun({ projectPath: selected.projectPath, featureFile: selected.featureFile, taskRef: selected.taskRef })
-      setStarted((prior) => ({ ...prior, [selectedKey]: id }))
-    } catch (cause) {
-      setStartError(cause instanceof Error ? cause.message : String(cause))
-      // Rethrown, not swallowed. `StartPanel` shows "Planning. The agent is
-      // reading your repo." until its promise settles, and resolving on a
-      // refusal leaves that sentence on screen forever beside the red alert —
-      // the card claiming a run that never started. Rejecting is how a refusal
-      // is reported, which is `Gate.onApprove`'s contract too.
-      throw cause
-    }
-  }, [selected, selectedKey])
+  /**
+   * The uncommitted files a dirty refusal named, so the retry can be offered.
+   *
+   * `null` means no refusal is outstanding. The prose comes from `src/git.ts`
+   * and already lists the files and says why `git stash` without `-u` leaves
+   * you hitting it again - it is reproduced rather than summarised, because a
+   * summary of which files are dirty is the one thing the human needs exact.
+   */
+  const [dirtyRefusal, setDirtyRefusal] = useState<string | null>(null)
+
+  const onStart = useCallback(
+    async (allowDirty = false): Promise<void> => {
+      if (selected === null || selected.taskRef === null || selectedKey === null) return
+      setStartError(null)
+      if (!allowDirty) setDirtyRefusal(null)
+      try {
+        const id = await startRun({
+          projectPath: selected.projectPath,
+          featureFile: selected.featureFile,
+          taskRef: selected.taskRef,
+          ...(allowDirty ? { allowDirty: true } : {}),
+        })
+        setDirtyRefusal(null)
+        setStarted((prior) => ({ ...prior, [selectedKey]: id }))
+      } catch (cause) {
+        const message = cause instanceof Error ? cause.message : String(cause)
+        // A dirty tree is the one refusal with a second thing to offer, so it
+        // is held apart from the generic alert rather than only shouted.
+        if (message.includes("uncommitted changes")) setDirtyRefusal(message)
+        else setStartError(message)
+        // Rethrown, not swallowed. `StartPanel` shows "Planning. The agent is
+        // reading your repo." until its promise settles, and resolving on a
+        // refusal leaves that sentence on screen forever.
+        throw cause
+      }
+    },
+    [selected, selectedKey],
+  )
 
   const gate: GateProps | null = useMemo(() => {
     if (view === null || view.waitId === null || view.waiting === null) return null
@@ -263,7 +285,7 @@ export function App() {
         kind: "gate",
         waitId: view.waitId,
         plan,
-        testCommand: project?.testCmd ?? "",
+        testCommand: project?.testCmd ?? null,
         planDurationMs: view.phases.find((p) => p.phase === "plan")?.elapsedMs,
         // What the run has spent, which the gate prints beside the duration.
         // `sumProcessCost` takes the last result of each process because cost
@@ -389,7 +411,7 @@ export function App() {
   )
 
   const onSaveTestCmd = useCallback(
-    async (path: string, testCmd: string): Promise<void> => await guard(() => updateProject(path, { testCmd })),
+    async (path: string, testCmd: string | null): Promise<void> => await guard(() => updateProject(path, { testCmd })),
     [guard],
   )
 
@@ -505,7 +527,7 @@ export function App() {
       task,
       featureFile: selected.featureFile,
       account: project.account,
-      testCmd: project.testCmd === "" ? null : project.testCmd,
+      testCmd: project.testCmd,
     }
     // `act` directly, not `send`: `useAction` catches into its own `error` and
     // resolves, which would settle the card as though the resume had worked.
@@ -516,7 +538,7 @@ export function App() {
       return {
         ...common,
         kind: "start" as const,
-        onStart: () => onStart(),
+        onStart: () => onStart(false),
         ...(blockedBy === null ? {} : { blockedBy }),
       }
     }
@@ -669,6 +691,37 @@ export function App() {
             }}
             onCancel={() => setPanel(null)}
           />
+        )}
+
+        {dirtyRefusal !== null && (
+          <section className="m-4 max-w-[620px] rounded-[14px] border border-[#F3D9C6] bg-[#FFF8F2] px-5 py-[18px]">
+            <h2 className="text-[14px] font-[650] text-[#9A3B06]">This repository has uncommitted work</h2>
+            {/* The server's own prose, reproduced rather than summarised: it
+                names the files and explains why `git stash` without `-u`
+                leaves you hitting this again. Which files are dirty is the one
+                thing the human needs exact. */}
+            <p className="m mt-2 whitespace-pre-wrap text-[12.5px] leading-[1.6] text-muted-500">{dirtyRefusal}</p>
+            <p className="mt-3 text-[13.5px] leading-[1.55] text-muted-500">
+              If that work is what you want the agent to carry on from, start anyway. kantan records that the tree
+              was not clean, and the agent is told those files are yours to build on rather than revert.
+            </p>
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() => void onStart(true).catch(() => {})}
+                className="cta rounded-full bg-ink px-4 py-2 text-[13px] font-semibold text-white"
+              >
+                Start anyway
+              </button>
+              <button
+                type="button"
+                onClick={() => setDirtyRefusal(null)}
+                className="ghost rounded-full px-4 py-2 text-[13px] font-semibold text-muted-500"
+              >
+                Cancel
+              </button>
+            </div>
+          </section>
         )}
 
         {startPanel !== null && <StartPanel {...startPanel} />}

@@ -47,25 +47,6 @@ import type { RunRecord } from "./runlog"
  */
 import type { Account, TreeFeature, TreeProject, TreeTask } from "./ui/Tree.tsx"
 
-/**
- * What `GET /api/projects` actually sends for a project: `TreeProject`, except
- * that `testCmd` can be `null`.
- *
- * Not a widening for its own sake. A project with no test command is verified
- * by the agent itself (the user's 2026-10-12 decision, docs/HANDOFF.md), and
- * `null` is the store's spelling of that. `TreeProject.testCmd` in
- * `src/ui/Tree.tsx` is still `string`, and that file belongs to the UI work in
- * flight - so this type is the honest shape of the wire, written here rather
- * than hidden behind a `?? ""` at the one line that assigns it.
- *
- * The `?? ""` is the thing to avoid specifically: the tree prints `$ {testCmd}`
- * under the repo name, so an empty string renders as a bare `$` with nothing
- * after it - a project that looks like it has a command the reader cannot see,
- * which is the opposite of what the decision requires the UI to say. Carrying
- * the `null` makes "this project has no test command" expressible, and
- * `Tree.tsx` has to widen its own field to read it.
- */
-type WireProject = Omit<TreeProject, "testCmd"> & { testCmd: string | null }
 
 /**
  * The local HTTP server, and the guard chain that runs ahead of every route.
@@ -1380,7 +1361,7 @@ async function readProjects(ctx: RouteContext): Promise<Response> {
   })
 
   const warnings = [...index.warnings]
-  const projects: WireProject[] = []
+  const projects: TreeProject[] = []
   for (const project of registered) {
     const read = await featuresOf(project, index.tasks)
     warnings.push(...read.warnings)

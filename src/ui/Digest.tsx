@@ -200,9 +200,14 @@ export interface DigestProps {
   /** The shell's clock, for the away strip. Absent prints neither the
    * duration nor the "now HH:MM" beside it. */
   nowMs?: number
-  /** The project's test command, printed verbatim in the footnote: it is what
-   * the exit codes above it are the codes of. */
-  testCommand?: string
+  /**
+   * The project's test command, printed verbatim in the footnote: it is what
+   * the exit codes above it are the codes of.
+   *
+   * `null` means the project has no suite and the agent verified its own work.
+   * That inverts the footnote rather than shortening it - see `Footnote`.
+   */
+  testCommand?: string | null
   className?: string
 }
 
@@ -1279,7 +1284,30 @@ export function Digest({
  * about its own work is never used. It is printed under the timeline because
  * that is where someone decides whether to believe the row above it.
  */
-function Footnote({ testCommand }: { testCommand: string | undefined }): ReactNode {
+function Footnote({ testCommand }: { testCommand: string | null | undefined }): ReactNode {
+  /*
+   * `null` is not a shorter version of this sentence, it is the opposite one.
+   * "What the agent says about its own work is never used" is the product's
+   * core promise where a command exists, and precisely backwards where none
+   * does - there, the agent's word is the only thing there was. Saying it
+   * anyway would be the one claim `CLAUDE.md`'s exception forbids, printed
+   * under the timeline where someone decides whether to believe the rows.
+   */
+  if (testCommand === null) {
+    return (
+      <div
+        data-testid="digest-footnote"
+        className="mx-[clamp(20px,4vw,44px)] mb-6 flex items-start gap-2.5 rounded-[14px] bg-[#F6F6F8] px-3.5 py-3 text-[13.5px] leading-[1.5] text-muted-900"
+      >
+        <Shield checked={false} className="mt-[1px] size-[15px] shrink-0 text-muted-400" />
+        <span>
+          This project has no test command, so kantan ran nothing. The agent was asked to check its own work and
+          said it was finished — nothing outside the agent verified it.
+        </span>
+      </div>
+    )
+  }
+
   return (
     <div
       data-testid="digest-footnote"

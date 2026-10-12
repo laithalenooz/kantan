@@ -595,14 +595,32 @@ export async function fetchPlan(runId: string, fetcher: typeof fetch = fetch): P
  * `canStart` in `Tree.tsx` is the check to make before offering it.
  */
 export async function startRun(
-  task: { projectPath: string; featureFile: string; taskRef: string },
+  task: {
+    projectPath: string
+    featureFile: string
+    taskRef: string
+    /**
+     * Start even though the repo has uncommitted work.
+     *
+     * Per run and never remembered, which is the whole shape of the feature:
+     * the clean-tree guard exists because a run commits, and the human is
+     * saying *this once* that the uncommitted work is theirs to build on. Sent
+     * only when true, so an ordinary start is byte-identical to before.
+     */
+    allowDirty?: boolean
+  },
   fetcher: typeof fetch = fetch,
 ): Promise<string> {
   const res = await withSession(fetcher, (f) =>
     f(`${API}/runs`, {
       method: "POST",
       cache: "no-store",
-      body: JSON.stringify({ projectPath: task.projectPath, featureFile: task.featureFile, taskRef: task.taskRef }),
+      body: JSON.stringify({
+        projectPath: task.projectPath,
+        featureFile: task.featureFile,
+        taskRef: task.taskRef,
+        ...(task.allowDirty === true ? { allowDirty: true } : {}),
+      }),
     }),
   )
   if (!res.ok) throw new Error(`the run could not be started: ${res.status} ${await text(res)}`)
@@ -624,7 +642,7 @@ export async function startRun(
  * a worktree is refused here rather than failing later inside a run.
  */
 export async function registerProject(
-  project: { path: string; testCmd: string; account?: "personal" | "work"; configDir?: string },
+  project: { path: string; testCmd: string | null; account?: "personal" | "work"; configDir?: string },
   fetcher: typeof fetch = fetch,
 ): Promise<void> {
   const res = await withSession(fetcher, (f) =>
@@ -713,7 +731,14 @@ export async function removeProject(path: string, fetcher: typeof fetch = fetch)
  */
 export async function updateProject(
   path: string,
-  changes: { testCmd?: string; account?: "personal" | "work"; configDir?: string; budgetUsd?: number },
+  changes: {
+    /** `null` clears it: the project has no suite and the agent verifies. */
+    testCmd?: string | null
+    account?: "personal" | "work"
+    /** `null` clears it, which is how a project returns to the default profile. */
+    configDir?: string | null
+    budgetUsd?: number
+  },
   fetcher: typeof fetch = fetch,
 ): Promise<void> {
   const res = await withSession(fetcher, (f) =>
