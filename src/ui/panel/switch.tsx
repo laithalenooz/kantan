@@ -18,7 +18,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react"
 
-import { percentLabel } from "../Sidebar.tsx"
+import { percentLabel } from "../format.ts"
 import type { Account } from "../Tree.tsx"
 import type { AccountOption } from "../ProjectPanel.tsx"
 import { Check, Cross, PILL_GHOST, messageOf } from "./chrome.tsx"

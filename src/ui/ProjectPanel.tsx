@@ -102,14 +102,9 @@ import {
   type ReactNode,
 } from "react"
 
-import {
-  RING_CIRCUMFERENCE,
-  formatResetTime,
-  percentLabel,
-  ringOffset,
-  usePrefersReducedMotion,
-  type AccountWindow,
-} from "./Sidebar.tsx"
+import type { AccountWindow } from "./Sidebar.tsx"
+import { RING_CIRCUMFERENCE, formatResetTime, percentLabel, ringOffset } from "./format.ts"
+import { usePrefersReducedMotion } from "./reducedmotion.ts"
 import type { Account, AdvancedSettings, Effort, PermissionMode, ProjectSummary, TreeProject } from "./Tree.tsx"
 import { commandOf, SELF_CHECKED } from "./testcmd.ts"
 import {

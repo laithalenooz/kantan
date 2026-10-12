@@ -40,7 +40,7 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 
 import type { Event } from "../stream"
 /* The rail already formats this exact field. See the `rate_limit` row. */
-import { formatResetTime } from "./Sidebar.tsx"
+import { formatResetTime } from "./format.ts"
 
 // --- The rows a run record can hold ----------------------------------------
 

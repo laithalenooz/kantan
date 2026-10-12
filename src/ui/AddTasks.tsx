@@ -142,7 +142,7 @@ import { useReducedMotion } from "motion/react"
  * two-pane Before/After `Comparison` and is not exported; see the report. */
 import { MAX_DIFF_LINES, group } from "./Row.tsx"
 /* One money format in the UI. */
-import { formatUsd } from "./Sidebar.tsx"
+import { formatUsd } from "./format.ts"
 import type { Account, TreeTask } from "./Tree.tsx"
 
 /* -------------------------------------------------------------------------- */

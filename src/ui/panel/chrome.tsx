@@ -16,7 +16,7 @@
 
 import { useId, useState, type CSSProperties, type ReactElement, type ReactNode } from "react"
 
-import { RING_CIRCUMFERENCE, formatResetTime, percentLabel, ringOffset } from "../Sidebar.tsx"
+import { RING_CIRCUMFERENCE, formatResetTime, percentLabel, ringOffset } from "../format.ts"
 import type { Account } from "../Tree.tsx"
 import type { AccountKind, AccountOption } from "../ProjectPanel.tsx"
 

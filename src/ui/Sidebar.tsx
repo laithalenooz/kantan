@@ -101,6 +101,31 @@ import { animate, useReducedMotion } from "motion/react"
 
 import type { Event } from "../stream.ts"
 import type { RunPhase } from "../runlog.ts"
+import {
+  DASH,
+  RING_CIRCUMFERENCE,
+  clamp01,
+  formatClock,
+  formatDuration,
+  formatResetTime,
+  formatUsd,
+  percentLabel,
+  ringOffset,
+} from "./format.ts"
+import { usePrefersReducedMotion } from "./reducedmotion.ts"
+
+/* Re-exported: these lived here, and `App.tsx` plus three test files still ask
+   this module for them. Moving them was a refactor rather than a rename. */
+export {
+  RING_CIRCUMFERENCE,
+  formatClock,
+  formatDuration,
+  formatResetTime,
+  formatUsd,
+  percentLabel,
+  ringOffset,
+  usePrefersReducedMotion,
+}
 
 type ResultEvent = Extract<Event, { kind: "result" }>
 type RateLimitEvent = Extract<Event, { kind: "rate_limit" }>
@@ -363,84 +388,6 @@ export function limitNotice(windows: readonly AccountWindow[]): LimitNotice | nu
   return null
 }
 
-// ---------------------------------------------------------------------------
-// Formatting. Durations and reset times render in mono, figures in tabular
-// Geist — see "Typography: the artboard, not the summary" above.
-// ---------------------------------------------------------------------------
-
-/**
- * What every absent machine value prints: an em dash, as all three artboards
- * draw it. Never `0`, never `0:00`, never a blank cell — an empty slot where a
- * number belongs reads as "nothing happened" rather than "nobody said".
- */
-const DASH = "—"
-
-/** The artboard's own circumference, for r=25: 2π·25 = 157.0796. */
-export const RING_CIRCUMFERENCE = 157.08
-
-function clamp01(n: number): number {
-  return n < 0 ? 0 : n > 1 ? 1 : n
-}
-
-/**
- * How much of the ring to leave undrawn. Geometry only, so it clamps; the label
- * does not, because an account over its window should read "104%", not "100%".
- */
-export function ringOffset(utilization: number | undefined): number {
-  if (utilization === undefined || !Number.isFinite(utilization)) return RING_CIRCUMFERENCE
-  return RING_CIRCUMFERENCE * (1 - clamp01(utilization))
-}
-
-/** A 0–1 fraction as a percentage. `undefined` is `—`, never `0%`. */
-export function percentLabel(utilization: number | undefined): string {
-  if (utilization === undefined || !Number.isFinite(utilization)) return DASH
-  return `${Math.round(utilization * 100)}%`
-}
-
-export function formatUsd(usd: number): string {
-  return `$${(Number.isFinite(usd) ? usd : 0).toFixed(2)}`
-}
-
-/**
- * A finished duration, as the design prints it: `8s`, `2m 14s`, `19m`, `1h 4m`.
- * Seconds stop being interesting at ten minutes.
- */
-export function formatDuration(ms: number | undefined): string {
-  if (ms === undefined || !Number.isFinite(ms) || ms < 0) return DASH
-  const total = Math.floor(ms / 1000)
-  if (total < 60) return `${total}s`
-  const minutes = Math.floor(total / 60)
-  if (total < 600) return `${minutes}m ${total % 60}s`
-  if (minutes < 60) return `${minutes}m`
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`
-}
-
-/** The running phase's clock: `0:42`, `12:07`, `1:02:33`. */
-export function formatClock(ms: number | undefined): string {
-  const total = ms === undefined || !Number.isFinite(ms) || ms < 0 ? 0 : Math.floor(ms / 1000)
-  const seconds = String(total % 60).padStart(2, "0")
-  const minutes = Math.floor(total / 60) % 60
-  const hours = Math.floor(total / 3600)
-  if (hours > 0) return `${hours}:${String(minutes).padStart(2, "0")}:${seconds}`
-  return `${minutes}:${seconds}`
-}
-
-/**
- * `resetsAt` as a wall clock, from **epoch seconds**.
- *
- * Returns `undefined` for anything that cannot be a reset time — absent, zero,
- * negative, non-finite — because `18:40` and `01:00 on 1 Jan 1970` are equally
- * confident and only one of them is true.
- */
-export function formatResetTime(resetsAtSec: number | undefined): string | undefined {
-  if (resetsAtSec === undefined || !Number.isFinite(resetsAtSec) || resetsAtSec <= 0) return undefined
-  return new Date(resetsAtSec * 1000).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  })
-}
-
 const PHASE_ORDER: readonly RunPhase[] = ["plan", "gate", "implement", "test", "refine"]
 
 const PHASE_LABEL: Record<RunPhase, string> = {
@@ -456,47 +403,6 @@ export function phaseLadder(steps: readonly PhaseStep[]): PhaseStep[] {
   const byPhase = new Map<RunPhase, PhaseStep>()
   for (const step of steps) byPhase.set(step.phase, step)
   return PHASE_ORDER.map((phase) => byPhase.get(phase) ?? { phase, state: "pending" })
-}
-
-// ---------------------------------------------------------------------------
-// Hooks
-// ---------------------------------------------------------------------------
-
-const REDUCE_QUERY = "(prefers-reduced-motion: reduce)"
-
-/**
- * Whether to hold everything still.
- *
- * Motion's own hook is asked first, because it is the project's sanctioned
- * answer and it covers an environment with no `matchMedia` at all. It is not
- * trusted alone: it caches the query result in a module global on its first
- * call anywhere in the app and captures that in `useState`, so it answers
- * whatever the first component to call it saw, forever. Probed under happy-dom
- * with the media feature set to `reduce`: it returned `false`.
- *
- * So the media feature is also read live, through `useSyncExternalStore`, which
- * re-reads on mount and subscribes to changes. Either saying "reduce" is enough.
- */
-export function usePrefersReducedMotion(): boolean {
-  const cached = useReducedMotion()
-  const live = useSyncExternalStore(subscribeToReduceQuery, readReduceQuery, readReduceQueryOnServer)
-  return cached === true || live
-}
-
-function subscribeToReduceQuery(onChange: () => void): () => void {
-  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return () => {}
-  const query = window.matchMedia(REDUCE_QUERY)
-  query.addEventListener("change", onChange)
-  return () => query.removeEventListener("change", onChange)
-}
-
-function readReduceQuery(): boolean {
-  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false
-  return window.matchMedia(REDUCE_QUERY).matches
-}
-
-function readReduceQueryOnServer(): boolean {
-  return false
 }
 
 /**
