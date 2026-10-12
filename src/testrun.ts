@@ -110,6 +110,25 @@ const SHELL = "/bin/sh"
  * does not exist.
  */
 export function runTests(project: Project, opts?: { timeoutMs?: number }): Promise<TestOutcome> {
+  const testCmd = project.testCmd
+  // `null` means the project has no suite and the agent verifies instead (the
+  // user's 2026-10-12 decision), which is `src/run.ts`'s branch to take before
+  // it ever gets here. Rejecting rather than resolving, because this is the
+  // misconfigured-project door and not a test result - and the two silent
+  // alternatives are both worse than a throw. `spawn` coerces its argv, so
+  // passing it through would run the literal word `null` and exit 127, which
+  // the loop reads as a failing suite: the budget would then be spent asking an
+  // agent to fix a test command that was never supposed to exist. Reporting a
+  // bare 0 would be the catastrophe instead, ticking the task untested.
+  if (testCmd === null) {
+    return Promise.reject(
+      new Error(
+        `the project at ${project.path} has no test command, so there is nothing for kantan to run. ` +
+          `A project with testCmd null is verified by the agent itself; that path does not come through here. ` +
+          `Set testCmd in projects.json if this project does have a suite.`,
+      ),
+    )
+  }
   const timeoutMs = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const startedAt = performance.now()
   const stdout = new Tail("stdout")
@@ -118,7 +137,7 @@ export function runTests(project: Project, opts?: { timeoutMs?: number }): Promi
   return new Promise<TestOutcome>((resolve, reject) => {
     let child
     try {
-      child = spawn(SHELL, ["-c", project.testCmd], {
+      child = spawn(SHELL, ["-c", testCmd], {
         cwd: project.path,
         // The child gets its own process group, so the timeout can kill
         // everything the command started rather than just the shell.

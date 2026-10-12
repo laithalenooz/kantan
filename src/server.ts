@@ -47,6 +47,26 @@ import type { RunRecord } from "./runlog"
 import type { Account, TreeFeature, TreeProject, TreeTask } from "./ui/Tree.tsx"
 
 /**
+ * What `GET /api/projects` actually sends for a project: `TreeProject`, except
+ * that `testCmd` can be `null`.
+ *
+ * Not a widening for its own sake. A project with no test command is verified
+ * by the agent itself (the user's 2026-10-12 decision, docs/HANDOFF.md), and
+ * `null` is the store's spelling of that. `TreeProject.testCmd` in
+ * `src/ui/Tree.tsx` is still `string`, and that file belongs to the UI work in
+ * flight - so this type is the honest shape of the wire, written here rather
+ * than hidden behind a `?? ""` at the one line that assigns it.
+ *
+ * The `?? ""` is the thing to avoid specifically: the tree prints `$ {testCmd}`
+ * under the repo name, so an empty string renders as a bare `$` with nothing
+ * after it - a project that looks like it has a command the reader cannot see,
+ * which is the opposite of what the decision requires the UI to say. Carrying
+ * the `null` makes "this project has no test command" expressible, and
+ * `Tree.tsx` has to widen its own field to read it.
+ */
+type WireProject = Omit<TreeProject, "testCmd"> & { testCmd: string | null }
+
+/**
  * The local HTTP server, and the guard chain that runs ahead of every route.
  *
  * These endpoints hand arbitrary text to an agent with file-write and shell
@@ -1345,7 +1365,7 @@ async function readProjects(ctx: RouteContext): Promise<Response> {
   })
 
   const warnings = [...index.warnings]
-  const projects: TreeProject[] = []
+  const projects: WireProject[] = []
   for (const project of registered) {
     const read = await featuresOf(project, index.tasks)
     warnings.push(...read.warnings)
@@ -2022,10 +2042,29 @@ async function registerProject(req: Request, ctx: RouteContext): Promise<Respons
   if ("refused" in parsed) return parsed.refused
 
   const path = nonEmptyString(parsed.fields["path"])
-  const testCmd = nonEmptyString(parsed.fields["testCmd"])
-  if (path === null || testCmd === null) {
-    return badBody(PROJECT_KEYS, "a project is a repo path and the command that tests it, each a non-empty string")
+  if (path === null) {
+    return badBody(PROJECT_KEYS, "a project is named by the repo path it lives at, which must be a non-empty string")
   }
+  // **Present, and not judged here.** `null` is the store's spelling of "this
+  // repo has no test suite", which makes its runs verified by the agent itself
+  // (the user's 2026-10-12 decision), and a blank string is an unfinished edit
+  // that must never be read as either - `sh -c ""` exits 0, so it would tick
+  // every task untested. Telling those three apart is `validateProject`'s one
+  // job and its prose is the 400 below.
+  //
+  // `nonEmptyString` used to stand here and collapsed `null` into the blank
+  // case, which is why this is an `in` check: the route has to distinguish a
+  // key that was *omitted* - a damaged or half-built body, still a 400 - from
+  // one explicitly set to `null`, and `nonEmptyString` cannot see the
+  // difference. Over-judging here was the quiet failure: it would have made
+  // the whole feature unreachable over HTTP while the store supported it.
+  if (!("testCmd" in parsed.fields)) {
+    return badBody(
+      PROJECT_KEYS,
+      "a project must say how it is tested: testCmd is the shell command kantan runs and branches on, or null if this repo has no test suite and the agent should verify its own work",
+    )
+  }
+  const testCmd = parsed.fields["testCmd"]
   const configDir = parsed.fields["configDir"]
   const account = parsed.fields["account"]
 
@@ -2033,7 +2072,11 @@ async function registerProject(req: Request, ctx: RouteContext): Promise<Respons
   try {
     project = defaults({
       path,
-      testCmd,
+      // The same assertion-not-a-check as `configDir` and `account` below, and
+      // for the same reason: `testCommand` in src/projects.ts owns the
+      // three-way judgement - a command, `null` for a repo with no suite, or a
+      // throw for a blank or a non-string - and that throw is the 400 below.
+      testCmd: testCmd as string | null,
       // Whether it is absolute, blank or absent is `defaults()`'s judgement to
       // make - it owns the rule that the CLI expands no `~` - so the cast is
       // the one place the body's shape is asserted rather than checked, and the

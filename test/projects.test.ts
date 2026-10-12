@@ -397,15 +397,114 @@ test("a budget that cannot bound a run throws", async () => {
   expect((await loadProjects(file))[0]!.budgetUsd).toBe(0.25)
 })
 
-test("a test command that would pass by doing nothing throws", async () => {
-  // The whole design branches on the test command's exit code, and `sh -c ""`
-  // exits 0. An empty command would mark every task done without running a
-  // thing, which is the most expensive silent failure in this tool.
-  for (const testCmd of ["", "   ", "\t\n"]) {
-    expect(() => defaults({ path: "/repo", testCmd })).toThrow(/testCmd/)
-    const { file } = await handWritten([{ ...SAMPLE, testCmd }])
-    await expect(loadProjects(file)).rejects.toThrow(/testCmd/)
-  }
+/**
+ * Every value the test-command dimension can take.
+ *
+ * A project may now have **no** test command, and then the agent verifies its
+ * own work (docs/HANDOFF.md, user decision 2026-10-12). That makes this field a
+ * skipping guard in CLAUDE.md's sense, so it gets a matrix rather than a
+ * sample. The dimension is **what `validateProject` is handed for `testCmd`**,
+ * and the three wrong guesses cost wildly different things:
+ *
+ * - A blank read as a **command** is the catastrophe: `sh -c ""` exits 0, so
+ *   every task would tick without being run. This is what `nonBlank` has always
+ *   existed to prevent and nothing here may reintroduce it.
+ * - A blank or an absent key read as **no command** silently converts a
+ *   server-verified project into an agent-verified one. The whole point of the
+ *   decision is that the two are distinguishable, so a half-cleared text field
+ *   or a line lost to a bad merge must not flip the mode in silence.
+ * - A blank read as an **error** costs one message that says `null` is how you
+ *   clear it. That is the cheap direction, so both of the above fail toward it.
+ *
+ * Hence: `null` is the one spelling of "no suite", **absent still throws** - a
+ * field this store has always had, so an absence is a damaged record and not an
+ * older one - and blank throws as it always did.
+ */
+interface CmdRow {
+  /** Spread over a record, so `undefined` means the key is deleted. */
+  sent: unknown
+  then: string | null | "refused"
+  why: string
+}
+
+const cmdRows: CmdRow[] = [
+  { sent: "npm test", then: "npm test", why: "the product path: a command the server runs and branches on" },
+  { sent: "   npm test  ", then: "   npm test  ", why: "never trimmed - the shell string works exactly as typed" },
+  { sent: null, then: null, why: "the one spelling of no suite, and the whole of the user's decision" },
+  { sent: undefined, then: "refused", why: "a field this store has always had, so an absent key is a damaged record - not a project that opted out. Reading it as no-command would let a line lost to a bad merge silently stop the tests being run" },
+  { sent: "", then: "refused", why: 'an empty command runs as `sh -c ""`, which exits 0, so every task would tick without being run' },
+  { sent: "   ", then: "refused", why: "whitespace is the same mistake, and it is what a cleared text field sends" },
+  { sent: "\t\n", then: "refused", why: "and so is a tab and a newline" },
+  { sent: 7, then: "refused", why: "a number is not a command" },
+  { sent: ["npm", "test"], then: "refused", why: "nor is an argv array: this is a shell string" },
+  { sent: false, then: "refused", why: "and `false` is not a third spelling of absent" },
+]
+
+for (const row of cmdRows) {
+  test(`testCmd ${JSON.stringify(row.sent)} -> ${JSON.stringify(row.then)} (${row.why})`, async () => {
+    const record: Record<string, unknown> = { ...SAMPLE }
+    if (row.sent === undefined) delete record.testCmd
+    else record.testCmd = row.sent
+
+    // Both doors, because they are two different functions: `defaults()` fills
+    // and validates a record from a request body, `loadProjects` validates one
+    // a human hand-edited. A rule enforced in only one of them is a rule the
+    // other door walks straight through.
+    const { file } = await handWritten([record])
+    if (row.then === "refused") {
+      await expect(loadProjects(file)).rejects.toThrow(/testCmd/)
+      expect(() => defaults(record as never)).toThrow(/testCmd/)
+      // The message has to carry the fix, because the fix is not guessable:
+      // `reportPath` and `configDir` clear by being omitted, so a user who
+      // cleared the box and read "must be a non-empty string" would conclude
+      // the feature they were promised does not exist. Asserted on **both**
+      // doors, because the motivating case - a cleared text field - arrives
+      // through `defaults()`, and a message fixed only where a hand edit reads
+      // it is a message the UI's user never sees.
+      expect(await loadError([record])).toContain("null")
+      expect(() => defaults(record as never)).toThrow(/null/)
+      return
+    }
+    expect((await loadProjects(file))[0]?.testCmd).toBe(row.then)
+    expect(defaults(record as never).testCmd).toBe(row.then)
+  })
+}
+
+test("a project with no test command round-trips through the store as null", async () => {
+  // `configDir` clears to *absent*; this one clears to an explicit `null`, and
+  // the difference is load-bearing. `testCmd` has always been a required field,
+  // so an absent key throws - which means omitting it on write would make the
+  // store refuse the tool's own output on the very next load. The written file
+  // has to say `null` out loud.
+  const { file } = await store()
+  await addProject(file, defaults({ path: "/repo", testCmd: null }))
+
+  const text = await readFile(file, "utf8")
+  expect(JSON.parse(text)[0].testCmd).toBeNull()
+  expect(text).toContain('"testCmd": null')
+
+  const [loaded] = await loadProjects(file)
+  if (loaded === undefined) throw new Error("the record just written did not load back")
+  expect(loaded.testCmd).toBeNull()
+  // Idempotent: re-validating the record it just produced changes nothing.
+  // This is the assertion that would have caught omitting the key on write -
+  // the round trip, not the write alone.
+  expect(defaults(loaded)).toEqual(loaded)
+})
+
+test("clearing a test command is an edit, and setting one again is too", async () => {
+  // The round trip a UI needs: a repo registered with a suite whose owner
+  // deletes it, and one registered without that later grows one.
+  const { file } = await store()
+  await addProject(file, SAMPLE)
+
+  const cleared = await updateProject(file, "/repo", { testCmd: null })
+  expect(cleared).toMatchObject({ ok: true })
+  expect((await loadProjects(file))[0]?.testCmd).toBeNull()
+
+  const restored = await updateProject(file, "/repo", { testCmd: "flutter test" })
+  expect(restored).toMatchObject({ ok: true })
+  expect((await loadProjects(file))[0]?.testCmd).toBe("flutter test")
 })
 
 test("an empty model or effort-bearing string throws", async () => {
@@ -922,7 +1021,7 @@ const editRows: EditRow[] = [
   { changes: { testCmd: "flutter test" }, then: "flutter test", why: "the ordinary case" },
   { changes: { testCmd: "" }, then: "refused", why: "an empty test command runs as `sh -c \"\"`, which exits 0, and every task would pass without being run" },
   { changes: { testCmd: "   " }, then: "refused", why: "whitespace is the same mistake" },
-  { changes: { testCmd: null }, then: "refused", why: "a required field has no spelling for absent, so null is an unfinished edit" },
+  { changes: { testCmd: null }, then: null, why: "null is the store's spelling of no suite, so it clears the command and the agent verifies instead" },
   { changes: { testCmd: 7 }, then: "refused", why: "a number is not a command" },
   { changes: { account: "work" }, then: "work", why: "the edit the user asked for: the account was unsayable after registering" },
   { changes: { account: "personal" }, then: "personal", why: "and back again" },

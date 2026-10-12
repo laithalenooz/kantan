@@ -11,10 +11,11 @@
  * under-permissioned run cannot run its own suite and fails confusingly
  * rather than safely. **The allowlist is what makes `acceptEdits` viable.**
  *
- * The default allowlist is derived rather than written down, because the two
- * facts it needs - the repo and the test command - are already required
- * fields. A fixed default would be wrong for every project that does not run
- * `npm test`.
+ * The default allowlist is derived rather than written down, because the facts
+ * it needs - the repo and, when there is one, the test command - are already in
+ * the project record. A fixed default would be wrong for every project that
+ * does not run `npm test`. A project whose `testCmd` is `null` has no runner to
+ * name, and the derivation says so rather than guessing.
  *
  * What deriving does not do is make the command safe: it grants the runner the
  * project already declares, so `Bash(npm *)` includes `npm install` and
@@ -55,9 +56,10 @@ const BASE_TOOLS = ["Edit", "Write", "Read", "Glob", "Grep"] as const
 const GIT_RULE = "Bash(git *)"
 
 /**
- * The design's derived allowlist: the five file tools, git, and one rule for
- * the program `testCmd` runs. Nothing else - no network, no package installs,
- * no arbitrary shell.
+ * The design's derived allowlist: the five file tools, git, and - when the
+ * project has a test command - one rule for the program it runs. Nothing else
+ * - no network, no package installs, no arbitrary shell. A project with no test
+ * command gets the base set alone; see the branch below.
  *
  * Throws when `testCmd` is a shape no single rule can cover; see `program`.
  * The caller is `allowedToolsFor`, which only derives when it has to, so both
@@ -66,7 +68,22 @@ const GIT_RULE = "Bash(git *)"
  */
 export function deriveAllowedTools(project: Project): string[] {
   const rules: string[] = [...BASE_TOOLS, GIT_RULE]
-  const rule = `Bash(${program(project)} *)`
+  // No test command: the user's 2026-10-12 decision, where the agent verifies
+  // its own work instead. There is no program to grant, and the base set is the
+  // honest answer in both directions. Refusing would be the tempting one and is
+  // wrong: `allowedTools: null` is the shipped default, so it would leave every
+  // no-suite project unspawnable - the feature dead on arrival - for a config
+  // line that has nothing to say. Widening is worse: a project with no runner
+  // named is the one case where a `Bash(<program> *)` rule would be invented
+  // out of nothing.
+  //
+  // The consequence is deliberate and the self-check prompt is written for it:
+  // the agent gets no shell but git, so it verifies by reading its diff and the
+  // plan. A project that wants it able to execute things says so explicitly,
+  // with `allowedTools` or `bypassPermissions`.
+  const testCmd = project.testCmd
+  if (testCmd === null) return rules
+  const rule = `Bash(${program(project, testCmd)} *)`
   // `testCmd: "git test"` is the only overlap, and a repeated rule would be
   // noise in the UI and the run log rather than a second grant.
   return rules.includes(rule) ? rules : [...rules, rule]
@@ -132,10 +149,10 @@ export function permissionArgs(project: Project): string[] {
  * line of config and says which line; the two silent outcomes cost a repo or
  * a debugging session.
  */
-function program(project: Project): string {
-  const testCmd = project.testCmd.trim()
+function program(project: Project, raw: string): string {
+  const testCmd = raw.trim()
   if (testCmd === "") {
-    refuse(project, "it is blank, so there is no program to grant")
+    refuse(project, raw, "it is blank, so there is no program to grant")
   }
 
   // More than one command. No allow rule matches a command that chains, so a
@@ -145,6 +162,7 @@ function program(project: Project): string {
   if (chained) {
     refuse(
       project,
+      raw,
       `it runs more than one command (${JSON.stringify(chained[0])}), and no allow rule matches a command that chains - list a rule for each command it runs`,
     )
   }
@@ -156,6 +174,7 @@ function program(project: Project): string {
   if (nested) {
     refuse(
       project,
+      raw,
       `it contains ${JSON.stringify(nested[0])}, so it runs a command inside itself that a rule for its first word would not cover`,
     )
   }
@@ -168,24 +187,28 @@ function program(project: Project): string {
   if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) {
     refuse(
       project,
+      raw,
       `it starts with the environment assignment ${JSON.stringify(word)}: a rule for the program after it would not match the command as typed, and Bash(${word} *) would match that assignment followed by any command at all`,
     )
   }
   if (!/^[A-Za-z0-9_./][A-Za-z0-9_.:+@/-]*$/.test(word)) {
     refuse(
       project,
+      raw,
       `its first word ${JSON.stringify(word)} is not a literal program name, so a rule built from it would match something other than this command`,
     )
   }
   if (WRAPPERS.has(word)) {
     refuse(
       project,
+      raw,
       `its first word ${JSON.stringify(word)} runs whatever it is given, so Bash(${word} *) would grant an arbitrary shell rather than this project's tests`,
     )
   }
   if (STATE_ONLY.has(word)) {
     refuse(
       project,
+      raw,
       `its first word ${JSON.stringify(word)} changes the shell's own state and runs no suite, so Bash(${word} *) would grant something the tests cannot use while the command that runs them stays denied`,
     )
   }
@@ -257,9 +280,9 @@ const STATE_ONLY = new Set(["cd"])
 
 /** Names the project, the value, the reason and both ways out, because §2.2
  * promises the fix is a line of config rather than a debugging session. */
-function refuse(project: Project, why: string): never {
+function refuse(project: Project, testCmd: string, why: string): never {
   throw new Error(
-    `${project.path}: cannot derive allowedTools from testCmd ${JSON.stringify(project.testCmd)}, because ${why}. ` +
+    `${project.path}: cannot derive allowedTools from testCmd ${JSON.stringify(testCmd)}, because ${why}. ` +
       `Set allowedTools explicitly - ${[...BASE_TOOLS, GIT_RULE].join(", ")}, plus a Bash rule for the program the tests run - ` +
       `or set permissionMode to "bypassPermissions" if this machine is yours.`,
   )

@@ -2682,6 +2682,7 @@ test("a malformed registration body is refused before anything is written", asyn
     { body: JSON.stringify({ path: 7, testCmd: "npm test" }), status: 400, why: "a number is not a path" },
     { body: JSON.stringify({ path: [repo], testCmd: "npm test" }), status: 400, why: "nor an array of one" },
     { body: JSON.stringify({ path: repo, testCmd: "npm test" }), status: 201, why: "the control: the two keys a project needs" },
+    { body: JSON.stringify({ path: repo, testCmd: null }), status: 201, why: "a repo with no test suite registers, and its runs are verified by the agent itself" },
   ]
 
   for (const row of rows) {
@@ -2694,6 +2695,20 @@ test("a malformed registration body is refused before anything is written", asyn
     expect(res.status, row.why).toBe(row.status)
     expect(await loadProjects(store), row.why).toHaveLength(row.status === 201 ? 1 : 0)
   }
+})
+
+test("registering with testCmd null stores null, so the agent verifies that project's runs", async () => {
+  // The matrix row above pins the status; this pins the **value**, which is the
+  // part that matters. A server that stored a placeholder - `""`, or the string
+  // "null" - would answer 201 and pass that row while quietly giving the repo a
+  // command that `sh -c` exits 0 on: every task ticked, nothing ever run.
+  const { l, store } = await withStore()
+  const repo = await cleanRepo()
+
+  const res = await register(l, { path: repo, testCmd: null })
+  expect(res.status).toBe(201)
+  expect(JSON.parse(res.body).project.testCmd).toBeNull()
+  expect((await loadProjects(store))[0]?.testCmd).toBeNull()
 })
 
 // ---------------------------------------------------------------------------
@@ -3115,7 +3130,6 @@ test("a value the store will not hold is a 4xx with the store's own reason, not 
   const rows: { body: unknown; names: string; why: string }[] = [
     { body: { path: repo, testCmd: "" }, names: "testCmd", why: 'an empty command runs as sh -c "" and exits 0, so every task would pass' },
     { body: { path: repo, testCmd: "  " }, names: "testCmd", why: "whitespace is the same mistake" },
-    { body: { path: repo, testCmd: null }, names: "testCmd", why: "a required field has no spelling for absent" },
     { body: { path: repo, configDir: "~/.claude-work" }, names: "configDir", why: "the CLI expands no tilde" },
     { body: { path: repo, account: "billing" }, names: "account", why: "two words or nothing: a third renders as neither chip colour" },
     { body: { path: repo, account: null }, names: "account", why: "the store has no second spelling for an unsaid account" },
@@ -3129,6 +3143,26 @@ test("a value the store will not hold is a 4xx with the store's own reason, not 
     expect(res.body, row.why).toContain(row.names)
     expect(await loadProjects(store), row.why).toEqual([record])
   }
+})
+
+test("PATCH can clear a test command, which is how a repo opts into agent self-check", async () => {
+  // `testCmd: null` is the user's 2026-10-12 decision made reachable over HTTP:
+  // most repos have no suite, and until now the field was unclearable, so the
+  // opt-in was inexpressible from the UI. Blank stays a 400 (the row above) -
+  // the two spellings a cleared text field produces must not mean the same
+  // thing, because one of them is an unfinished edit and `sh -c ""` exits 0.
+  const repo = await cleanRepo()
+  const { l, store } = await tunedStore(repo)
+
+  const cleared = await edit(l, { path: repo, testCmd: null })
+  expect(cleared.status).toBe(200)
+  expect(JSON.parse(cleared.body).project.testCmd).toBeNull()
+  expect((await loadProjects(store))[0]?.testCmd).toBeNull()
+
+  // And back, so a repo that grows a suite is not stuck self-checking.
+  const restored = await edit(l, { path: repo, testCmd: "bun test" })
+  expect(restored.status).toBe(200)
+  expect((await loadProjects(store))[0]?.testCmd).toBe("bun test")
 })
 
 test("a malformed edit body is refused before anything is written", async () => {

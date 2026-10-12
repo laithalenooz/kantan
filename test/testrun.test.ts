@@ -196,6 +196,21 @@ test(
   30_000,
 )
 
+test("a project with no test command is refused rather than run", async () => {
+  // `null` means the agent verifies instead, which is `src/run.ts`'s branch to
+  // take - this module has nothing to run and must say so rather than find out
+  // the hard way. Guarded here as well as at the call site because the two
+  // failure modes are both silent: `spawn` coerces, so `sh -c null` would run
+  // the *word* `null` and exit 127, which the loop reads as a failing suite and
+  // spends the budget asking an agent to fix a test command that never existed.
+  const { dir } = await throwaway("#!/bin/sh\nexit 0\n")
+  const project = defaults({ path: dir, testCmd: null })
+
+  await expect(runTests(project)).rejects.toThrow(/no test command/)
+  // And it names the project, because that is the record to fix.
+  await expect(runTests(project)).rejects.toThrow(dir)
+})
+
 test("a project.path that does not exist is refused, naming the path", async () => {
   const missing = join(tmpdir(), "kantan-testrun-definitely-not-here")
   const project = defaults({ path: missing, testCmd: "./run-tests.sh" })

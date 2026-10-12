@@ -100,6 +100,26 @@ test("every testCmd shape either derives one bounded grant or refuses to guess",
   }
 })
 
+test("a project with no test command derives the base set and no shell rule", () => {
+  // The user's 2026-10-12 decision: no test command means the agent verifies
+  // its own work. Deriving must then **not** refuse, which is the trap here -
+  // `allowedTools: null` is the shipped default, so a refusal would make every
+  // no-suite project unspawnable and the feature would be dead on arrival.
+  //
+  // Nor may it widen. There is no program to grant, so the honest answer is
+  // the base set: the file tools and git, and no `Bash(<program> *)` at all.
+  // A no-suite project is precisely the one where guessing a shell rule has
+  // nothing to guess from, so `Bash(*)` would be invented out of thin air.
+  const project = { ...defaults({ path: "/repo", testCmd: null }) }
+
+  // Exactly the base set, which pins the consequence as a decision rather than
+  // an accident: the agent gets no shell but git, so its self-check reads the
+  // diff and the plan rather than executing anything. A project that wants the
+  // agent able to run things sets `allowedTools` or `bypassPermissions`.
+  expect(deriveAllowedTools(project)).toEqual(BASE)
+  expect(allowedToolsFor(project)).toEqual(BASE)
+})
+
 test("a refusal names the field, the value and both ways out", () => {
   // Design §2.2 promises the fix is a line of config rather than a debugging
   // session, which only holds if the message says which line.

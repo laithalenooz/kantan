@@ -13,8 +13,27 @@ export type PermissionMode = "acceptEdits" | "bypassPermissions"
 export interface Project {
   /** Repo root, absolute. Also the record's identity in the store. */
   path: string
-  /** e.g. "npm test", "vendor/bin/pest", "flutter test". */
-  testCmd: string
+  /**
+   * e.g. "npm test", "vendor/bin/pest", "flutter test". **`null` means this
+   * project has no suite**, and then the agent verifies its own work.
+   *
+   * The user's decision, 2026-10-12: most repositories have no test command and
+   * requiring one excluded them entirely. It is a real departure from the
+   * design's spine - "the server runs the tests, not the agent" - so the one
+   * thing that holds is that **nothing may claim a verification it did not
+   * observe**: a run records *how* it was verified (`EndRecord.verifiedBy`), and
+   * a self-checked run is not a passed run anywhere that reads it.
+   *
+   * `null` rather than an absent key, which is what every other optional field
+   * here uses, for a reason that is not symmetry. `testCmd` has always been a
+   * required field, so by the absence policy in docs/HANDOFF.md an absent key
+   * means a **damaged record** rather than an older one - a line lost to a bad
+   * hand-edit or a merge - and defaulting it to "no suite" would silently stop
+   * a project's tests being run. So absence still throws and the opt-out has to
+   * be said out loud. `validateProject` writes the `null` back for the same
+   * reason: omitting it would make the next load refuse the tool's own output.
+   */
+  testCmd: string | null
   /** JUnit XML, relative to `path`, for the stall signature. */
   reportPath?: string
   /**
@@ -519,7 +538,7 @@ function validateProject(value: unknown, where: string): Project {
   rejectUnknownFields(r, where)
 
   const path = absolutePath(r.path, "path", where)
-  const testCmd = nonBlank(r.testCmd, "testCmd", where)
+  const testCmd = testCommand(r.testCmd, where)
 
   // Relative to the repo root, so an absolute value would read a report from
   // somewhere else entirely - or from nowhere.
@@ -568,6 +587,9 @@ function validateProject(value: unknown, where: string): Project {
 
   return {
     path,
+    // Written even when it is `null`, unlike `reportPath` and `configDir`
+    // below: an absent `testCmd` throws, so omitting it here would make the
+    // very next load refuse the record this function just produced.
     testCmd,
     ...(reportPath === undefined ? {} : { reportPath }),
     ...(account === undefined ? {} : { account }),
@@ -613,9 +635,45 @@ function rejectUnknownFields(value: object, where: string): void {
   }
 }
 
-/** A required non-blank string. Blank is refused everywhere it appears: an
- * empty `testCmd` would run as `sh -c ""`, which exits 0, and the whole design
- * branches on that exit code - every task would pass without being run. */
+/**
+ * The project's test command, or `null` for a project with no suite.
+ *
+ * A skipping guard reading a value a human typed, so per CLAUDE.md its risk is
+ * its worst case in **each** direction, and here they differ by orders of
+ * magnitude:
+ *
+ * - **Blank read as a command** is the catastrophe this function was born to
+ *   prevent. `sh -c ""` exits 0, the whole design branches on that exit code,
+ *   and every task would tick without a thing being run.
+ * - **Blank or absent read as "no suite"** is the quiet one. It converts a
+ *   server-verified project into an agent-verified one with nothing on screen
+ *   to say so, which is exactly the claim the user's decision is paying us not
+ *   to blur. A cleared text field sends `""`; a bad merge drops the line.
+ * - **Blank or absent read as an error** costs one message. So both of the
+ *   above fail toward this one, and the message carries the fix - `null` -
+ *   because every other optional field in this store clears by being omitted
+ *   and nobody would guess that this one does not.
+ *
+ * `null` only, never `undefined`: see `Project.testCmd`.
+ */
+function testCommand(value: unknown, where: string): string | null {
+  if (value === null) return null
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(
+      `${where}: testCmd must be the shell command that tests this project, or null if it has no test suite ` +
+        `(then the agent verifies its own work and the run records that it was never tested). ` +
+        `Got ${describe(value)}. An empty command is refused rather than read as "no suite", because ` +
+        `\`sh -c ""\` exits 0: every task would be ticked without being run.`,
+    )
+  }
+  return value
+}
+
+/** A required non-blank string. Blank is refused everywhere it appears: it is
+ * an unfinished edit rather than a value, and the fields left here - the models
+ * and a tool rule - all name something that has to exist. `testCmd` used to
+ * route through this and now has `testCommand` above, which owns that
+ * argument because it also has a legitimate "no suite" spelling. */
 function nonBlank(value: unknown, field: string, where: string): string {
   if (typeof value !== "string" || value.trim() === "") {
     throw new Error(`${where}: ${field} must be a non-empty string, got ${describe(value)}`)
