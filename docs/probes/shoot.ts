@@ -181,6 +181,23 @@ for (const arg of rest) {
     await Bun.sleep(900)
     continue
   }
+  if (arg.startsWith("type:")) {
+    /* Real key events, so React's onChange fires: setting `value` directly
+       does not, and a controlled input would snap back. */
+    const [sel, ...text] = arg.slice(5).split("=")
+    const value = text.join("=")
+    await send("Runtime.evaluate", {
+      expression: `document.querySelector(${JSON.stringify(sel)})?.focus()`,
+    })
+    /* `insertText`, not a keyDown/char/keyUp triple: a `keyDown` carrying
+       `text` inserts the character *and* so does the `char` that follows it,
+       so the triple typed everything twice - `/home` arrived as `//hhoommee`.
+       `insertText` fires the input event React listens for, once. */
+    await send("Input.insertText", { text: value })
+    console.log(`typed ${value.length} chars into ${sel}`)
+    await Bun.sleep(1500)
+    continue
+  }
   if (arg.startsWith("btn:")) {
     const r = await send("Runtime.evaluate", { expression: clickButton(arg.slice(4)), returnByValue: true })
     console.log((r["result"] as { value?: unknown } | undefined)?.value)

@@ -9,6 +9,7 @@ import { draftFeature, type Draft } from "./draft"
 import { appendTasksToFile, listFeatureFiles, readFeature, removeTaskFromFile } from "./featurefile"
 import { runTests } from "./testrun"
 import { askHaiku, proposeTasks } from "./draft"
+import { detect } from "./detect"
 import type { Ask } from "./draft"
 import type { AppendResult, RemoveResult } from "./featurefile"
 import { commitPaths, requireUsableRepo, taskBranchName } from "./git"
@@ -563,6 +564,14 @@ export const ROUTES: Record<string, RouteHandler> = {
    * shape for a file that already has tasks. Its header has recorded the gap
    * all along. */
   "POST /api/features/propose": (req, ctx) => proposeFeatureTasks(req, ctx),
+
+  /** What kantan can learn about a folder before anyone registers it.
+   * `src/ui/AddRepo.tsx` has drawn this check-by-check since it was ported and
+   * `detectPath` in `src/ui/live.ts` has called this path all along - it just
+   * was not a route, and `detectPath` swallows a failure and answers `null`, so
+   * the screen sat at `idle` and someone adding a repository typed a path blind
+   * and met the register route's raw 400 instead. */
+  "POST /api/detect": (req, ctx) => detectRepoPath(req, ctx),
 }
 
 /**
@@ -1950,6 +1959,8 @@ const TEST_KEYS = ["projectPath", "testCmd"] as const
 
 const PROPOSE_KEYS = ["projectPath", "featureFile", "text"] as const
 
+const DETECT_KEYS = ["path"] as const
+
 /** A trial run is bounded tighter than a run's own verification: somebody is
  * watching it, and a suite that takes ten minutes is not what this control is
  * for. The command keeps running to completion either way - `runTests` caps
@@ -2950,6 +2961,52 @@ async function proposeFeatureTasks(req: Request, ctx: RouteContext): Promise<Res
     { ok: true, featureFile: relative, tasks },
     { headers: { "Cache-Control": "no-store" } },
   )
+}
+
+/**
+ * Looks at a folder and says what it is, without touching it.
+ *
+ * **Read-only, and that is what makes an arbitrary path acceptable here.** It
+ * is the one route that takes a path from the client which is deliberately
+ * *not* required to be registered - that is the whole point, since nothing can
+ * be registered before it is checked - and it answers only what `git`, a
+ * manifest and `docs/features` say. The same caller can already hand any path
+ * to `POST /api/projects`, which registers it; this says less and changes
+ * nothing.
+ *
+ * A `200` even for a folder that is not a repository: "this is not a usable
+ * git repository" is the **answer**, carried in `checks` as a sentence someone
+ * can read, not a refusal of the question. That is the difference `AddRepo`
+ * draws between `phase: "done", usable: false` and `phase: "unknown"` - the
+ * second is the probe itself failing, which must not block the button. A 4xx
+ * here would be read as the second and would be the first.
+ */
+async function detectRepoPath(req: Request, ctx: RouteContext): Promise<Response> {
+  const body = await readBody(req)
+  if ("refused" in body) return body.refused
+  const parsed = parseBody(body.text, DETECT_KEYS)
+  if ("refused" in parsed) return parsed.refused
+
+  const path = parsed.fields["path"]
+  if (typeof path !== "string") {
+    return badBody(DETECT_KEYS, "a check names the folder to look at, which must be a string")
+  }
+
+  /* The store is read so the check can say "kantan already tracks this", which
+     is the one thing that makes a perfectly good repository unregisterable.
+     A launch without a store simply cannot say, and says nothing rather than
+     claiming the path is free. */
+  let registered: string[] = []
+  if (ctx.projectsFile !== null) {
+    try {
+      registered = (await loadProjects(ctx.projectsFile)).map((p) => p.path)
+    } catch {
+      // A damaged store is not this route's business, and the rest of the
+      // answer is still worth having.
+    }
+  }
+
+  return Response.json(await detect(path, registered), { headers: { "Cache-Control": "no-store" } })
 }
 
 const TASK_FILE_OUTSIDE_REPO = "refused: that task file does not sit inside the project"

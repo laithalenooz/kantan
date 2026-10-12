@@ -4983,3 +4983,102 @@ test("allowedTools clears back to null, which means every tool", async () => {
   expect(res.status).toBe(200)
   expect((await loadProjects(store))[0]?.allowedTools).toBeNull()
 })
+
+/* ========================================================================== */
+/* POST /api/detect                                                           */
+/* ========================================================================== */
+
+const DETECT_ROUTE = "POST /api/detect"
+
+function check(l: Launch, body: unknown): Promise<{ status: number; headers: Headers; body: string }> {
+  return call(l, { path: "/api/detect", method: "POST", body: JSON.stringify(body) })
+}
+
+test("detect is registered behind the guards and not token-exempt", () => {
+  expect(Object.keys(ROUTES)).toContain(DETECT_ROUTE)
+  expect(TOKEN_EXEMPT.has(DETECT_ROUTE)).toBe(false)
+})
+
+/**
+ * **A 200 even for a folder that is not a repository.** "This is not a usable
+ * git repository" is the *answer*, carried as a sentence someone can read, not
+ * a refusal of the question. `AddRepo` draws exactly that distinction:
+ * `phase: "done", usable: false` is a verdict about the folder, while
+ * `phase: "unknown"` is the probe itself failing and must not block the
+ * button. A 4xx here would be read as the second and would be the first.
+ */
+test("it answers 200 with a verdict, for a good path and a bad one alike", async () => {
+  const repo = await cleanRepo()
+  const l = await withTree(await storeFile())
+
+  const good = await check(l, { path: repo })
+  expect(good.status).toBe(200)
+  const ok = JSON.parse(good.body) as { phase: string; usable: boolean; root: string }
+  expect(ok.phase).toBe("done")
+  expect(ok.usable).toBe(true)
+  expect(ok.root).toBe(repo)
+
+  const bad = await check(l, { path: "/definitely/not/here" })
+  expect(bad.status).toBe(200)
+  const no = JSON.parse(bad.body) as { phase: string; usable: boolean }
+  expect(no.phase).toBe("done")
+  expect(no.usable).toBe(false)
+})
+
+test("it reads the store, so an already-registered repo is not offered twice", async () => {
+  const repo = await cleanRepo()
+  const l = await withTree(await storeOf(repo))
+
+  const res = await check(l, { path: repo })
+  expect(res.status).toBe(200)
+  const got = JSON.parse(res.body) as { usable: boolean; checks: { status: string; says: unknown[] }[] }
+  expect(got.usable).toBe(false)
+  const prose = got.checks.map((c) => c.says.map((s) => (typeof s === "string" ? s : (s as { mono: string }).mono)).join("")).join(" ")
+  expect(prose).toContain("already tracks this repository")
+})
+
+/** A launch with no store cannot say whether a path is taken, and says
+ *  nothing rather than claiming it is free. */
+test("without a store it still checks the folder", async () => {
+  const repo = await cleanRepo()
+  const l = serve({ runsDir: await runsDir() })
+
+  const res = await check(l, { path: repo })
+  expect(res.status).toBe(200)
+  expect((JSON.parse(res.body) as { usable: boolean }).usable).toBe(true)
+})
+
+test("it previews the task files it found", async () => {
+  const repo = await cleanRepo()
+  await withFeature(repo, "importer.md", FEATURE)
+  const l = await withTree(await storeFile())
+
+  const res = await check(l, { path: repo })
+  const got = JSON.parse(res.body) as { taskFiles: { path: string; tasks: { ref: string | null }[] }[] }
+  expect(got.taskFiles).toHaveLength(1)
+  expect(got.taskFiles[0]?.path).toBe("docs/features/importer.md")
+  expect(got.taskFiles[0]?.tasks.map((t) => t.ref)).toEqual(["T1", "T2", null])
+})
+
+test("a body with no path, or a path that is not a string, is refused", async () => {
+  const l = await withTree(await storeFile())
+  for (const body of [{}, { path: 7 }, { path: null }, { pa7h: "/x" }]) {
+    expect((await check(l, body)).status, JSON.stringify(body)).toBe(400)
+  }
+})
+
+/** Read-only, which is what makes an arbitrary path acceptable here: it is the
+ *  one route that deliberately does not require a registered project, because
+ *  nothing can be registered before it is checked. */
+test("it changes nothing about the folder it looked at", async () => {
+  const repo = await cleanRepo()
+  await withFeature(repo, "importer.md", FEATURE)
+  const before = await gitSays(repo, "status", "--porcelain")
+  const head = await gitSays(repo, "rev-parse", "HEAD")
+  const l = await withTree(await storeFile())
+
+  await check(l, { path: repo })
+
+  expect(await gitSays(repo, "status", "--porcelain")).toBe(before)
+  expect(await gitSays(repo, "rev-parse", "HEAD")).toBe(head)
+})
