@@ -24,8 +24,9 @@ import type { KeyboardEvent as ReactKeyboardEvent, ReactElement, ReactNode } fro
  * bundle. The type is borrowed rather than restated, so a change to a run's
  * state becomes a compile error here instead of a row that quietly renders as
  * something else. */
-import { verificationOf } from "../runindex.ts"
-import type { TaskStatus, VerificationReading } from "../runindex.ts"
+import { verificationOf } from "../runstate.ts"
+import type { VerificationReading } from "../runstate.ts"
+import type { TaskStatus } from "../runindex.ts"
 
 /** The nine readings, in the artboard's order. */
 export const TASK_STATES = [
