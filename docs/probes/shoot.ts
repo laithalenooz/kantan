@@ -51,13 +51,72 @@ const send = (method: string, params: Record<string, unknown> = {}): Promise<Rec
   return new Promise((ok) => waiting.set(mine, ok))
 }
 
+/**
+ * Controls this probe refuses to press, by their exact label.
+ *
+ * Earned rather than precautionary. While verifying the gate's layout at four
+ * window sizes, a loose `innerText.includes` match reached **Approve plan** on
+ * a real parked run: it approved a plan, spawned an implement phase, committed
+ * to the user's repository and spent money, and the only reason that was
+ * recoverable is that kantan keeps the work on its own `orch/*` branch. A
+ * screenshot probe must not be able to do that, and "be careful" is not a
+ * mechanism.
+ *
+ * The list is of *consequences outside this process*: approving, sending back,
+ * answering, starting, resuming, stopping, removing. Everything else - opening
+ * a panel, switching a tab, collapsing a file - is reversible by reloading, so
+ * it stays clickable and the probe stays useful.
+ *
+ * `--force` exists because a probe for one of these controls is a legitimate
+ * thing to want. It has to be asked for in the argv, which is the point: the
+ * failure above was a click nobody wrote down.
+ */
+const REFUSED = new Set([
+  "Approve plan",
+  "Send back",
+  "Send answer",
+  "Start planning",
+  "Resume run",
+  "Start over from planning",
+  "Stop run",
+  "Remove project",
+  "Add account",
+  "Write the task file",
+  "Draft tasks",
+])
+
+const forced = rest.includes("--force")
+
+/** Whether this probe may press a control reading `label`. */
+function allowed(label: string): boolean {
+  if (forced) return true
+  for (const refused of REFUSED) if (label.trim() === refused) return false
+  return true
+}
+
+/** A button whose own trimmed text is exactly `text`. Narrower than
+ *  `clickText`, which searches `li` and `span` too and so can match an
+ *  ancestor of the control - `querySelectorAll` is document order, so the
+ *  wrapping `li` comes first and clicking it does nothing. */
+const clickButton = (text: string): string => `(() => {\n  const ALLOWED = ${String(allowed(text))}
+  const hit = [...document.querySelectorAll("button")].find(
+    (el) => (el.innerText ?? "").trim() === ${JSON.stringify(text)},
+  )
+  if (hit === undefined) return "NO BUTTON"
+  if (!ALLOWED) return "REFUSED: this probe does not press " + JSON.stringify((hit.innerText ?? "").trim())
+  hit.scrollIntoView({ block: "center" })
+  hit.click()
+  return "clicked button: " + (hit.innerText ?? "").trim().slice(0, 70)
+})()`
+
 /** Evaluated in the page: `innerText.trim() === text` wins, else `includes`. */
-const clickText = (text: string): string => `(() => {
+const clickText = (text: string): string => `(() => {\n  const ALLOWED = ${String(allowed(text))}
   const all = [...document.querySelectorAll("button,[role=treeitem],[role=button],a,li,span")]
   const exact = all.find((el) => (el.innerText ?? "").trim() === ${JSON.stringify(text)})
   const loose = all.find((el) => (el.innerText ?? "").includes(${JSON.stringify(text)}))
   const hit = exact ?? loose
   if (hit === undefined) return "NOT FOUND"
+  if (!ALLOWED) return "REFUSED: this probe does not press " + JSON.stringify((hit.innerText ?? "").trim())
   hit.scrollIntoView({ block: "center" })
   hit.click()
   return "clicked: " + (hit.innerText ?? "").trim().slice(0, 70)
@@ -85,6 +144,49 @@ for (const arg of rest) {
     await Bun.sleep(600)
     continue
   }
+  if (arg.startsWith("sel:")) {
+    const r = await send("Runtime.evaluate", {
+      returnByValue: true,
+      expression: `(() => {
+        const el = document.querySelector(${JSON.stringify(arg.slice(4))})
+        if (el === null) return "NOT FOUND"
+        el.scrollIntoView({ block: "center" })
+        el.click()
+        return "clicked " + el.getAttribute("aria-label")
+      })()`,
+    })
+    console.log((r["result"] as { value?: unknown } | undefined)?.value)
+    await Bun.sleep(1200)
+    continue
+  }
+  if (arg.startsWith("hover:")) {
+    /* A real pointer move, so `:hover` and `group-hover` actually apply -
+       dispatching a mouseover event does not set the hover flag in Chrome. */
+    const box = await send("Runtime.evaluate", {
+      returnByValue: true,
+      expression: `(() => {
+        const el = document.querySelector(${JSON.stringify(arg.slice(6))})
+        if (el === null) return null
+        el.scrollIntoView({ block: "center" })
+        const r = el.getBoundingClientRect()
+        return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
+      })()`,
+    })
+    const at = (box["result"] as { value?: { x: number; y: number } | null }).value
+    if (at == null) console.log("hover target not found")
+    else {
+      await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: at.x, y: at.y, buttons: 0 })
+      console.log(`hovered ${arg.slice(6)} at ${at.x},${at.y}`)
+    }
+    await Bun.sleep(900)
+    continue
+  }
+  if (arg.startsWith("btn:")) {
+    const r = await send("Runtime.evaluate", { expression: clickButton(arg.slice(4)), returnByValue: true })
+    console.log((r["result"] as { value?: unknown } | undefined)?.value)
+    await Bun.sleep(1800)
+    continue
+  }
   if (arg.startsWith("click:")) {
     const r = await send("Runtime.evaluate", { expression: clickText(arg.slice(6)), returnByValue: true })
     console.log((r["result"] as { value?: unknown } | undefined)?.value)
@@ -103,6 +205,63 @@ const metrics = await send("Runtime.evaluate", {
       if (b === undefined) return null
       const r = b.getBoundingClientRect()
       return { top: Math.round(r.top), bottom: Math.round(r.bottom), inViewport: r.top >= 0 && r.bottom <= innerHeight }
+    })(),
+    buttons: [...document.querySelectorAll("button")].map((b) => {
+      const cs = getComputedStyle(b)
+      const label = (b.innerText ?? "").trim().replace(/\s+/g, " ").slice(0, 34)
+      return label === "" ? null : {
+        label,
+        bg: cs.backgroundColor,
+        color: cs.color,
+        border: cs.borderTopWidth === "0px" ? "none" : cs.borderTopWidth + " " + cs.borderTopColor,
+      }
+    }).filter((x) => x !== null),
+    disclosure: [...document.querySelectorAll("[data-feature-toggle]")].map((t) => {
+      const list = document.getElementById(t.getAttribute("aria-controls") ?? "")
+      const cs = list === null ? null : getComputedStyle(list)
+      return {
+        file: (t.getAttribute("data-feature-toggle") ?? "").split("/").pop(),
+        expanded: t.getAttribute("aria-expanded"),
+        /** The computed value, which is the only thing that settles . */
+        display: cs === null ? null : cs.display,
+        listHeight: list === null ? null : Math.round(list.getBoundingClientRect().height),
+        rows: list === null ? 0 : list.querySelectorAll("[data-task-row]").length,
+      }
+    }),
+    stopHit: (() => {
+      const b = [...document.querySelectorAll("button")].find((x) => (x.innerText ?? "").trim() === "Stop run")
+      if (b === undefined) return null
+      const r = b.getBoundingClientRect()
+      const x = Math.round(r.left + r.width / 2)
+      const y = Math.round(r.top + r.height / 2)
+      const top = document.elementFromPoint(x, y)
+      const cs = getComputedStyle(b)
+      return {
+        at: [x, y],
+        disabled: b.disabled,
+        pointerEvents: cs.pointerEvents,
+        opacity: cs.opacity,
+        /** What a click at the button's centre would actually land on. */
+        topmost: top === null ? null : top.tagName + "." + String(top.className).split(" ").slice(0, 3).join("."),
+        reachesButton: top === b || b.contains(top),
+      }
+    })(),
+    overlap: (() => {
+      const out = []
+      for (const b of document.querySelectorAll("[data-remove-task]")) {
+        const li = b.parentElement
+        const chip = li?.querySelector("[data-state-label]")
+        const title = li?.querySelector("[data-task-text]")
+        const br = b.getBoundingClientRect()
+        const hits = (el) => {
+          if (el == null) return null
+          const r = el.getBoundingClientRect()
+          if (r.width === 0) return false
+          return !(br.right <= r.left || br.left >= r.right || br.bottom <= r.top || br.top >= r.bottom)
+        }
+        out.push({ ref: b.getAttribute("data-remove-task"), overChip: hits(chip), overTitle: hits(title) })
+      }
+      return out
     })(),
     gateBox: (() => {
       const g = document.querySelector(".kg")
