@@ -87,6 +87,16 @@ whatever else sits in the shared index. Twice during development a docs-only com
 another agent's half-written test file: harmless content, but the message then describes something
 other than its diff.
 
+**Commit when a piece is green, not when the task is finished.** Measured here: an agent had
+working, tested code on disk at 23:40 and committed it at 05:35, because it was saving the commit
+for the end of its task. The machine slept in between, so for six hours that work existed only in
+the working tree — where another agent's `git add -A` would have swept it into someone else's
+commit, and where nobody looking at the repo could see it existed.
+
+A commit per landed piece also makes the difference between "this agent is stuck" and "this agent
+is suspended" visible from outside, which no status display currently shows: elapsed wall-clock is
+reported, compute time is not.
+
 **Commit with a pathspec instead:**
 
 ```bash
