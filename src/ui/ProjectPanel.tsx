@@ -166,8 +166,22 @@ export interface ProjectPanelProps {
   project: TreeProject
   /** Every account that can be chosen, in the order they are drawn. */
   accounts: readonly AccountOption[]
-  /** Asked only after the human confirmed. Rejecting shows the reason. */
-  onSwitchAccount: (kind: AccountKind) => void | Promise<void>
+  /**
+   * Asked only after the human confirmed. Rejecting shows the reason.
+   *
+   * It is handed the whole `AccountOption`, not a kind, and that is a safety
+   * rather than a convenience. **`account` is only a label.** `src/spawn.ts`
+   * sets `CLAUDE_CONFIG_DIR` from `project.configDir` and deletes it when
+   * there is none; `src/run.ts` keys the rate-limit window on `configDir` too.
+   * Nothing anywhere reads `project.account` to decide what gets billed.
+   *
+   * So a shell that PATCHed `{ account }` alone would move the chip and change
+   * nothing else - this panel would say "future runs bill to work" and they
+   * would keep billing to personal, which is the one defect the chip exists to
+   * prevent. Passing the option means the handler has the `configDir` it must
+   * send with it, and a handler that ignores it has to do so on purpose.
+   */
+  onSwitchAccount: (account: AccountOption) => void | Promise<void>
   /** Called with a trimmed, non-empty command, once per change. */
   onSaveTestCmd: (cmd: string) => void | Promise<void>
   /** Called only from the confirmation dialog. */
@@ -191,7 +205,8 @@ export interface ProjectPanelProps {
 export interface AccountSwitchProps {
   project: TreeProject
   accounts: readonly AccountOption[]
-  onSwitchAccount: (kind: AccountKind) => void | Promise<void>
+  /** The whole option, for the reason `ProjectPanelProps` gives at length. */
+  onSwitchAccount: (account: AccountOption) => void | Promise<void>
   /** Absent hides "Add an account". */
   onAddAccount?: (account: { label: string; configDir: string }) => void | Promise<void>
   className?: string
@@ -229,17 +244,19 @@ const TOAST_MS = 5000
 /* -------------------------------------------------------------------------- */
 
 interface Toast {
-  to: AccountKind
+  to: AccountOption
   /** Where it came from, which decides whether Undo can exist. */
   from: Account["kind"]
 }
 
 interface SwitchController {
-  pending: AccountKind | null
+  pending: AccountOption | null
   busy: boolean
   error: string | null
   toast: Toast | null
-  ask: (kind: AccountKind) => void
+  /** The option Undo would ask for, or `null` when there is no way back. */
+  undoTarget: AccountOption | null
+  ask: (account: AccountOption) => void
   cancel: () => void
   confirm: () => void
   undo: () => void
@@ -254,10 +271,11 @@ interface SwitchController {
  */
 function useAccountSwitch(
   stored: Account["kind"],
-  onSwitchAccount: (kind: AccountKind) => void | Promise<void>,
+  accounts: readonly AccountOption[],
+  onSwitchAccount: (account: AccountOption) => void | Promise<void>,
   onSwitched?: () => void,
 ): SwitchController {
-  const [pending, setPending] = useState<AccountKind | null>(null)
+  const [pending, setPending] = useState<AccountOption | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [toast, setToast] = useState<Toast | null>(null)
@@ -274,12 +292,12 @@ function useAccountSwitch(
   }, [])
 
   const ask = useCallback(
-    (kind: AccountKind) => {
+    (account: AccountOption) => {
       setError(null)
       /* The only skip, and it is an identity check rather than a judgement:
          picking the account already stored would change nothing. Every other
          reading of `stored` - including `unknown` - confirms. */
-      setPending(kind === stored ? null : kind)
+      setPending(account.kind === stored ? null : account)
     },
     [stored],
   )
@@ -309,23 +327,28 @@ function useAccountSwitch(
     })()
   }, [busy, onSwitchAccount, onSwitched, pending, stored])
 
+  /* `updateProject` takes "personal" | "work", so there is no way back to
+     "nobody has said"; and an account the caller no longer offers has no
+     `configDir` to send. Either way the control that would try is not drawn,
+     rather than drawn and broken. */
+  const undoTarget = useMemo(() => {
+    if (toast === null || toast.from === "unknown") return null
+    return accounts.find((a) => a.kind === toast.from) ?? null
+  }, [accounts, toast])
+
   const undo = useCallback(() => {
-    const open = toast
-    /* `updateProject` takes "personal" | "work". There is no way back to
-       "nobody has said", so the control that would try is not offered. */
-    if (open === null || open.from === "unknown") return
-    const back = open.from
+    if (undoTarget === null) return
     dismissToast()
     void (async () => {
       try {
-        await onSwitchAccount(back)
+        await onSwitchAccount(undoTarget)
       } catch (cause) {
         setError(messageOf(cause))
       }
     })()
-  }, [dismissToast, onSwitchAccount, toast])
+  }, [dismissToast, onSwitchAccount, undoTarget])
 
-  return { pending, busy, error, toast, ask, cancel, confirm, undo, dismissToast }
+  return { pending, busy, error, toast, undoTarget, ask, cancel, confirm, undo, dismissToast }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -713,20 +736,31 @@ export function AccountSwitch({
     chipRef.current?.focus()
   }, [])
 
-  const switcher = useAccountSwitch(stored, onSwitchAccount, () => {
+  const confirmRef = useRef<HTMLButtonElement | null>(null)
+
+  const switcher = useAccountSwitch(stored, accounts, onSwitchAccount, () => {
     setOpen(false)
     setAdding(false)
+    /* The button that was focused is about to unmount. Without this, focus
+       falls to `<body>` and a keyboard user is dropped out of the app. */
+    chipRef.current?.focus()
   })
 
-  /* Focus moves into the popover when it opens, onto the account the project
-     already runs as, so a keyboard user lands on the current reading rather
-     than at the top of an unlabelled list. */
+  /* Focus follows what the popover is showing. On open it lands on the
+     account the project already runs as, rather than the top of an unlabelled
+     list; when the list becomes a confirmation it moves to that dialog; and
+     when Cancel brings the list back it returns, instead of being left on a
+     button that no longer exists. */
   useEffect(() => {
     if (!open) return
+    if (switcher.pending !== null) {
+      confirmRef.current?.focus()
+      return
+    }
     const rows = [...(popRef.current?.querySelectorAll<HTMLElement>("[data-opt]") ?? [])]
     const current = rows.find((r) => r.getAttribute("data-opt") === stored)
     ;(current ?? rows[0])?.focus()
-  }, [open, stored])
+  }, [open, stored, switcher.pending])
 
   const label = project.account.label ?? (stored === "unknown" ? "account unknown" : stored)
   const chipLook: CSSProperties =
@@ -736,7 +770,7 @@ export function AccountSwitch({
         ? { background: "#26272D", color: "#F4F4F6" }
         : { background: "#F1F1F4", color: "#4A4E59", boxShadow: "inset 0 0 0 1px #E2E2E7" }
 
-  const target = accounts.find((a) => a.kind === switcher.pending)
+  const target = switcher.pending
 
   const onPopKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
     if (event.key === "Escape") {
@@ -852,7 +886,7 @@ export function AccountSwitch({
             lineHeight: "normal",
           }}
         >
-          {switcher.pending === null || target === undefined ? (
+          {target === null ? (
             <>
               <div
                 style={{
@@ -891,7 +925,7 @@ export function AccountSwitch({
                       data-opt={option.kind}
                       aria-checked={checked}
                       tabIndex={checked || (checkedIndex === -1 && index === 0) ? 0 : -1}
-                      onClick={() => switcher.ask(option.kind)}
+                      onClick={() => switcher.ask(option)}
                       className="opt focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo"
                       style={{
                         display: "grid",
@@ -1031,6 +1065,7 @@ export function AccountSwitch({
               <div style={{ display: "flex", gap: 8 }}>
                 <button
                   type="button"
+                  ref={confirmRef}
                   onClick={switcher.confirm}
                   disabled={switcher.busy}
                   className={PILL_DARK}
@@ -1050,8 +1085,8 @@ export function AccountSwitch({
       {switcher.toast !== null && (
         <SwitchToast
           name={name}
-          to={accounts.find((a) => a.kind === switcher.toast?.to)?.label ?? switcher.toast.to}
-          canUndo={switcher.toast.from !== "unknown"}
+          to={switcher.toast.to.label}
+          canUndo={switcher.undoTarget !== null}
           animate={animate}
           onUndo={switcher.undo}
           onDismiss={switcher.dismissToast}
@@ -1099,8 +1134,7 @@ export function ProjectPanel({
   const name = repoName(project.path)
   const stored = project.account.kind
   const headingId = useId()
-  const switcher = useAccountSwitch(stored, onSwitchAccount)
-  const target = accounts.find((a) => a.kind === switcher.pending)
+  const switcher = useAccountSwitch(stored, accounts, onSwitchAccount)
   const [removeOpen, setRemoveOpen] = useState(false)
   const removeTrigger = useRef<HTMLButtonElement | null>(null)
 
@@ -1148,7 +1182,6 @@ export function ProjectPanel({
             animate={animate}
             anim={anim}
             switcher={switcher}
-            target={target}
           />
 
           <TestCommandSection
@@ -1199,8 +1232,8 @@ export function ProjectPanel({
       {switcher.toast !== null && (
         <SwitchToast
           name={name}
-          to={accounts.find((a) => a.kind === switcher.toast?.to)?.label ?? switcher.toast.to}
-          canUndo={switcher.toast.from !== "unknown"}
+          to={switcher.toast.to.label}
+          canUndo={switcher.undoTarget !== null}
           animate={animate}
           onUndo={switcher.undo}
           onDismiss={switcher.dismissToast}
@@ -1311,7 +1344,6 @@ function AccountSection({
   animate,
   anim,
   switcher,
-  target,
 }: {
   name: string
   stored: Account["kind"]
@@ -1319,8 +1351,8 @@ function AccountSection({
   animate: boolean
   anim: (classes: string) => string | undefined
   switcher: SwitchController
-  target: AccountOption | undefined
 }): ReactElement {
+  const target = switcher.pending
   return (
     <div data-card-section className={anim("bf d1")} style={SECTION}>
       <h2 style={H2}>Claude account</h2>
@@ -1364,7 +1396,7 @@ function AccountSection({
               role="radio"
               data-card={option.kind}
               aria-checked={checked}
-              onClick={() => switcher.ask(option.kind)}
+              onClick={() => switcher.ask(option)}
               className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo"
               style={{
                 display: "grid",
@@ -1418,7 +1450,7 @@ function AccountSection({
         })}
       </div>
 
-      {switcher.pending !== null && target !== undefined && (
+      {target !== null && (
         <div
           data-confirm="panel"
           role="alertdialog"

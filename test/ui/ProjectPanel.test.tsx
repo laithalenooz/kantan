@@ -369,7 +369,7 @@ function handlers() {
     saved,
     removed,
     props: {
-      onSwitchAccount: (kind: "personal" | "work") => void switched.push(kind),
+      onSwitchAccount: (account: AccountOption) => void switched.push(account.kind),
       onSaveTestCmd: (cmd: string) => void saved.push(cmd),
       onRemove: () => void removed.push(1),
     },
@@ -521,6 +521,39 @@ describe("switching the account asks first", () => {
     })
   }
 
+  /**
+   * The confirmation claims "future runs bill to work". That claim is only
+   * true if what actually selects the profile changes, and **`account` does
+   * not select it**: `src/spawn.ts` sets `CLAUDE_CONFIG_DIR` from
+   * `project.configDir` and deletes it when there is none, and `src/run.ts`
+   * keys the rate-limit window on `configDir` as well. Nothing reads
+   * `project.account` to decide what gets billed - it is a label the human
+   * wrote, which is exactly what `src/projects.ts` says it is.
+   *
+   * So the handler is given the whole option rather than a kind, and this test
+   * holds that: a panel that passed `"work"` alone would leave the shell with
+   * nothing to PATCH `configDir` from, and the chip would move while the
+   * billing did not. That is the one defect the chip exists to prevent.
+   */
+  test("hands the handler the config folder, not just a word", async () => {
+    const got: unknown[] = []
+    await render(
+      <api.ProjectPanel
+        project={project("personal")}
+        accounts={ACCOUNTS}
+        onSwitchAccount={(account) => void got.push(account)}
+        onSaveTestCmd={() => {}}
+        onRemove={() => {}}
+      />,
+    )
+    await click(one(CARD("work")))
+    await click(byText('[data-confirm="panel"] button', "Switch to work"))
+    await settle()
+
+    expect(got).toEqual([WORK])
+    expect((got[0] as AccountOption).configDir).toBe("~/.claude-work")
+  })
+
   test("spells out what the switch costs, naming both accounts and the target's usage", async () => {
     const h = handlers()
     await render(<api.ProjectPanel project={project("personal")} accounts={ACCOUNTS} {...h.props} />)
@@ -615,6 +648,39 @@ describe("the toast that finishes the switch", () => {
     expect(maybe("[data-toast]")).toBeNull()
   })
 
+  /* Undo has the same obligation as the switch it reverses: without the
+     option there is no `configDir` to send back. */
+  test("Undo hands back the whole option too", async () => {
+    const got: AccountOption[] = []
+    await render(
+      <api.ProjectPanel
+        project={project("personal")}
+        accounts={ACCOUNTS}
+        onSwitchAccount={(account) => void got.push(account)}
+        onSaveTestCmd={() => {}}
+        onRemove={() => {}}
+      />,
+    )
+    await click(one(CARD("work")))
+    await click(byText('[data-confirm="panel"] button', "Switch to work"))
+    await settle()
+    await click(byText("[data-toast] button", "Undo"))
+    expect(got).toEqual([WORK, PERSONAL])
+  })
+
+  /* An account the caller stopped offering has no option to send, so the
+     control that would try is not drawn. */
+  test("hides Undo when the account it came from is no longer on offer", async () => {
+    const h = handlers()
+    await render(<api.ProjectPanel project={project("work")} accounts={[PERSONAL]} {...h.props} />)
+    await click(one(CARD("personal")))
+    await click(byText('[data-confirm="panel"] button', "Switch to personal"))
+    await settle()
+
+    expect(maybe("[data-toast]")).not.toBeNull()
+    expect(all("[data-toast] button").map((b) => (b.textContent ?? "").trim())).not.toContain("Undo")
+  })
+
   test("hides Undo when there is nothing valid to go back to", async () => {
     await switchTo("unknown", "work")
     expect(maybe("[data-toast]")).not.toBeNull()
@@ -633,8 +699,8 @@ describe("the toast that finishes the switch", () => {
       <api.ProjectPanel
         project={project("personal")}
         accounts={ACCOUNTS}
-        onSwitchAccount={(kind) => {
-          switched.push(kind)
+        onSwitchAccount={(account) => {
+          switched.push(account.kind)
           return Promise.reject(new Error("the server said no"))
         }}
         onSaveTestCmd={() => {}}
@@ -661,7 +727,7 @@ describe("the account chip and its popover", () => {
         <api.AccountSwitch
           project={project(account)}
           accounts={ACCOUNTS}
-          onSwitchAccount={(kind: "personal" | "work") => void switched.push(kind)}
+          onSwitchAccount={(a: AccountOption) => void switched.push(a.kind)}
         />
       ),
     }
@@ -759,7 +825,28 @@ describe("the account chip and its popover", () => {
     expect(document.activeElement).toBe(chip)
   })
 
-  test("arrow keys move focus through the radios without picking one", async () => {
+  test("focus follows the popover: into the confirmation, back to the list, out to the chip", async () => {
+    const { node } = switchProps("personal")
+    await render(node)
+    const chip = one<HTMLButtonElement>("[data-account-chip]")
+    await click(chip)
+    expect(document.activeElement).toBe(one(OPT("personal")))
+
+    await click(one(OPT("work")))
+    expect(document.activeElement).toBe(byText('[data-confirm="pop"] button', "Switch to work"))
+
+    await click(byText('[data-confirm="pop"] button', "Cancel"))
+    expect(document.activeElement).toBe(one(OPT("personal")))
+
+    /* The focused button unmounts when the popover closes. Focus must land
+       somewhere deliberate, not on <body>. */
+    await click(one(OPT("work")))
+    await click(byText('[data-confirm="pop"] button', "Switch to work"))
+    await settle()
+    expect(document.activeElement).toBe(chip)
+  })
+
+  test("arrow keys move focus through the radios without picking one", async () =>{
     const { node, switched } = switchProps("personal")
     await render(node)
     await click(one("[data-account-chip]"))
