@@ -1,5 +1,12 @@
 import { expect, test } from "bun:test"
-import { loadProjects, addProject, defaults } from "../src/projects"
+import {
+  loadProjects,
+  addProject,
+  defaults,
+  projectIdentity,
+  removeProject,
+  updateProject,
+} from "../src/projects"
 import type { Project } from "../src/projects"
 import { chmod, lstat, mkdtemp, readFile, readdir, stat, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -738,4 +745,286 @@ test("a rejected add does not stop the valid ones beside it", async () => {
   ])
   expect(results.map((r) => r.status)).toEqual(["fulfilled", "rejected", "fulfilled"])
   expect((await loadProjects(file)).map((p) => p.path)).toEqual(["/a", "/b"])
+})
+
+// --- Removing and editing a record -----------------------------------------
+// Both are writes to the one piece of state no repository can rebuild, so each
+// case below is a shape that could cost someone configuration they typed. The
+// rule is the same as everywhere else in this file: anything that cannot be
+// read with certainty throws with the field in the message, and nothing is
+// skipped, defaulted over or quietly replaced.
+
+test("removing a project drops its record and leaves the others untouched", async () => {
+  const { file } = await store()
+  await addProject(file, { ...SAMPLE, path: "/a" })
+  await addProject(file, { ...SAMPLE, path: "/b" })
+
+  expect(await removeProject(file, "/a")).toBe(true)
+  const left = await loadProjects(file)
+  expect(left.map((p) => p.path)).toEqual(["/b"])
+  // Field for field: a removal must not be a rewrite that drops a tuned value
+  // from a record it was not asked about.
+  expect(left[0]).toEqual({ ...SAMPLE, path: "/b" })
+})
+
+test("removing a path that is not registered removes nothing and says so", async () => {
+  // The answer the HTTP layer turns into a 404. A silent `true` would tell
+  // someone their project is gone when a misspelling means it is still there.
+  const { file } = await store()
+  await addProject(file, SAMPLE)
+  expect(await removeProject(file, "/not-registered")).toBe(false)
+  expect(await loadProjects(file)).toHaveLength(1)
+})
+
+test("a removal that matched nothing does not rewrite the store", async () => {
+  // This file is hand-edited, read in diffs and often symlinked into a
+  // dotfiles repo. A write that changed nothing would still touch its mtime
+  // and could still reorder a hand edit's keys.
+  const { file } = await store()
+  await writeFile(file, JSON.stringify([SAMPLE], null, 2) + "\n")
+  const before = await stat(file)
+  await Bun.sleep(10)
+  expect(await removeProject(file, "/elsewhere")).toBe(false)
+  expect((await stat(file)).mtimeMs).toBe(before.mtimeMs)
+})
+
+test("removing from a store that does not exist yet is not an error", async () => {
+  // An absent store is "no projects", as `loadProjects` reads it, so there is
+  // nothing registered to remove - and nothing is created saying so.
+  const { dir, file } = await store()
+  expect(await removeProject(file, "/repo")).toBe(false)
+  expect(await readdir(dir)).toEqual([])
+})
+
+test("a trailing slash removes the same record a trailing slash registered", async () => {
+  const { file } = await store()
+  await addProject(file, { ...SAMPLE, path: "/repo" })
+  expect(await removeProject(file, "/repo/")).toBe(true)
+  expect(await loadProjects(file)).toEqual([])
+})
+
+test("a removal refuses a relative path rather than resolving it against the cwd", async () => {
+  // The same rule as registration: resolving would name a different record
+  // depending on where the server was launched from.
+  const { file } = await store()
+  await addProject(file, SAMPLE)
+  await expect(removeProject(file, "repo")).rejects.toThrow(/absolute repo path/)
+  expect(await loadProjects(file)).toHaveLength(1)
+})
+
+test("a removal is serialised against an add, so neither loses the other", async () => {
+  // Both are read-modify-write. Run together without the queue and whichever
+  // renamed last would drop the other's work entirely.
+  const { file } = await store()
+  await addProject(file, { ...SAMPLE, path: "/a" })
+  await Promise.all([
+    removeProject(file, "/a"),
+    addProject(file, { ...SAMPLE, path: "/b" }),
+  ])
+  expect((await loadProjects(file)).map((p) => p.path)).toEqual(["/b"])
+})
+
+test("removing a project leaves a store the store itself still accepts", async () => {
+  const { file } = await store()
+  await addProject(file, { ...SAMPLE, path: "/a" })
+  await addProject(file, { ...SAMPLE, path: "/b", account: "work" })
+  await removeProject(file, "/b")
+  expect(await readFile(file, "utf8")).toBe(JSON.stringify([{ ...SAMPLE, path: "/a" }], null, 2) + "\n")
+})
+
+test("an edit changes the keys it names and leaves everything else alone", async () => {
+  // The whole reason this is a partial update. `registerProject` refuses a
+  // re-register with a 409 because `addProject` replaces a record wholesale,
+  // and a second trip through a three-field dialog would reset a budget or an
+  // allowlist tuned by hand. An edit that rebuilt the record through
+  // `defaults()` would reintroduce exactly that.
+  const { file } = await store()
+  const tuned: Project = {
+    ...SAMPLE,
+    allowedTools: ["Read", "Edit", "Bash(flutter test)"],
+    planModel: "claude-opus-5-5-thinking",
+    planEffort: "max",
+    implementEffort: "xhigh",
+    budgetUsd: 93.5,
+    reportPath: "build/reports/junit.xml",
+  }
+  await addProject(file, tuned)
+
+  const edited = await updateProject(file, "/repo", { testCmd: "flutter test" })
+  expect(edited).toMatchObject({ ok: true })
+  if (!edited.ok) throw new Error("unreachable")
+  expect(edited.project).toEqual({ ...tuned, testCmd: "flutter test" })
+  expect(await loadProjects(file)).toEqual([{ ...tuned, testCmd: "flutter test" }])
+})
+
+test("an edit to a path that is not registered writes nothing", async () => {
+  // Never an insert: an edit names a record that exists, and creating one here
+  // would register a repository nobody checked was a repository at all.
+  const { file } = await store()
+  await addProject(file, SAMPLE)
+  expect(await updateProject(file, "/elsewhere", { testCmd: "npm test" })).toEqual({
+    ok: false,
+    why: "not-registered",
+  })
+  expect(await loadProjects(file)).toEqual([SAMPLE])
+})
+
+test("an edit that names no change answers the stored record without writing", async () => {
+  const { file } = await store()
+  await writeFile(file, JSON.stringify([SAMPLE], null, 2) + "\n")
+  const before = await stat(file)
+  await Bun.sleep(10)
+  const edited = await updateProject(file, "/repo", {})
+  expect(edited).toEqual({ ok: true, project: SAMPLE })
+  expect((await stat(file)).mtimeMs).toBe(before.mtimeMs)
+})
+
+test("an edit cannot change the record's identity", async () => {
+  // `path` is what the run logs reference and what every start request keys
+  // on, so moving it is a remove plus an add rather than an edit.
+  const { file } = await store()
+  await addProject(file, SAMPLE)
+  expect(await updateProject(file, "/repo", { path: "/moved" })).toMatchObject({
+    ok: false,
+    why: "invalid",
+  })
+  expect(await loadProjects(file)).toEqual([SAMPLE])
+})
+
+test("an unknown field in an edit is refused by name, not dropped", async () => {
+  const { file } = await store()
+  await addProject(file, SAMPLE)
+  const edited = await updateProject(file, "/repo", { configdir: "/home/me/.claude" })
+  expect(edited).toMatchObject({ ok: false, why: "invalid" })
+  if (edited.ok || edited.why !== "invalid") throw new Error("unreachable")
+  expect(edited.message).toContain("configdir")
+  expect(await loadProjects(file)).toEqual([SAMPLE])
+})
+
+/**
+ * Every value each editable field can arrive as, against what it does.
+ *
+ * Accepting input, so CLAUDE.md's rule applies and this is a matrix rather
+ * than a sample: the dimensions are **which field** and **what JSON delivered
+ * for it**, and the costs are not symmetric. Over-accepting writes a record
+ * the store will refuse to load again - bricked by its own tool - or silently
+ * changes which account a project bills to. Over-rejecting means a setting
+ * cannot be changed from the UI, which costs an edit in a file the user owns.
+ */
+interface EditRow {
+  changes: Record<string, unknown>
+  /** The field's value in the stored record afterwards, or `"refused"`. */
+  then: unknown | "refused"
+  why: string
+}
+
+const editRows: EditRow[] = [
+  { changes: { testCmd: "flutter test" }, then: "flutter test", why: "the ordinary case" },
+  { changes: { testCmd: "" }, then: "refused", why: "an empty test command runs as `sh -c \"\"`, which exits 0, and every task would pass without being run" },
+  { changes: { testCmd: "   " }, then: "refused", why: "whitespace is the same mistake" },
+  { changes: { testCmd: null }, then: "refused", why: "a required field has no spelling for absent, so null is an unfinished edit" },
+  { changes: { testCmd: 7 }, then: "refused", why: "a number is not a command" },
+  { changes: { account: "work" }, then: "work", why: "the edit the user asked for: the account was unsayable after registering" },
+  { changes: { account: "personal" }, then: "personal", why: "and back again" },
+  { changes: { account: "billing" }, then: "refused", why: "two words or nothing: a third spelling renders as neither chip colour" },
+  { changes: { account: null }, then: "refused", why: "the store has no second spelling for an unsaid account; clearing one is a hand edit" },
+  { changes: { configDir: "/home/me/.claude-personal" }, then: "/home/me/.claude-personal", why: "which profile the runs use, and so which credentials" },
+  { changes: { configDir: null }, then: undefined, why: "null is the store's own spelling of the default profile, so it clears" },
+  { changes: { configDir: "~/.claude-work" }, then: "refused", why: "the CLI expands no tilde, so a relative profile would be created next to the server's cwd" },
+  { changes: { configDir: "" }, then: "refused", why: "blank is an unfinished edit, not a third spelling of absent" },
+  { changes: { budgetUsd: 120 }, then: 120, why: "the next run's ceiling" },
+  { changes: { budgetUsd: 0 }, then: "refused", why: "a ceiling that funds nothing is indistinguishable from a project that never runs" },
+  { changes: { budgetUsd: -5 }, then: "refused", why: "nor can a negative one" },
+  { changes: { budgetUsd: "120" }, then: "refused", why: "the shape a text input produces, and `Number(\"\")` is 0" },
+]
+
+for (const row of editRows) {
+  const [field = "", sent] = Object.entries(row.changes)[0] ?? []
+  test(`editing ${field} to ${JSON.stringify(sent) ?? "undefined"} -> ${JSON.stringify(row.then)} (${row.why})`, async () => {
+    const { file } = await store()
+    await addProject(file, SAMPLE)
+    const edited = await updateProject(file, "/repo", row.changes)
+
+    if (row.then === "refused") {
+      expect(edited).toMatchObject({ ok: false, why: "invalid" })
+      if (edited.ok || edited.why !== "invalid") throw new Error("unreachable")
+      // The store's own prose, which names the field someone has to fix.
+      expect(edited.message).toContain(field)
+      // Refused before anything was written: a rejected edit must not be able
+      // to leave a record every later load refuses.
+      expect(await loadProjects(file)).toEqual([SAMPLE])
+      return
+    }
+    expect(edited).toMatchObject({ ok: true })
+    const stored = (await loadProjects(file))[0] as unknown as Record<string, unknown>
+    expect(stored[field]).toEqual(row.then)
+    // Nothing else moved.
+    for (const [key, value] of Object.entries(SAMPLE)) {
+      if (key === field) continue
+      expect(stored[key], key).toEqual(value)
+    }
+  })
+}
+
+test("two edits of one project both land", async () => {
+  // Read-modify-write again: without the queue both would read the same
+  // snapshot and the second rename would drop the first one's change. Two
+  // different fields, because that is the shape a lost update hides in - the
+  // store still loads and only one of the two settings someone changed is in
+  // it.
+  const { file } = await store()
+  await addProject(file, SAMPLE)
+  await Promise.all([
+    updateProject(file, "/repo", { testCmd: "first" }),
+    updateProject(file, "/repo", { budgetUsd: 31 }),
+  ])
+  const stored = (await loadProjects(file))[0]
+  expect(stored?.testCmd).toBe("first")
+  expect(stored?.budgetUsd).toBe(31)
+})
+
+test("two edits of one field apply in the order they were called", async () => {
+  // Length and field count cannot see this: both edits apply, but the wrong
+  // one can end up last, so the user's newest change silently loses to the one
+  // before it. Two **names for one store**, as the sibling case above uses,
+  // because that is what makes the two calls take different numbers of
+  // filesystem hops: a queue joined after the store's path had been resolved
+  // would run in the order the filesystem answered rather than the order the
+  // edits were made.
+  const real = await store()
+  const target = join(real.dir, "store.json")
+  const { dir: linkDir } = await store()
+  const link = join(linkDir, "projects.json")
+  await symlink(target, link)
+  await addProject(target, SAMPLE)
+
+  const first = updateProject(link, "/repo", { testCmd: "first" })
+  const second = updateProject(target, "/repo", { testCmd: "second" })
+  await Promise.all([first, second])
+  expect((await loadProjects(target))[0]?.testCmd).toBe("second")
+})
+
+test("an edit through a damaged store throws rather than answering not-registered", async () => {
+  // The asymmetry addProject has: reading a damaged store as "no projects"
+  // would answer 404 for a project that is still in the file, and the next
+  // write would replace what was lost with one record.
+  const { file } = await store()
+  await writeFile(file, '[{ "path": "/repo", oops }]')
+  await expect(updateProject(file, "/repo", { testCmd: "npm test" })).rejects.toThrow(/projects\.json/)
+  await expect(removeProject(file, "/repo")).rejects.toThrow(/projects\.json/)
+})
+
+test("projectIdentity is the one rule for which record a path names", async () => {
+  // Exported because the server has to answer the same question before it
+  // touches the store - a live run is matched by project path - and a second
+  // copy of "absolute, then normalise" is how two spellings become one record
+  // here and two somewhere else.
+  expect(projectIdentity("/repo/")).toBe("/repo")
+  expect(projectIdentity("/repo/sub/..")).toBe("/repo")
+  expect(() => projectIdentity("repo")).toThrow(/absolute repo path/)
+  expect(() => projectIdentity("")).toThrow(/non-empty string/)
+  expect(() => projectIdentity(null)).toThrow(/non-empty string/)
+  // No realpath: a project is most often removed because its repo is gone, and
+  // a rule that needed the directory to exist could not remove it.
+  expect(projectIdentity("/definitely/not/here")).toBe("/definitely/not/here")
 })

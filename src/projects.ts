@@ -206,6 +206,168 @@ export async function addProject(file: string, project: Project): Promise<void> 
 }
 
 /**
+ * The record a path names, which is the same question `path` answers on the way
+ * in: absolute, and lexically normalised.
+ *
+ * Exported because removing and editing both have to ask it before they touch
+ * the store, and so does the server: a removal is refused while a run of that
+ * project is in flight, and that comparison happens before anything is
+ * written. A second copy of "absolute, then normalise" is how `/repo/` and
+ * `/repo` become one record here and two somewhere else.
+ *
+ * **Deliberately no `realpath`**, which is the one place this differs from
+ * registration. `POST /api/projects` resolves a symlinked spelling through git
+ * so two spellings cannot become two histories - but a project is most often
+ * removed *because* its repo has been deleted or moved, and a rule that needed
+ * the directory to exist could not remove it. The cost is that a spelling which
+ * only reaches the store through a symlink is not found here, which is a
+ * refusal naming the store file rather than a record removed by accident.
+ */
+export function projectIdentity(path: unknown): string {
+  return absolutePath(path, "path", "project")
+}
+
+/**
+ * Removes the record for `path`, answering whether there was one.
+ *
+ * `false` rather than a throw, because "nothing is registered there" is a
+ * normal answer - the caller turns it into a 404 - and it must stay
+ * distinguishable from a damaged store, which still throws with the file, the
+ * record and the field in the message.
+ *
+ * A `path` that cannot be one record's identity throws, unlike `updateProject`,
+ * whose result type can carry it. The server resolves the path itself before
+ * calling this - it has to, because the in-flight-run check compares against
+ * it - so that throw is a library caller's mistake rather than a request's.
+ *
+ * **The run logs of a removed project are deliberately left where they are.**
+ * They live in `~/.orch/runs` keyed by run id, they are the record of work that
+ * cost real money, and nothing can rebuild one: removing a project changes what
+ * kantan tracks, and reading that as "delete this project's history" would be
+ * an unrecoverable answer to a recoverable request. `src/runindex.ts` already
+ * skips a log whose project is no longer registered and says so in a warning,
+ * so the whole cost of keeping them is that warning - and re-registering the
+ * same path brings every run of it back into the tree.
+ */
+export async function removeProject(file: string, path: string): Promise<boolean> {
+  // Refused before the queue, for the reason `addProject` validates before it:
+  // a path this function cannot resolve to one record names nothing to remove,
+  // and resolving a relative one would name a different record depending on
+  // where the server was launched from.
+  const identity = projectIdentity(path)
+  // The queue slot is taken here, synchronously, before the first await, as
+  // `addProject` takes it: a removal and an add are both read-modify-write, so
+  // two running together would read one snapshot and the second rename would
+  // drop the first one's work.
+  return serialised(async () => {
+    const target = await storePath(file)
+    const all = await loadProjects(target)
+    const at = all.findIndex((p) => p.path === identity)
+    // Nothing matched is not a write. This file is hand-edited, read in diffs
+    // and often symlinked into a dotfiles repo, so a rewrite that changed
+    // nothing would still touch its mtime and still canonicalise a hand edit's
+    // key order - a diff someone has to read and explain.
+    if (at === -1) return false
+    all.splice(at, 1)
+    await writeStore(target, all)
+    return true
+  })
+}
+
+/**
+ * What an edit did, as a result rather than an exception.
+ *
+ * The two things a *caller* can get wrong are tagged, because the layer above
+ * answers them differently - 404 for a path nobody registered, 400 for a value
+ * the store will not hold - and telling two exceptions apart means reading
+ * their prose, which breaks the first time a sentence is reworded. A load or a
+ * write failure still throws: that is the damaged-store case, which is a 500
+ * forwarding its own message, exactly as registration answers it.
+ */
+export type Edited =
+  | { ok: true; project: Project }
+  | { ok: false; why: "not-registered" }
+  | { ok: false; why: "invalid"; message: string }
+
+/**
+ * Changes the fields `changes` names on the record for `path`, and nothing else.
+ *
+ * **A partial update, and that is the whole point.** `addProject` replaces a
+ * record wholesale, which is why registering a known repo again is refused: a
+ * second trip through a three-field dialog would reset a `budgetUsd` or an
+ * `allowedTools` list that was tuned by hand, and this store is the one piece
+ * of state no repository can rebuild. So only the keys present here move, and
+ * rebuilding the record through `defaults()` is precisely what this must not do
+ * - it would reintroduce the bug that refusal exists to prevent.
+ *
+ * The merge is checked by `validateProject`, the same function every load and
+ * every add goes through, so there is no second opinion about what a field may
+ * hold: a blank `testCmd`, a relative `configDir`, a non-positive budget and an
+ * unknown key are all refused here for the reasons they are refused there - by
+ * name, rather than dropped in silence. A `RETIRED` key is that rule's one
+ * exception here as it is on every load: the setting it named is gone, so an
+ * edit naming it changes nothing and loses nothing.
+ *
+ * `path` may not be among `changes`. It is the record's identity, every run log
+ * and every start request keys on it, and moving it is a remove plus an add:
+ * two decisions, taken somewhere a human can see both halves.
+ */
+export async function updateProject(
+  file: string,
+  path: string,
+  changes: Record<string, unknown>,
+): Promise<Edited> {
+  // Tagged rather than thrown, unlike `removeProject`'s: this result type can
+  // carry it, and a path from a request body is the caller's mistake - a 400 -
+  // where a throw out of here means the store on disk is damaged, which is a
+  // 500 that forwards its own message.
+  let identity: string
+  try {
+    identity = projectIdentity(path)
+  } catch (e) {
+    return { ok: false, why: "invalid", message: (e as Error).message }
+  }
+  const where = `${identity} in ${file}`
+  if ("path" in changes) {
+    return {
+      ok: false,
+      why: "invalid",
+      message: `${where}: path is a project's identity and cannot be edited here - the run logs reference the spelling it was registered under, and two spellings of one repo are two histories. Remove the project and add it again at the new path.`,
+    }
+  }
+  // Synchronously, before the first await, for the reason `addProject` says.
+  return serialised(async () => {
+    const target = await storePath(file)
+    const all = await loadProjects(target)
+    const at = all.findIndex((p) => p.path === identity)
+    const stored = all[at]
+    // Never an insert: an edit names a record that exists, and creating one
+    // here would register a repository nothing has checked is a repository.
+    if (stored === undefined) return { ok: false, why: "not-registered" }
+
+    let record: Project
+    try {
+      // Spread **onto the stored record**: an absent key means "leave it", and
+      // the keys of a parsed body are exactly the keys that were sent.
+      record = validateProject({ ...stored, ...changes }, where)
+    } catch (e) {
+      return { ok: false, why: "invalid", message: (e as Error).message }
+    }
+
+    // Compared as the bytes that would be written, which `validateProject`
+    // makes meaningful: it rebuilds every record in `FIELDS` order, so two
+    // records that serialise the same are the same record. An edit that asks
+    // for what is already there therefore touches nothing - including the
+    // mtime, and including the key order of a file someone hand-edited.
+    if (JSON.stringify(record) !== JSON.stringify(stored)) {
+      all[at] = record
+      await writeStore(target, all)
+    }
+    return { ok: true, project: record }
+  })
+}
+
+/**
  * The file a write should actually replace.
  *
  * A store symlinked into a dotfiles repo is a normal setup, and renaming over
