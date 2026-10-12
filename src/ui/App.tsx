@@ -10,7 +10,7 @@ import { AddRepo, type Detection } from "./AddRepo.tsx"
 import { AddTasks } from "./AddTasks.tsx"
 import { ProjectPanel, type AccountOption } from "./ProjectPanel.tsx"
 import { StartPanel } from "./StartPanel.tsx"
-import { act, addTasks, detectPath, draftFeature, registerProject, removeProject, removeTask, startRun, taskKeyOf, updateProject, type RunView } from "./live.ts"
+import { act, addTasks, detectPath, draftFeature, proposeTasks, registerProject, removeProject, removeTask, runTestCommand, startRun, summaryOf, taskKeyOf, updateProject, type RunView } from "./live.ts"
 import { useAction, usePlan, useRun, useTree } from "./useRun.ts"
 import type { RunPhase } from "../runlog.ts"
 import type { AskingPhase } from "./Gate.tsx"
@@ -733,6 +733,20 @@ export function App() {
              figure, and a figure with nothing to save it is a control that
              silently does nothing. A project from a store written before the
              field existed has no figure, and prints no guessed one. */
+          /* The artboard's "Run it now", which was never drawn because nothing
+             routed `runTests`. The command comes from the field rather than the
+             store, because the control exists to prove a command works before
+             it is trusted. */
+          onRunTest={async (cmd) => {
+            const answer = await runTestCommand({ projectPath: panelProject.path, testCmd: cmd })
+            const summary = summaryOf(answer)
+            return {
+              exitCode: answer.exitCode,
+              durationMs: answer.durationMs,
+              timedOut: answer.timedOut,
+              ...(summary === undefined ? {} : { summary }),
+            }
+          }}
           {...(panelProject.budgetUsd === undefined
             ? {}
             : { budgetUsd: panelProject.budgetUsd, onSaveBudget: (usd: number) => onSaveBudget(panelProject.path, usd) })}
@@ -873,6 +887,18 @@ export function App() {
             featureFile={addTasksFor.feature.path}
             tasks={addTasksFor.feature.tasks}
             account={addTasksFor.project.account}
+            /* The artboard's "Ask Claude" tab, which has been built since this
+               screen was ported and had nothing to call. `POST /api/features`
+               drafts a whole *new* file numbered from T1, which is the wrong
+               shape for a file that already has tasks - the gap `AddTasks`
+               records in its own header. */
+            onDraft={async (prompt) => ({
+              tasks: await proposeTasks({
+                projectPath: addTasksFor.project.path,
+                featureFile: addTasksFor.feature.path,
+                text: prompt,
+              }),
+            })}
             onAdd={async (texts) => {
               const refs = await addTasks({
                 projectPath: addTasksFor.project.path,

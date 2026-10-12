@@ -7,6 +7,8 @@ import { parseFeature } from "./backlog"
 import type { Task } from "./backlog"
 import { draftFeature, type Draft } from "./draft"
 import { appendTasksToFile, listFeatureFiles, readFeature, removeTaskFromFile } from "./featurefile"
+import { runTests } from "./testrun"
+import { proposeTasks } from "./draft"
 import type { AppendResult, RemoveResult } from "./featurefile"
 import { commitPaths, requireUsableRepo, taskBranchName } from "./git"
 import type { Repo } from "./git"
@@ -531,6 +533,20 @@ export const ROUTES: Record<string, RouteHandler> = {
    * entry point the design gives for adding work - the "+ Add task" row under
    * each file - opened a screen whose only action threw. */
   "POST /api/features/task": (req, ctx) => appendFeatureTasks(req, ctx),
+
+  /** Running a project's test command once, now, without starting a run.
+   * `src/testrun.ts` has had `runTests` since Task 11 and nothing routed it, so
+   * `ProjectPanel`'s "Run it now" and `AddRepo`'s "Run it once" - both in the
+   * artboards, both already built - were never drawn. */
+  "POST /api/test": (req, ctx) => runTestCommand(req, ctx),
+
+  /** Proposing tasks for a task file that already exists, **without writing
+   * them**. The other half of `AddTasks`: its "Ask Claude" tab has been built
+   * since the screen was ported and had nothing to call, because
+   * `POST /api/features` drafts a whole new file numbered from T1 - the wrong
+   * shape for a file that already has tasks. Its header has recorded the gap
+   * all along. */
+  "POST /api/features/propose": (req, ctx) => proposeFeatureTasks(req, ctx),
 }
 
 /**
@@ -1874,6 +1890,17 @@ const REMOVE_TASK_KEYS = ["projectPath", "featureFile", "taskRef"] as const
 
 const APPEND_TASK_KEYS = ["projectPath", "featureFile", "texts"] as const
 
+const TEST_KEYS = ["projectPath", "testCmd"] as const
+
+const PROPOSE_KEYS = ["projectPath", "featureFile", "text"] as const
+
+/** A trial run is bounded tighter than a run's own verification: somebody is
+ * watching it, and a suite that takes ten minutes is not what this control is
+ * for. The command keeps running to completion either way - `runTests` caps
+ * what it *keeps*, not what the command does - so the bound here is only on
+ * how long the request waits. */
+const TRIAL_TIMEOUT_MS = 3 * 60 * 1000
+
 /** How many tasks one call may add, and how long each may be. A bound rather
  * than a guess at intent: the body is JSON from a page, and `appendTasks`
  * writes a line per text into a file in someone's repository. */
@@ -2719,6 +2746,154 @@ async function appendFeatureTasks(req: Request, ctx: RouteContext): Promise<Resp
 /** What a value is, for a refusal that names it without echoing it back. */
 function describeValue(value: unknown): string {
   return value === null ? "null" : Array.isArray(value) ? "an array" : typeof value
+}
+
+/**
+ * Runs a test command once and answers what it did. No run, no branch, no tick.
+ *
+ * **It takes the command from the body rather than the store**, and that is the
+ * one decision here worth defending. The control it serves exists to prove a
+ * command works *before* it is trusted, so it has to run the string in the
+ * field - which may not be the saved one yet. Running the stored command
+ * instead would answer a question nobody asked and label it with the command on
+ * screen, which is the one reading that could get a bad command saved.
+ *
+ * It grants no privilege the caller did not already have: anything holding the
+ * token can `PATCH /api/projects` with any `testCmd` and then start a run,
+ * which runs it through the same `sh -c`. The guard that matters is the one on
+ * every acting route - same-origin, token, `SameSite=Strict` - not a filter on
+ * the string, and a filter is exactly what would give the wrong impression that
+ * this is a sandbox.
+ *
+ * Refused while a run is in flight in the repository, like the task routes: the
+ * live run may be mid-verification in that same working tree, and two suites
+ * writing one tree produces a failure neither of them caused.
+ */
+async function runTestCommand(req: Request, ctx: RouteContext): Promise<Response> {
+  const projectsFile = ctx.projectsFile
+  if (projectsFile === null) return noStore("run a test command")
+
+  const body = await readBody(req)
+  if ("refused" in body) return body.refused
+  const parsed = parseBody(body.text, TEST_KEYS)
+  if ("refused" in parsed) return parsed.refused
+
+  const projectPath = nonEmptyString(parsed.fields["projectPath"])
+  const testCmd = nonEmptyString(parsed.fields["testCmd"])
+  if (projectPath === null || testCmd === null) {
+    return badBody(TEST_KEYS, "running a test needs the project and the command, each a non-empty string")
+  }
+  // A blank is refused above by `nonEmptyString`, and this catches the rest of
+  // it: `sh -c "   "` exits 0, and a pass from nothing is the one answer no
+  // reader could tell from a real one.
+  if (testCmd.trim() === "") {
+    return refuse(400, 'refused: that command is only whitespace, and `sh -c "  "` exits 0 - which would read as a pass')
+  }
+
+  const registered = await loadProjects(projectsFile)
+  const project = registered.find((p) => p.path === projectPath)
+  if (project === undefined) return refuse(404, "refused: that project is not registered")
+
+  const live = await liveRunIdFor(ctx, project.path)
+  if (live !== null) {
+    return refuse(
+      409,
+      `refused: run ${live} is in flight in this repository, so nothing was run. It may be verifying its own work in this same working tree right now, and two suites writing one tree produce a failure neither of them caused. Wait for it, or stop it.`,
+    )
+  }
+
+  let outcome
+  try {
+    // The command from the body, on this project's path. `runTests` reads
+    // `testCmd` off what it is handed, so the trial command is passed as a
+    // record of its own rather than by writing to the store first - nothing is
+    // saved by pressing a button that says "run it".
+    outcome = await runTests({ ...project, testCmd }, { timeoutMs: TRIAL_TIMEOUT_MS })
+  } catch (cause) {
+    // `runTests` rejects only when the command could not be started at all,
+    // which is a misconfigured project rather than a test result.
+    return refuse(400, `refused: ${(cause as Error).message}`)
+  }
+
+  return Response.json(
+    {
+      ok: true,
+      testCmd,
+      exitCode: outcome.exitCode,
+      durationMs: outcome.durationMs,
+      timedOut: outcome.timedOut,
+      // The tail of each stream, which is where every runner puts its summary.
+      // Sent so the panel can show what happened rather than only a number.
+      stdout: outcome.stdout,
+      stderr: outcome.stderr,
+    },
+    { headers: { "Cache-Control": "no-store" } },
+  )
+}
+
+/**
+ * Proposes tasks for a file that already exists, and writes nothing.
+ *
+ * The guards are the task routes', minus one: **a run in flight is fine here.**
+ * Nothing is written and nothing is committed, so the reasons the other three
+ * refuse - a commit landing on the run's branch, two writers in one file, a
+ * suite in the same working tree - do not apply. Refusing anyway would make the
+ * screen unusable for exactly as long as a run takes, for a call whose whole
+ * output is text on a page the human then chooses from.
+ *
+ * It reads the file so the proposals fit what is there. That read is why the
+ * containment check still runs: the path comes from the client.
+ */
+async function proposeFeatureTasks(req: Request, ctx: RouteContext): Promise<Response> {
+  const projectsFile = ctx.projectsFile
+  if (projectsFile === null) return noStore("propose tasks")
+
+  const body = await readBody(req)
+  if ("refused" in body) return body.refused
+  const parsed = parseBody(body.text, PROPOSE_KEYS)
+  if ("refused" in parsed) return parsed.refused
+
+  const projectPath = nonEmptyString(parsed.fields["projectPath"])
+  const featureFile = nonEmptyString(parsed.fields["featureFile"])
+  const text = nonEmptyString(parsed.fields["text"])
+  if (projectPath === null || featureFile === null || text === null) {
+    return badBody(
+      PROPOSE_KEYS,
+      "proposing tasks needs the project, the task file they are for, and a description of the work",
+    )
+  }
+
+  const registered = await loadProjects(projectsFile)
+  const project = registered.find((p) => p.path === projectPath)
+  if (project === undefined) return refuse(404, "refused: that project is not registered")
+
+  const relative = plannedPath(featureFile)
+  if (relative === null) return refuse(400, TASK_FILE_OUTSIDE_REPO)
+  const target = resolve(project.path, relative)
+  if (!inside(target, project.path)) return refuse(400, TASK_FILE_OUTSIDE_REPO)
+
+  let existing: string
+  try {
+    existing = (await readFeature(target)).src
+  } catch (cause) {
+    const code = (cause as NodeJS.ErrnoException).code
+    return refuse(code === "ENOENT" ? 404 : 400, `refused: ${(cause as Error).message}`)
+  }
+
+  let tasks: string[]
+  try {
+    tasks = await proposeTasks(existing, text)
+  } catch (cause) {
+    // The model's failures are the caller's to read, as the drafter's are: an
+    // empty reply, a reply with nothing task-shaped in it. 502, because the
+    // request was fine and something upstream was not.
+    return refuse(502, `the tasks could not be drafted: ${(cause as Error).message}`)
+  }
+
+  return Response.json(
+    { ok: true, featureFile: relative, tasks },
+    { headers: { "Cache-Control": "no-store" } },
+  )
 }
 
 const TASK_FILE_OUTSIDE_REPO = "refused: that task file does not sit inside the project"

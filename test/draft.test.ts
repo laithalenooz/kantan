@@ -1,8 +1,8 @@
-import { expect, test } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { parseFeature } from "../src/backlog"
-import { draftFeature, haikuReply } from "../src/draft"
+import { draftFeature, haikuReply, proposeTasks } from "../src/draft"
 
 /**
  * The house format, as the prompt asks for it. The acceptance test is not that
@@ -370,4 +370,124 @@ test("the default call goes through CLAUDE_BIN on claude-haiku-5-5", async () =>
   expect(args).toContain("--safe-mode")
   expect(args).toContain("--strict-mcp-config")
   expect(valueOf("--max-budget-usd")).toBe("0.05")
+})
+
+/* ========================================================================== */
+/* proposeTasks: tasks for a file that already exists                         */
+/* ========================================================================== */
+
+const EXISTING = `# Importer
+
+- [ ] T1 Read the CSV
+- [x] T2 Write the rows
+`
+
+/**
+ * The dimension: **what each reply line is prefixed with.** A model adds list
+ * furniture even when told not to, and the costs are not symmetric -
+ * over-stripping eats the start of a real task, under-stripping writes
+ * "- [ ] T4 - [ ] Add a flag" into someone's backlog. The whole enumeration is
+ * one matrix.
+ */
+describe("proposeTasks strips the furniture a model adds", () => {
+  const ROWS: ReadonlyArray<{ why: string; line: string; kept: string }> = [
+    { why: "plain text", line: "Add a flag", kept: "Add a flag" },
+    { why: "a dash bullet", line: "- Add a flag", kept: "Add a flag" },
+    { why: "a star bullet", line: "* Add a flag", kept: "Add a flag" },
+    { why: "a plus bullet", line: "+ Add a flag", kept: "Add a flag" },
+    { why: "an ordered marker", line: "4. Add a flag", kept: "Add a flag" },
+    { why: "an ordered marker with a paren", line: "4) Add a flag", kept: "Add a flag" },
+    { why: "a checkbox", line: "- [ ] Add a flag", kept: "Add a flag" },
+    { why: "a checkbox and a ref", line: "- [ ] T4 Add a flag", kept: "Add a flag" },
+    { why: "a ticked checkbox, which a proposal never is", line: "- [x] T4 Add a flag", kept: "Add a flag" },
+    { why: "a bare ref", line: "T7 Add a flag", kept: "Add a flag" },
+    { why: "surrounding whitespace", line: "   Add a flag   ", kept: "Add a flag" },
+    /* Anchored, so furniture in the middle of a sentence is content. */
+    { why: "a dash inside the sentence", line: "Add a flag - the dry-run one", kept: "Add a flag - the dry-run one" },
+    { why: "a number inside the sentence", line: "Support 4. and 5. markers", kept: "Support 4. and 5. markers" },
+  ]
+
+  for (const { why, line, kept } of ROWS) {
+    test(`reads ${why}`, async () => {
+      const { ask } = replying(line)
+      expect(await proposeTasks(EXISTING, "more work", ask)).toEqual([kept])
+    })
+  }
+})
+
+describe("proposeTasks", () => {
+  test("returns the tasks in order, with no refs of its own", async () => {
+    const { ask } = replying("Handle a missing column\nReport the row number\nRetry once on a lock\n")
+    expect(await proposeTasks(EXISTING, "make it sturdier", ask)).toEqual([
+      "Handle a missing column",
+      "Report the row number",
+      "Retry once on a lock",
+    ])
+  })
+
+  test("sends the file's current contents, so proposals fit what is there", async () => {
+    const { ask, prompts } = replying("Handle a missing column")
+    await proposeTasks(EXISTING, "make it sturdier", ask)
+    expect(prompts[0]).toContain("T1 Read the CSV")
+    expect(prompts[0]).toContain("make it sturdier")
+    // And it says what *not* to send back, since the tool assigns the refs.
+    expect(prompts[0]).toContain("no \"T1\" refs")
+  })
+
+  test("drops the unambiguous non-tasks and keeps the rest", async () => {
+    const { ask } = replying(
+      "```\n# Importer\nHandle a missing column\n---\n\nReport the row number\n```\n",
+    )
+    expect(await proposeTasks(EXISTING, "x", ask)).toEqual([
+      "Handle a missing column",
+      "Report the row number",
+    ])
+  })
+
+  /**
+   * It refuses far less than `draftFeature`, and that is the design. A draft
+   * becomes a file, so a malformed one must be refused before it is written.
+   * These become proposals on a screen the human ticks, so a line that is not
+   * really a task costs one untick - while a refusal costs the whole reply,
+   * including the good lines in it.
+   */
+  test("a prose line is kept rather than guessed at, because the human chooses", async () => {
+    const { ask } = replying("Here are three tasks:\nHandle a missing column\n")
+    expect(await proposeTasks(EXISTING, "x", ask)).toEqual([
+      "Here are three tasks:",
+      "Handle a missing column",
+    ])
+  })
+
+  test("a reply with nothing task-shaped in it is refused", async () => {
+    for (const reply of ["", "   \n\n", "```\n```\n", "# Just a heading\n", "---\n"]) {
+      const { ask } = replying(reply)
+      await expect(proposeTasks(EXISTING, "x", ask)).rejects.toThrow()
+    }
+  })
+
+  test("an empty description is refused before the model is asked", async () => {
+    const { ask, prompts } = replying("Handle a missing column")
+    await expect(proposeTasks(EXISTING, "   ", ask)).rejects.toThrow("needs a description")
+    expect(prompts).toEqual([])
+  })
+
+  test("a very long reply is truncated rather than refused", async () => {
+    const many = Array.from({ length: 40 }, (_, i) => `Task number ${i}`).join("\n")
+    const { ask } = replying(many)
+    const got = await proposeTasks(EXISTING, "x", ask)
+    expect(got).toHaveLength(12)
+    expect(got[0]).toBe("Task number 0")
+  })
+
+  test("a very long single task is clipped, not dropped", async () => {
+    const { ask } = replying("x".repeat(500))
+    const got = await proposeTasks(EXISTING, "x", ask)
+    expect(got[0]?.length).toBe(300)
+  })
+
+  test("a leading BOM is not part of the first task", async () => {
+    const { ask } = replying("﻿Handle a missing column\n")
+    expect(await proposeTasks(EXISTING, "x", ask)).toEqual(["Handle a missing column"])
+  })
 })

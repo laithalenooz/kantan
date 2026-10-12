@@ -786,6 +786,98 @@ export async function removeTask(
 }
 
 /**
+ * Tasks a model proposes for a task file that already exists. Writes nothing.
+ *
+ * Answers the texts verbatim, with no refs: `appendTasks` assigns those against
+ * the bytes on disk when the human accepts some of them, so a ref proposed here
+ * would be a guess about a file that may have changed since.
+ */
+export async function proposeTasks(
+  ask: { projectPath: string; featureFile: string; text: string },
+  fetcher: typeof fetch = fetch,
+): Promise<string[]> {
+  const res = await withSession(fetcher, (f) =>
+    f(`${API}/features/propose`, { method: "POST", cache: "no-store", body: JSON.stringify(ask) }),
+  )
+  if (!res.ok) throw new Error(`${res.status} ${await text(res)}`)
+  const body = (await res.json()) as { tasks?: unknown }
+  const tasks = body.tasks
+  if (!Array.isArray(tasks) || !tasks.every((t): t is string => typeof t === "string")) {
+    throw new Error("the server answered no tasks this page could read")
+  }
+  if (tasks.length === 0) throw new Error("the model proposed nothing to add")
+  return tasks
+}
+
+/** What `POST /api/test` answers. */
+export interface TestRunAnswer {
+  testCmd: string
+  exitCode: number
+  durationMs: number
+  timedOut: boolean
+  stdout: string
+  stderr: string
+}
+
+/**
+ * Runs a test command once, without starting a run.
+ *
+ * The command is sent rather than read from the store, because the control it
+ * serves exists to prove a command works *before* it is saved - see the route.
+ *
+ * A refusal is thrown rather than folded into an outcome, and that distinction
+ * is the point of this function: a 409 ("a run is in flight") and a 400 ("the
+ * command could not be started") are not test results, and returning either as
+ * an exit code would put a number next to a command that never ran. Only a
+ * command that actually executed produces an answer here.
+ */
+export async function runTestCommand(
+  trial: { projectPath: string; testCmd: string },
+  fetcher: typeof fetch = fetch,
+): Promise<TestRunAnswer> {
+  const res = await withSession(fetcher, (f) =>
+    f(`${API}/test`, { method: "POST", cache: "no-store", body: JSON.stringify(trial) }),
+  )
+  if (!res.ok) throw new Error(`that command could not be run: ${res.status} ${await text(res)}`)
+  const body = (await res.json()) as Partial<TestRunAnswer>
+  /* Read, not cast. An exit code is the whole answer here, and a missing one
+     must not arrive as `undefined` where a reader would print it beside a
+     shield. `fetchPlan` paid for this lesson. */
+  if (typeof body.exitCode !== "number") {
+    throw new Error("the command ran but the server did not report an exit code, so there is nothing to judge it by")
+  }
+  return {
+    testCmd: typeof body.testCmd === "string" ? body.testCmd : trial.testCmd,
+    exitCode: body.exitCode,
+    durationMs: typeof body.durationMs === "number" ? body.durationMs : 0,
+    timedOut: body.timedOut === true,
+    stdout: typeof body.stdout === "string" ? body.stdout : "",
+    stderr: typeof body.stderr === "string" ? body.stderr : "",
+  }
+}
+
+/**
+ * The last line of a runner's output, which is where every runner puts its
+ * summary.
+ *
+ * `stdout` first and `stderr` only if it has nothing: many runners print the
+ * failure summary to stderr, and a suite that failed has something to say
+ * there, but a suite that passed often writes a trailing newline to stderr and
+ * nothing else. Empty rather than a guess when neither says anything.
+ */
+export function summaryOf(answer: { stdout: string; stderr: string }): string | undefined {
+  const lastLine = (text: string): string | undefined =>
+    text
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l !== "")
+      .at(-1)
+  const line = lastLine(answer.stdout) ?? lastLine(answer.stderr)
+  // A megabyte tail can hold a very long line; the chip is one line of a card.
+  return line === undefined ? undefined : line.slice(0, 160)
+}
+
+/**
  * Adds tasks to a task file that already exists.
  *
  * The texts carry **no refs**: the server numbers them against the bytes on

@@ -219,6 +219,111 @@ function slugify(title: string): string {
  * back markdown the UI would render as an empty feature. See the module
  * comment for the shape-by-shape enumeration.
  */
+const PROPOSE_PROMPT = `Below is a task file from a software project, then a
+description of more work to add to it.
+
+Reply with nothing but the new tasks, one per line, in the order they should be
+done. Three to eight of them. No checkboxes, no "T1" refs, no numbering, no
+title, no code fence, no preamble, no sign-off - the file already has a title
+and the refs are assigned by the tool, not by you.
+
+Each line is one task: a short imperative sentence, the way the existing tasks
+are written. Do not repeat work the file already covers.
+
+The file:
+`
+
+/**
+ * How many proposals are kept, and how long each may be.
+ *
+ * The prompt asks for three to eight. These are the bounds on what is
+ * *accepted*, which is a different question: the reply is from a model and the
+ * tasks go on a screen the human chooses from, so a reply of forty lines is
+ * truncated rather than refused - twelve to look at beats an error, and the
+ * eleven dropped would have been scrolled past.
+ */
+const MAX_PROPOSALS = 12
+const MAX_PROPOSAL_CHARS = 300
+
+/** A line that is a heading, a fence, or a horizontal rule: never a task. */
+const NOT_A_TASK = /^(?:#{1,6}\s|(?:```|~~~)|[-*_][-*_ \t]*$)/
+
+/**
+ * Strips the list furniture a model adds even when told not to.
+ *
+ * The dimension is **what each reply line is prefixed with**, and the whole
+ * enumeration is here because the costs are not symmetric. Over-stripping
+ * would eat the start of a real task; under-stripping writes `- [ ] T4 - [ ]
+ * Add a flag` into someone's backlog. So each pattern is anchored and removed
+ * at most once, in the order a model nests them:
+ *
+ * | reply line | kept |
+ * |---|---|
+ * | `Add a flag` | `Add a flag` |
+ * | `- Add a flag` | `Add a flag` |
+ * | `* Add a flag` | `Add a flag` |
+ * | `4. Add a flag` | `Add a flag` |
+ * | `- [ ] Add a flag` | `Add a flag` |
+ * | `- [ ] T4 Add a flag` | `Add a flag` |
+ * | `- [x] T4 Add a flag` | `Add a flag` - a proposal is never done |
+ * | `Add a flag - [ ] mid-sentence` | unchanged: the anchors do not match |
+ *
+ * A ref is stripped because assigning one is `appendTasks`'s job, against the
+ * bytes on disk - a `T4` from a model is a guess about a file it cannot see
+ * the current state of, and keeping it would be the one mistake that wedges two
+ * tasks under one ref.
+ */
+function bare(line: string): string {
+  let out = line.trim()
+  out = out.replace(/^(?:[-*+]|\d+[.)])\s+/, "")
+  out = out.replace(/^\[[ xX]\]\s+/, "")
+  out = out.replace(/^T\d+\s+/, "")
+  return out.trim()
+}
+
+/**
+ * Tasks to add to a file that already exists, as texts with no refs.
+ *
+ * Deliberately **not** `draftFeature`: that one writes a whole file numbered
+ * from `T1`, which is the wrong shape for a file that already has tasks - and
+ * it is the gap `src/ui/AddTasks.tsx` has recorded in its header since it was
+ * written, which left its "Ask Claude" tab unwired.
+ *
+ * It refuses far less than `draftFeature` does, and that is the design rather
+ * than a lower standard. A draft becomes a file, so a malformed one has to be
+ * refused before it is written. These become **proposals on a screen the human
+ * ticks**, so the human is the filter: a line that is not really a task is one
+ * they untick, while a refusal costs them the whole reply including the six
+ * good lines in it. Only the unambiguous non-tasks - a heading, a fence, a
+ * rule, a blank - are dropped here, and nothing is guessed about prose.
+ */
+export async function proposeTasks(
+  existing: string,
+  text: string,
+  ask: Ask = askHaiku,
+): Promise<string[]> {
+  if (text.trim() === "") throw new Error("a proposal needs a description of the work to add")
+
+  const reply = await ask(`${PROPOSE_PROMPT}\n${existing}\n\nThe work to add:\n${text.trim()}\n`)
+  const body = reply.startsWith("\uFEFF") ? reply.slice(1) : reply
+  if (body.trim() === "") throw new Error(`${HAIKU_MODEL} returned an empty reply`)
+
+  const tasks: string[] = []
+  for (const raw of body.split("\n")) {
+    const line = match(raw).trim()
+    if (line === "" || NOT_A_TASK.test(line)) continue
+    const task = bare(line)
+    if (task === "") continue
+    tasks.push(task.slice(0, MAX_PROPOSAL_CHARS))
+    if (tasks.length === MAX_PROPOSALS) break
+  }
+
+  if (tasks.length === 0) {
+    throw new Error(`the reply held no task lines; refusing to propose from it: ${head(reply)}`)
+  }
+  return tasks
+}
+
 export async function draftFeature(text: string, ask: Ask = askHaiku): Promise<Draft> {
   if (text.trim() === "") throw new Error("a feature draft needs a description to work from")
 

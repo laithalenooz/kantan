@@ -4593,3 +4593,157 @@ test("a file edited since the draft is numbered against what is on disk now", as
   expect(after).toContain("- [ ] T8 Drafted earlier")
   expect(after).toContain("- [ ] T7 Typed by hand")
 })
+
+/* ========================================================================== */
+/* POST /api/test and POST /api/features/propose                              */
+/* ========================================================================== */
+
+const TEST_ROUTE = "POST /api/test"
+const PROPOSE_ROUTE = "POST /api/features/propose"
+
+function runTest(l: Launch, body: unknown): Promise<{ status: number; headers: Headers; body: string }> {
+  return call(l, { path: "/api/test", method: "POST", body: JSON.stringify(body) })
+}
+
+function propose(l: Launch, body: unknown): Promise<{ status: number; headers: Headers; body: string }> {
+  return call(l, { path: "/api/features/propose", method: "POST", body: JSON.stringify(body) })
+}
+
+test("both new routes are registered behind the guards and not token-exempt", () => {
+  for (const route of [TEST_ROUTE, PROPOSE_ROUTE]) {
+    expect(Object.keys(ROUTES)).toContain(route)
+    expect(TOKEN_EXEMPT.has(route)).toBe(false)
+  }
+})
+
+test("a test command runs and its exit code comes back, pass and fail alike", async () => {
+  const repo = await cleanRepo()
+  const l = await withTree(await storeOf(repo))
+
+  const passed = await runTest(l, { projectPath: repo, testCmd: "echo '3 passing'; exit 0" })
+  expect(passed.status).toBe(200)
+  const pass = JSON.parse(passed.body) as { exitCode: number; stdout: string; timedOut: boolean }
+  expect(pass.exitCode).toBe(0)
+  expect(pass.stdout).toContain("3 passing")
+  expect(pass.timedOut).toBe(false)
+
+  const failed = await runTest(l, { projectPath: repo, testCmd: "echo '1 failing' >&2; exit 3" })
+  const fail = JSON.parse(failed.body) as { exitCode: number; stderr: string }
+  expect(fail.exitCode).toBe(3)
+  expect(fail.stderr).toContain("1 failing")
+})
+
+/** It runs in the project, which is the only place a test command means anything. */
+test("the command runs in the project's own directory", async () => {
+  const repo = await cleanRepo()
+  const l = await withTree(await storeOf(repo))
+
+  const res = await runTest(l, { projectPath: repo, testCmd: "pwd" })
+  expect((JSON.parse(res.body) as { stdout: string }).stdout.trim()).toBe(repo)
+})
+
+/**
+ * The command comes from the body, not the store, because the control exists
+ * to prove a command works *before* it is saved. This is the assertion that
+ * says so: the stored command would have exited 0.
+ */
+test("it runs the command it was given, not the one on record", async () => {
+  const repo = await cleanRepo()
+  const store = await storeFile()
+  await addProject(store, defaults({ path: repo, testCmd: "true" }))
+  const l = await withTree(store)
+
+  const res = await runTest(l, { projectPath: repo, testCmd: "exit 7" })
+  expect((JSON.parse(res.body) as { exitCode: number }).exitCode).toBe(7)
+  // And nothing was saved by pressing a button that says "run it".
+  expect((await loadProjects(store))[0]?.testCmd).toBe("true")
+})
+
+test("a blank or whitespace-only command is refused, because `sh -c` exits 0 on it", async () => {
+  const repo = await cleanRepo()
+  const l = await withTree(await storeOf(repo))
+
+  for (const testCmd of ["", "   ", "\t\n"]) {
+    const res = await runTest(l, { projectPath: repo, testCmd })
+    expect(res.status, `for ${JSON.stringify(testCmd)}`).toBe(400)
+  }
+})
+
+test("a run in flight refuses a trial, which would share its working tree", async () => {
+  const repo = await cleanRepo()
+  const dir = await runsDir()
+  const store = await storeFile()
+  const live = "66666666-6666-4666-8666-666666666666"
+  const l = serve({ runsDir: dir, projectsFile: store, liveRunIds: () => [live] })
+  await logNamingProject(dir, live, (await requireUsableRepo(repo)).root)
+  await register(l, { path: repo, testCmd: "npm test" })
+
+  const res = await runTest(l, { projectPath: repo, testCmd: "exit 0" })
+  expect(res.status).toBe(409)
+  expect(res.body).toContain(live)
+})
+
+test("an unregistered project cannot have a command run in it", async () => {
+  const repo = await cleanRepo()
+  const l = await withTree(await storeFile())
+  const res = await runTest(l, { projectPath: repo, testCmd: "exit 0" })
+  expect(res.status).toBe(404)
+})
+
+/**
+ * Proposing writes nothing, so - unlike the three task routes - a run in
+ * flight is fine. Refusing would make the screen unusable for as long as a run
+ * takes, for a call whose whole output is text on a page.
+ */
+test("proposing reads the file, writes nothing, and is allowed during a run", async () => {
+  const repo = await cleanRepo()
+  const path = await withFeature(repo, "importer.md", FEATURE)
+  const before = await readFile(path, "utf8")
+  const dir = await runsDir()
+  const store = await storeFile()
+  const live = "77777777-7777-4777-8777-777777777777"
+  const l = serve({ runsDir: dir, projectsFile: store, liveRunIds: () => [live] })
+  await logNamingProject(dir, live, (await requireUsableRepo(repo)).root)
+  await register(l, { path: repo, testCmd: "npm test" })
+
+  const res = await propose(l, {
+    projectPath: repo,
+    featureFile: "docs/features/importer.md",
+    text: "make the importer sturdier",
+  })
+
+  // 502 here means it reached the model and the model is not available in a
+  // test; what matters is that it was not refused as a conflict, and that the
+  // file is untouched either way.
+  expect(res.status).not.toBe(409)
+  expect(await readFile(path, "utf8")).toBe(before)
+})
+
+test("proposing refuses a task file outside the project, and one that is not there", async () => {
+  const repo = await cleanRepo()
+  await withFeature(repo, "importer.md", FEATURE)
+  const l = await withTree(await storeOf(repo))
+
+  for (const featureFile of ["../outside.md", "/etc/passwd", "docs/../../x.md"]) {
+    const res = await propose(l, { projectPath: repo, featureFile, text: "x" })
+    expect([400, 404], `for ${featureFile}`).toContain(res.status)
+  }
+
+  const missing = await propose(l, { projectPath: repo, featureFile: "docs/features/nope.md", text: "x" })
+  expect(missing.status).toBe(404)
+})
+
+test("proposing needs all three fields", async () => {
+  const repo = await cleanRepo()
+  await withFeature(repo, "importer.md", FEATURE)
+  const l = await withTree(await storeOf(repo))
+
+  for (const body of [
+    { projectPath: repo, featureFile: "docs/features/importer.md" },
+    { projectPath: repo, text: "x" },
+    { featureFile: "docs/features/importer.md", text: "x" },
+    { projectPath: repo, featureFile: "docs/features/importer.md", text: "   " },
+  ]) {
+    expect((await propose(l, body)).status).toBe(400)
+  }
+})
