@@ -54,17 +54,32 @@ designed but inert, check the route table before reading the component.
    wiring it. Do not quietly run the stored command instead: the control exists to prove the
    command in the field.
 
-3. **No account-level view.** The 5-hour window rings are per account and fed by
-   `rate_limit_event` from a live run, so with nothing running there is nowhere to see where the
-   accounts stand. Reported as wanting "accounts states such as usage and other available
-   states". The data only arrives mid-run today; a view would need somewhere to persist the last
-   reading per `configDir`. **This is the largest thing still missing**, and unlike the four
-   above it needs a decision rather than an endpoint: where a reading lives between runs.
+3. **The server factoring plan is done** — see that file's own "Done" section for the two
+   corrections it earned, and for where the same measurement method said *no*.
 
-4. **The server factoring plan is unstarted** — `docs/plans/2026-10-12-server-factoring.md`.
-   `src/server.ts` has grown by five routes this session, so the case is stronger than when it
-   was written. The plan's constraint still holds: **the route table stays one table in one
-   file**, because `Bun.serve({routes})` matches before the guard chain.
+4. **The accounts view is done**, and the decision it needed turned out to be settled by a fact
+   rather than by taste: **`claude` has no subcommand that reports usage.** `claude --help` lists
+   eighteen and none of them does, so there is nowhere to persist a reading *from* - the
+   `rate_limit_event` a run emits is the only source there is. `src/accounts.ts` therefore reads
+   the newest one per profile out of the run logs, and the whole feature is built around
+   `freshness`: `live` while a run is billing to that profile, `current` while the window the
+   figure describes has not reset, `expired` once it has, `never` when nothing has run.
+
+   **If you touch this, keep the two things that make it trustworthy.** An expired reading draws
+   no bar and says "was 90%", because the figure is about a window that no longer exists and
+   drawing it would invite an expensive run on an account whose real usage is unknown. And the
+   footnote stays: kantan only sees what its own runs report, so a Claude Code session in a
+   terminal spends from the same window and never appears. A figure presented as "your usage"
+   would be wrong for everyone who also uses the CLI directly.
+
+   What is still missing, if it ever matters: nothing reports a reading's own timestamp. The log
+   does not stamp `cli` records, so the view says "reported during a run that started T", which
+   is a lower bound and is labelled as one. Adding `at` to the `cli` record would fix it.
+
+5. **`src/ui/AddRepo.tsx` has one 782-line component.** The last large file with a real case for
+   splitting, and the case is weak: splitting it means splitting JSX, which is a rewrite rather
+   than an extraction, and the suite can only vouch for an extraction. Measured and left alone,
+   as `Sidebar`, `Digest`, `Row` and `StartPanel` were.
 
 #### Two rules this session earned the hard way
 
