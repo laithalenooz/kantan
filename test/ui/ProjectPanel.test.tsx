@@ -951,6 +951,34 @@ describe("the test command, and proving it works", () => {
     })
   }
 
+  /**
+   * `canvas.json` draws the chip as "Badge + ShieldCheck", and the artboard
+   * draws it only on `exit 0`. It stays there: `DESIGN.md` forbids a tick
+   * standing in for a code, so a shield that reads "verified" beside a failing
+   * number would be the defect the exit code exists to prevent.
+   */
+  test("wears the artboard's shield only when the code is zero", async () => {
+    for (const [result, icons] of [
+      [{ exitCode: 0 }, 1],
+      [{ exitCode: 1 }, 0],
+      [{ exitCode: null, signal: "SIGKILL" }, 0],
+      [{ exitCode: null }, 0],
+    ] as const) {
+      const h = handlers()
+      await render(
+        <api.ProjectPanel
+          project={project("personal")}
+          accounts={ACCOUNTS}
+          onRunTest={() => Promise.resolve(result)}
+          {...h.props}
+        />,
+      )
+      await click(byText("button", "Run it now"))
+      await settle()
+      expect(all("[data-exit-badge] svg")).toHaveLength(icons)
+    }
+  })
+
   test("drops a result that belongs to a command the field no longer holds", async () => {
     const h = handlers()
     const first = deferred<TestCommandResult>()
