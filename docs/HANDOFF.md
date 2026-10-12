@@ -1152,6 +1152,43 @@ None of it exists. Recorded so the UI work and the API work can meet:
   in `src/draft.ts` already returns without writing - only the route conflates
   the two.
 
+### A project may have no test command, and then the agent verifies (user decision)
+
+Decided by the user on 2026-10-12, after asking why a test command was
+mandatory: *"if no test command is set the agent himself can verify based on
+their implementation."* Most repositories have no suite, and requiring one
+excluded them entirely.
+
+This is a real departure from the design's spine, which `CLAUDE.md` states as
+**"the server runs the tests, not the agent; branch on the exit code, never on
+the agent reporting success"**. The reason that rule exists is specific and
+still true: in `claude -p` a question and a completion both exit
+`result/success`, which is the whole reason the `ORCH: done` sentinel exists.
+An agent saying "done" is not evidence that it is.
+
+So the implementation does what was asked **without letting the UI claim a
+verification it did not observe**:
+
+- `Project.testCmd` becomes optional.
+- With a command, nothing changes: `src/testrun.ts` runs it and the run
+  branches on the exit code.
+- Without one, the test phase becomes an **agent self-check**, and the run
+  records **how** it was verified - not just that it was.
+- Every surface that today prints an exit code must distinguish the two. The
+  design's own rule is *"always print the exit code, never 'looks good'"*
+  (`Row.tsx`, `Digest.tsx`), and the honest extension is that a run with no
+  command says **so**, rather than borrowing the language of one that passed.
+  "Self-checked by the agent - no test command" is true; a green tick is not.
+- `canStart` and the tree's `passed` reading must not treat the two as equal.
+
+The cheap direction is being explicit: a run that over-claims verification
+gets work merged that nothing checked, and the user told us they want this
+precisely because the repos in question have nothing to check with.
+
+Related and already in the design: `Project.dc.html` adds **"Run it now"** on
+the test command with an exit-code badge. That makes a command provable before
+it is trusted, which is the other half of the same problem.
+
 ## Settled: decisions with non-obvious reasons
 
 | Decision | Why it is not the obvious thing |
