@@ -1369,6 +1369,17 @@ async function readProjects(ctx: RouteContext): Promise<Response> {
       path: project.path,
       account: accountOf(project),
       testCmd: project.testCmd,
+      // The folder, not only the word. `account` is a label; `configDir` is
+      // what `src/spawn.ts` turns into `CLAUDE_CONFIG_DIR`, so without it on
+      // the wire the panel's account cards cannot tell two profiles of one
+      // word apart - and `optionId` in `src/ui/ProjectPanel.tsx` exists
+      // precisely to tell them apart.
+      ...(project.configDir === undefined ? {} : { configDir: project.configDir }),
+      // The stored ceiling. Absent from the wire meant the panel's whole
+      // ceiling section was hidden, which read from use as "nowhere to set a
+      // budget" - the store has had the field, and a default of $50, since
+      // `projects.ts` was written.
+      budgetUsd: project.budgetUsd,
       features: read.features,
     })
   }

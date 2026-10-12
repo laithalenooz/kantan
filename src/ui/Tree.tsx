@@ -125,6 +125,15 @@ export interface TreeProject {
    */
   testCmd: string | null
   /**
+   * The default cost ceiling for a run on this project, in dollars.
+   *
+   * Optional only because a log or a fixture written before it existed has
+   * none; `src/projects.ts` has always stored one and defaults it to 50. A
+   * surface with no figure must not print a guessed one - `$0.00 ceiling`
+   * would read as a project that can spend nothing.
+   */
+  budgetUsd?: number
+  /**
    * The Claude profile directory a run bills to, or absent for the default one.
    *
    * Carried but never drawn. It is the field that actually decides which

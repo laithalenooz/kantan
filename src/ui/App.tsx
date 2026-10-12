@@ -423,6 +423,11 @@ export function App() {
     [guard],
   )
 
+  const onSaveBudget = useCallback(
+    async (path: string, budgetUsd: number): Promise<void> => await guard(() => updateProject(path, { budgetUsd })),
+    [guard],
+  )
+
   const onRemoveProject = useCallback(
     async (project: TreeProject): Promise<void> => {
       await guard(async () => {
@@ -635,6 +640,13 @@ export function App() {
           /* `null`, which is the only spelling the store accepts for "no
              suite" - it refuses `""`, because `sh -c ""` exits 0. */
           onClearTestCmd={() => onSaveTestCmd(panelProject.path, null)}
+          /* Both or neither: `ProjectPanel` hides the ceiling section without a
+             figure, and a figure with nothing to save it is a control that
+             silently does nothing. A project from a store written before the
+             field existed has no figure, and prints no guessed one. */
+          {...(panelProject.budgetUsd === undefined
+            ? {}
+            : { budgetUsd: panelProject.budgetUsd, onSaveBudget: (usd: number) => onSaveBudget(panelProject.path, usd) })}
           onRemove={() => onRemoveProject(panelProject)}
         />
       )}

@@ -3510,6 +3510,13 @@ test("a registered repo comes back as a TreeProject, field for field, with its t
       // "account unknown" on every row of every project, which read like a bug.
       account: { kind: "unknown", label: "default profile" },
       testCmd: "bun test",
+      // The stored ceiling, and `defaults()` fills it with 50. It is on the
+      // wire because the panel hides its whole ceiling section without a
+      // figure, which read from use as "nowhere to set a budget" - the field
+      // had existed in the store since `projects.ts` was written, and only the
+      // wire never carried it. `configDir` is absent here because this project
+      // states none, and the key is omitted rather than sent as `null`.
+      budgetUsd: 50,
       features: [
         {
           path: "docs/features/importer.md",
