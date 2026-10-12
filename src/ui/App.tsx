@@ -544,6 +544,10 @@ export function App() {
             setPanel({ kind: "project", path })
           }}
           onAddProject={() => setPanel({ kind: "addRepo" })}
+          onAddTask={(projectPath, featureFile) => {
+            setSelected(null)
+            setPanel({ kind: "addTasks", projectPath, featureFile })
+          }}
         />
 
       {/* Empty renders its own `<main>` and its own `.dots` layer, because
@@ -591,7 +595,7 @@ export function App() {
           accounts={accountOptions}
         />
       )}
-      {nothingSelected && <Empty kind="no-selection" />}
+      {nothingSelected && <Empty kind="no-selection" onAddProject={() => setPanel({ kind: "addRepo" })} />}
 
       {/* The dotted ground is its **own absolutely positioned layer**, exactly
           as the artboard draws it (`position:absolute;inset:0;pointer-events:

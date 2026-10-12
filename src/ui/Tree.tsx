@@ -764,6 +764,12 @@ export interface TreeProps {
    * which is what every artboard draws.
    */
   accountSlot?: (project: TreeProject) => ReactNode
+  /**
+   * Add work to one task file. The design puts this at the end of each file in
+   * the tree rather than behind a panel, which is also the only place it can
+   * name the file it will append to.
+   */
+  onAddTask?: (projectPath: string, featureFile: string) => void
 }
 
 /** Does this triple address this task? Compared whole; a bare ref is ambiguous. */
@@ -827,6 +833,7 @@ export function Tree({
   onSelectProject,
   selectedProject,
   accountSlot,
+  onAddTask,
 }: TreeProps): ReactElement {
   const eyebrow = "text-[11.5px] font-semibold uppercase tracking-[.07em] text-muted-400"
   const ids = useId()
@@ -1014,6 +1021,7 @@ export function Tree({
             {...(onSelectProject === undefined ? {} : { onSelectProject })}
             {...(selectedProject === undefined ? {} : { selectedProject })}
             {...(accountSlot === undefined ? {} : { accountSlot })}
+            {...(onAddTask === undefined ? {} : { onAddTask })}
             project={project}
             first={index === 0}
             order={index}
@@ -1044,10 +1052,12 @@ function ProjectBlock({
   onSelectProject,
   selectedProject,
   accountSlot,
+  onAddTask,
 }: {
   onSelectProject?: (path: string) => void
   selectedProject?: string | null
   accountSlot?: (project: TreeProject) => ReactNode
+  onAddTask?: (projectPath: string, featureFile: string) => void
   project: TreeProject
   first: boolean
   /** Position in the column, which is the artboard's `.d1`-`.d9` stagger step. */
@@ -1145,6 +1155,32 @@ function ProjectBlock({
                     </li>
                   )
                 })}
+
+                {/* The design's own entry point for adding work: a row at the
+                    end of each task file, not a button in a panel. Rendered
+                    only when a handler exists, like the "+" in the header —
+                    `Tree`'s rule is that a control which does nothing is worse
+                    than none at all. */}
+                {onAddTask !== undefined && (
+                  <li>
+                    <button
+                      type="button"
+                      onClick={() => onAddTask(project.path, feature.path)}
+                      className="trow -mx-1 flex w-[calc(100%+0.5rem)] items-center gap-2 rounded-[10px] px-[10px] py-[7px] text-left text-[13px] font-[560] text-muted-500 hover:bg-[#EFEFF2] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo"
+                    >
+                      <span
+                        aria-hidden
+                        className="grid size-[22px] shrink-0 place-items-center rounded-[7px] border border-dashed border-[#D2D3DA] text-ink"
+                      >
+                        <svg viewBox="0 0 24 24" className="ic size-[14px]" {...LINE}>
+                          <path d="M5 12h14" />
+                          <path d="M12 5v14" />
+                        </svg>
+                      </span>
+                      Add task
+                    </button>
+                  </li>
+                )}
               </ul>
             </li>
           )

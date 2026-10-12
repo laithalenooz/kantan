@@ -121,7 +121,17 @@ export interface NoProjectsShape extends EmptyCommon {
 export interface NoSelectionShape extends EmptyCommon {
   kind: "no-selection"
   /** There is no repository to add here. Declared so passing one is an error. */
-  onAddProject?: never
+  /**
+   * Optional here, required on `no-projects`.
+   *
+   * It was `never`, on the reasoning that someone with repositories needs to
+   * pick a task rather than add another repo. True, and it left the only
+   * screen most people see without the artboard's one action — which read as
+   * missing rather than as deliberate. It is the secondary action now: the
+   * arrow still points at the tree, and adding another repository is a thing
+   * people do.
+   */
+  onAddProject?: () => void
 }
 
 export type EmptyProps = NoProjectsShape | NoSelectionShape
@@ -466,6 +476,35 @@ export function Empty(props: EmptyProps): ReactElement {
                 </Icon>
                 Choose one in the projects list on the left.
               </p>
+            )}
+
+            {props.kind === "no-selection" && props.onAddProject !== undefined && (
+              <div style={{ marginTop: 18 }}>
+                <button
+                  type="button"
+                  onClick={props.onAddProject}
+                  className="ghost"
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 8,
+                    height: 44,
+                    padding: "0 18px 0 14px",
+                    borderRadius: 999,
+                    border: "1px solid #DCDCE2",
+                    background: "#fff",
+                    color: "#3A3D45",
+                    fontSize: 14.5,
+                    fontWeight: 600,
+                  }}
+                >
+                  <Icon style={{ width: 16, height: 16, strokeWidth: 2.4 }}>
+                    <path d="M5 12h14" />
+                    <path d="M12 5v14" />
+                  </Icon>
+                  Add another repository
+                </button>
+              </div>
             )}
           </div>
         </div>
