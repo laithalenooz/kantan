@@ -583,7 +583,24 @@ export async function fetchTree(fetcher: typeof fetch = fetch): Promise<TreePayl
 export async function fetchPlan(runId: string, fetcher: typeof fetch = fetch): Promise<PlanSource> {
   const res = await withSession(fetcher, (f) => f(`${API}/runs/${encodeURIComponent(runId)}/plan`, { cache: "no-store" }))
   if (!res.ok) return { status: "unreadable", path: "", why: `the server refused: ${res.status} ${await text(res)}` }
-  return (await res.json()) as PlanSource
+  /* `planAnswer` wraps it: `{ ok: true, plan }`. Casting the envelope straight
+     to `PlanSource` left `status` undefined, and `Gate.tsx` reads that as
+     anything-but-`undictated`... then printed "This run recorded no plan file"
+     and offered nothing to approve, for a run whose log carried the path and
+     whose file was on disk. Measured on a real run: the server answered
+     `status:"loaded"` with 14 kB of markdown while the gate said there was
+     none. A cast is not a parse, which is why the shape is read rather than
+     asserted here. */
+  const body = (await res.json()) as { plan?: unknown }
+  const plan = body.plan
+  if (plan === null || typeof plan !== "object" || !("status" in plan)) {
+    return {
+      status: "unreadable",
+      path: "",
+      why: "the server's answer carried no plan; it may be running a different version than this page",
+    }
+  }
+  return plan as PlanSource
 }
 
 /**

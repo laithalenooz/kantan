@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import { act, fetchTree, foldRun, removeProject, startRun, subscribeRun, taskKeyOf, type RunView } from "../../src/ui/live"
+import { act, fetchPlan, fetchTree, foldRun, removeProject, startRun, subscribeRun, taskKeyOf, type RunView } from "../../src/ui/live"
 import { sumProcessCost } from "../../src/ui/Sidebar"
 import type { RunRecord } from "../../src/runlog"
+import type { PlanSource } from "../../src/ui/Gate"
 
 const RUN = "r-1"
 
@@ -372,6 +373,71 @@ describe("act", () => {
   test("a refusal is thrown with the server's own message", async () => {
     const fetcher = (async () => new Response("refused: that is not a usable run id", { status: 400 })) as unknown as typeof fetch
     await expect(act(RUN, { kind: "approve" }, fetcher)).rejects.toThrow("not a usable run id")
+  })
+})
+
+/**
+ * The envelope, which is the thing that was wrong.
+ *
+ * `fetchPlan` cast `res.json()` straight to `PlanSource` while `planAnswer` in
+ * `src/server.ts` answers `{ ok: true, plan }`. Nothing failed loudly: the cast
+ * is a compile-time assertion and the wire is not checked, so `status` was
+ * `undefined` and `Gate.tsx` - whose only test for the missing case is
+ * `status === "undictated"` - fell through to printing "This run recorded no
+ * plan file" with nothing to approve.
+ *
+ * Measured on a real parked run before the fix: `GET /api/runs/:id/plan`
+ * answered `status:"loaded"` with 14 kB of markdown, the log carried the path
+ * on both its plan record and its park record, the file was on disk - and the
+ * gate said there was no plan. A whole feature was unreachable because of the
+ * one word between the response and the type.
+ *
+ * So these tests assert the shape of the **envelope**, not only the happy
+ * field, and the first one is deliberately written from `planAnswer`'s own
+ * spelling rather than from what `fetchPlan` happens to want.
+ */
+describe("fetchPlan reads what the server actually sends", () => {
+  const answering = (body: unknown, status = 200): typeof fetch =>
+    (async () => new Response(JSON.stringify(body), { status })) as unknown as typeof fetch
+
+  test("unwraps `plan` from the `{ ok, plan }` envelope `planAnswer` writes", async () => {
+    const plan: PlanSource = { status: "loaded", path: "docs/plans/p.md", markdown: "# Plan" }
+    expect(await fetchPlan(RUN, answering({ ok: true, plan }))).toEqual(plan)
+  })
+
+  /* Every variant the server can send, because the defect was not in one of
+     them: it was in the unwrapping, which every variant goes through. */
+  const VARIANTS: readonly PlanSource[] = [
+    { status: "loaded", path: "docs/plans/p.md", markdown: "# Plan" },
+    { status: "unreadable", path: "docs/plans/p.md", why: "it is not there" },
+    { status: "undictated" },
+  ]
+  for (const plan of VARIANTS) {
+    test(`carries a \`${plan.status}\` plan through unchanged`, async () => {
+      expect(await fetchPlan(RUN, answering({ ok: true, plan }))).toEqual(plan)
+    })
+  }
+
+  /**
+   * The cost of a wrong guess, in the direction that matters: a page talking to
+   * a server that answers a shape it does not know must not render that as
+   * "there is no plan". `undictated` is a claim about the run; this is a claim
+   * about the two of them disagreeing, and only one of those is true.
+   */
+  test("an answer with no plan at all is unreadable, never `undictated`", async () => {
+    for (const body of [{ ok: true }, { ok: true, plan: null }, { ok: true, plan: "nope" }, {}]) {
+      const got = await fetchPlan(RUN, answering(body))
+      expect(got.status).toBe("unreadable")
+      expect(got.status).not.toBe("undictated")
+    }
+  })
+
+  test("a refusal keeps the server's own words", async () => {
+    const fetcher = (async () =>
+      new Response("refused: that is not a usable run id", { status: 400 })) as unknown as typeof fetch
+    const got = await fetchPlan(RUN, fetcher)
+    expect(got.status).toBe("unreadable")
+    expect(got.status === "unreadable" ? got.why : "").toContain("not a usable run id")
   })
 })
 
