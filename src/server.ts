@@ -156,19 +156,29 @@ const DEFAULT_STREAM_KEEP_ALIVE_MS = 5_000
  * either way, so this page still bootstraps a session even though it has no
  * script to use one.
  *
- * It names the two commands because somebody who sees it has almost certainly
- * just started the server and is looking at a blank-ish page wondering which
- * half is missing. Until T1 landed this said "the UI arrives in a later task",
- * which was true of the code and useless to a reader.
+ * It names the commands because somebody who sees it has almost certainly just
+ * started the server and is looking at a blank-ish page wondering which half is
+ * missing. Until T1 landed this said "the UI arrives in a later task", which was
+ * true of the code and useless to a reader.
+ *
+ * The dev-loop half says `server:dev` **and** `ui`, not `ui` alone: anyone
+ * reading this page followed the README and ran `bun run server`, so starting
+ * Vite against it would 403 every API call. Advice that only works if you were
+ * already running the other command is worse than no advice, because the
+ * failure it leads to looks like a different bug.
  */
 const INDEX_STUB = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>kantan</title>
 <style>body{font:15px/1.6 ui-sans-serif,system-ui,sans-serif;margin:3rem auto;max-width:34rem;padding:0 1rem;color:#1c1917}
 code{background:#f5f5f4;border-radius:4px;padding:.15em .4em;font-size:.92em}</style></head>
 <body><h1>kantan is running</h1>
-<p>The server is up, but there is no built interface to serve. Either build it once&nbsp;&mdash;</p>
-<p><code>bun run build</code> &nbsp;then reload this page</p>
-<p>&mdash;&nbsp;or run the dev server alongside this one with <code>bun run ui</code> and open the port it prints.</p>
+<p>The server is up, but there is no built interface to serve. Build it once&nbsp;&mdash;</p>
+<p><code>bun run build</code> &nbsp;then reload this page.</p>
+<p>For the dev loop instead, stop this server and start the pair:
+<code>bun run server:dev</code> here and <code>bun run ui</code> alongside it, then open the port
+Vite prints. Both halves are needed: this server refuses the dev server's requests unless it was
+started with <code>server:dev</code>, which is deliberate&nbsp;&mdash; Vite forwards the browser's
+real <code>Host</code> rather than rewriting it, so the rebinding check can still see it.</p>
 </body></html>
 `
 

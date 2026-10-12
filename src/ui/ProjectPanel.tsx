@@ -255,7 +255,8 @@ export interface ProjectPanelProps {
   onClearTestCmd?: () => void | Promise<void>
   /** Called only from the confirmation dialog. */
   onRemove: () => void | Promise<void>
-  /** Runs the command now. Absent hides "Run it now" - there is no endpoint. */
+  /** Runs the command now. Absent hides "Run it now"; `App.tsx` passes it
+   * through `POST /api/test`, so it is only absent in a test or a story. */
   onRunTest?: (cmd: string) => Promise<TestCommandResult>
   /** The stored default ceiling. Absent hides the section. */
   budgetUsd?: number

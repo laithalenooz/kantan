@@ -741,11 +741,16 @@ about rather than only the ones a tree row joined - a run whose feature file has
 since been renamed is still a run, and filtering to what is on screen would
 make it unaddressable the moment the tree and the logs disagree.
 
-One thing the NUL decision did *not* survive, and it is worth knowing which:
-that separator is right over the wire and wrong in the DOM. A React key built
-on it collided, and `optionId` in `src/ui/panel/accounts.ts` uses `/` instead -
-happy-dom's selector parser matches `\0` to U+0000, but CSS says an escape of
-zero is U+FFFD, so a NUL-keyed selector works only in the harness.
+One caveat about that `NUL`, because it is right over the wire and wrong in the
+DOM, and the two reasons are unrelated. The account cards' own identity key had
+a separate bug - it was `option.kind` alone, with no `configDir`, so two
+accounts of the same kind produced duplicate React keys and **hung a render**.
+The fix pairs them, as `optionId` in `src/ui/panel/accounts.ts`. Its separator
+is `/` and not `NUL` for a different reason again: happy-dom's selector parser
+matches `\0` to U+0000, while CSS says an escape of zero is U+FFFD, so a
+NUL-keyed selector works in the harness and nowhere else. Neither of those is
+an argument against `NUL` over the wire, where it remains the one byte a path
+cannot contain.
 
 ### `raise` has no route - BUILT
 
@@ -847,6 +852,11 @@ anything else that serves a file:**
   run `bun run build` to run `bun run build`. Canonicalise per request, not at
   launch: `dist/` is routinely built while the server is already up. Anything
   new that reads a file under a configured directory inherits this.
+  It does widen one case, worth naming rather than discovering: a
+  `dist/assets` that is *itself* a symlink now serves its target. Making that
+  reachable needs write access to kantan's own checkout, which is already
+  source access - the same argument `src/http/readinside.ts` makes about hard
+  links, and it is made there at more length.
 - **The shared reader decodes UTF-8 with `fatal: true`, on purpose.** Three of
   the five files Vite emits are `.woff2`. So the read split into
   `readBytesInside` (containment, cap, open flags) and `readInside` (a decoder
