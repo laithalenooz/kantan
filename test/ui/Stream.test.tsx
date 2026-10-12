@@ -768,11 +768,150 @@ describe("exit codes are printed, never paraphrased", () => {
   })
 })
 
+describe("a rate-limit row reads the figure the way it arrives", () => {
+  /*
+   * `utilization` is a **0–1 fraction**: `src/stream.ts` passes through
+   * whatever `unifiedWindows[rateLimitType].utilization` held, the fixtures
+   * carry 0.41 and 0.22, and `test/stream.test.ts` asserts 0.88 for a
+   * `seven_day` window. The row was rounding it without multiplying, so a
+   * window at 41% read "0% of the window used" — a wrong number, printed
+   * confidently, in the one region whose job is to be believed.
+   *
+   * The dimension is the fraction, enumerated across the range rather than at
+   * the one value a fixture happens to hold: both ends, a value that rounds
+   * down to zero but is not zero, and the two non-numbers the type allows.
+   */
+  const windows: [number | undefined, string][] = [
+    [0, "0% of the window used"],
+    [0.004, "0% of the window used"],
+    [0.41, "41% of the window used"],
+    [0.885, "89% of the window used"],
+    [1, "100% of the window used"],
+    [undefined, "the window's utilisation was not reported"],
+    [Number.NaN, "the window's utilisation was not reported"],
+  ]
+
+  for (const [utilization, expected] of windows) {
+    test(`${String(utilization)} reads as "${expected}"`, async () => {
+      const mounted = await mount(
+        <api.Stream rows={[eventRow("l", { kind: "rate_limit", status: "allowed", utilization })]} />,
+      )
+      expect(mounted.row("l")?.textContent).toContain(expected)
+    })
+  }
+
+  test("it does not claim to know which window this is", async () => {
+    /*
+     * `src/stream.ts` reads whichever window `rateLimitType` names and then
+     * drops the name, so a `seven_day` window arrives here indistinguishable
+     * from a `five_hour` one. The artboard writes "the 5-hour window" because
+     * it drew a five-hour case; a row that copied that wording would relabel
+     * every weekly window as an hourly one.
+     */
+    const mounted = await mount(
+      <api.Stream rows={[eventRow("l", { kind: "rate_limit", status: "allowed", utilization: 0.88 })]} />,
+    )
+    const text = mounted.row("l")?.textContent ?? ""
+    expect(text).toContain("88% of the window used")
+    expect(text).not.toContain("5-hour")
+    expect(text).not.toContain("seven")
+  })
+})
+
+describe("an edit prints what went and what came", () => {
+  /*
+   * `Return.dc.html` puts `+2 −1` beside an edit's path. The counts come from
+   * the same `markLines` pass that tints the before/after panel, so the two
+   * cannot disagree — and the case worth pinning is the one where a naive
+   * count is wrong: `Edit` with an empty `old_string` is a pure insertion, and
+   * splitting "" yields one line, which would print a removal that never
+   * happened.
+   */
+  const edits: [string, string, string, (text: string) => void][] = [
+    [
+      "a replacement",
+      "const a = 1;\nreturn a;",
+      "const a = 1;\nconst b = 2;\nreturn a + b;",
+      (text) => {
+        expect(text).toContain("+2")
+        expect(text).toContain("−1")
+      },
+    ],
+    [
+      "a pure insertion",
+      "",
+      "const b = 2;\nconst c = 3;",
+      (text) => {
+        expect(text).toContain("+2")
+        expect(text).not.toContain("−")
+      },
+    ],
+    [
+      "a pure deletion",
+      "const gone = 1;",
+      "",
+      (text) => {
+        expect(text).toContain("−1")
+        expect(text).not.toContain("+")
+      },
+    ],
+    [
+      "no change at all",
+      "const same = 1;",
+      "const same = 1;",
+      (text) => {
+        expect(text).not.toContain("+")
+        expect(text).not.toContain("−")
+      },
+    ],
+  ]
+
+  for (const [name, before, after, check] of edits) {
+    test(`${name} is counted as it happened`, async () => {
+      const mounted = await mount(
+        <api.Stream
+          rows={[
+            eventRow("e", {
+              kind: "tool_use",
+              id: "t",
+              name: "Edit",
+              input: { file_path: "src/importer/map.ts", old_string: before, new_string: after },
+            }),
+          ]}
+        />,
+      )
+      const text = mounted.row("e")?.textContent ?? ""
+      expect(text).toContain("src/importer/map.ts")
+      check(text)
+    })
+  }
+})
+
 describe("only new rows animate", () => {
-  /** Motion writes `initial` straight to the element's inline style. */
+  /**
+   * Is this element playing the artboards' entrance?
+   *
+   * `bf` is `src/ui/artboard.css`'s blur fade — `kfade`, the same ten pixels
+   * out of the same six-pixel blur the artboards use — and the component adds
+   * it to a row only the first time it draws one.
+   *
+   * This used to read Motion's inline `opacity: 0`, because the entrance used
+   * to be a Motion spring. `src/ui/Row.tsx` says why it is CSS now; the short
+   * version is that cancelling a WAAPI animation rejects a promise nothing
+   * catches, and a virtualized row scrolling out mid-fade cancels one.
+   *
+   * What is asserted narrowed with it, and this is the honest statement of how
+   * far: the class is checked, not the animation. No stylesheet is loaded here
+   * — the header says so about the wrapping rules too — so `.bf` could be
+   * deleted from `artboard.css` and this file would not notice. What it still
+   * catches is every mutation on *this* side of that line, which is where the
+   * behaviour lives: drop the `enter` gate and rows re-animate on the way back
+   * up the log, drop the reduced-motion gate and they animate for someone who
+   * asked them not to. Both fail here. That the class then really animates is
+   * checked in a browser, with `document.getAnimations()`.
+   */
   function fading(el: HTMLElement | null): boolean {
-    const style = el?.getAttribute("style") ?? ""
-    return /opacity:\s*0/.test(style) || /filter:\s*blur/.test(style)
+    return el?.classList.contains("bf") ?? false
   }
 
   test("nothing in the log animates on the way in", async () => {

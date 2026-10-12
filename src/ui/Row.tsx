@@ -36,8 +36,7 @@
  * that silently never appears.
  */
 
-import { useEffect, useRef, useState, type ReactNode } from "react"
-import { motion } from "motion/react"
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react"
 
 import type { Event } from "../stream"
 
@@ -116,6 +115,19 @@ export const MAX_DIFF_LINES = 60
 
 /** What the virtualizer assumes before it measures: one unwrapped line. */
 export const ROW_ESTIMATE_PX = 38
+
+/**
+ * The tint `Return.dc.html` puts under a failing suite — and under nothing
+ * else in either artboard.
+ *
+ * Inline, exactly as the artboard writes it, because as a class it loses. Both
+ * `bg-[#FFFBFB]` and the row's own `hover:bg-panel` are Tailwind utilities, and
+ * Tailwind emits the hover variant *after* the plain one, so the tint was being
+ * repainted #FAFAFB the moment the pointer crossed a failing row. `.lr:hover`
+ * from `artboard.css` is a second claimant on the same property. An inline
+ * style outranks every one of them, which is why the artboard puts it there.
+ */
+const FAIL_TINT: CSSProperties = { background: "#FFFBFB" }
 
 // --- Icons ------------------------------------------------------------------
 
@@ -257,7 +269,22 @@ const ICONS = {
 
 export type IconName = keyof typeof ICONS
 
-export function Icon({ name, className }: { name: IconName; className?: string }) {
+/**
+ * One icon, drawn the way the artboard draws every icon.
+ *
+ * `ic` is the artboard's own preset — `fill:none;stroke:currentColor;
+ * stroke-width:2;round caps;flex:none`, at 16px — and `src/ui/artboard.css`
+ * carries it verbatim. The same values are repeated as presentation attributes
+ * so the icon is still an icon when that file has not loaded, and so that this
+ * component is correct on its own.
+ *
+ * The size is an **inline style**, not a utility, for the one property where
+ * the two would fight: `.ic` sets `width:16px`, it is unlayered, and unlayered
+ * CSS outranks anything Tailwind puts in `@layer utilities` whatever the
+ * specificity. The artboard solves it the same way — `class="ic"
+ * style="width:15px;height:15px"` on every row glyph.
+ */
+export function Icon({ name, size = 16, className }: { name: IconName; size?: number; className?: string }) {
   return (
     <svg
       aria-hidden="true"
@@ -267,7 +294,8 @@ export function Icon({ name, className }: { name: IconName; className?: string }
       strokeWidth={2}
       strokeLinecap="round"
       strokeLinejoin="round"
-      className={className ?? "size-[15px] shrink-0"}
+      style={{ width: size, height: size }}
+      className={`ic shrink-0 ${className ?? ""}`}
     >
       {ICONS[name]}
     </svg>
@@ -281,20 +309,25 @@ export function Icon({ name, className }: { name: IconName; className?: string }
  *
  * DESIGN.md's sixth promise and the designer's note agree: exit codes are
  * printed, never paraphrased. No "looks good", no "passed" standing in for a
- * code, and no bare green tick — the shield says who read it, the digits say
- * what it was.
+ * code, and no bare green tick.
+ *
+ * The geometry is `Return.dc.html`'s failing suite, to the pixel: `class="m"`,
+ * `padding:2px 8px`, `border-radius:999px`, `font-size:12px`, `font-weight:600`,
+ * white on the outcome colour. The artboard puts **no glyph inside the chip** —
+ * the digits are the whole message, and "read by kantan" beside it is who read
+ * them. A previous version carried a shield in here that the design does not
+ * draw.
  */
 export function ExitCodeChip({ code }: { code: number }) {
   const passed = code === 0
   return (
     <span
       className={[
-        "inline-flex items-center gap-[5px] rounded-full px-2 py-[2px]",
+        "m inline-flex items-center rounded-full px-2 py-[2px]",
         "font-mono text-xs font-semibold text-white",
         passed ? "bg-pass" : "bg-fail",
       ].join(" ")}
     >
-      <Icon name="shield" className="size-3 shrink-0" />
       exit {code}
     </span>
   )
@@ -356,7 +389,7 @@ function firstLine(text: string): string {
  */
 function Mono({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <span className={`block min-w-0 font-mono text-[12.5px] wrap-anywhere ${className ?? "text-muted-900"}`}>
+    <span className={`m block min-w-0 font-mono text-[12.5px] wrap-anywhere ${className ?? "text-muted-900"}`}>
       {children}
     </span>
   )
@@ -374,14 +407,44 @@ function Prose({ children, open }: { children: ReactNode; open: boolean }) {
   )
 }
 
-/** An expanded block of machine text, bounded and announcing its own bound. */
+/**
+ * The body column of a row that expands: the line that is always there, and
+ * under it the part that only appears when the row is open.
+ *
+ * `Main.dc.html` draws it on the unrecognised event — `display:flex;
+ * flex-direction:column;gap:6px;min-width:0` — and the expanded panel is a
+ * child of the body cell, not a band under the row, so it lines up with the
+ * text it belongs to rather than with the gutter.
+ */
+function Body({ head, detail, open }: { head: ReactNode; detail: ReactNode; open: boolean }) {
+  /* Closed, the head *is* the cell: the column wrapper would be a span with one
+   * child, laying out identically and costing a DOM node on every row of a log
+   * that reaches thousands. It would also be a second element holding exactly
+   * the row's text, which is one more thing between a value and the grid track
+   * that has to let it wrap. */
+  if (!open) return <>{head}</>
+
+  return (
+    <span className="flex min-w-0 flex-col gap-1.5">
+      {head}
+      {detail}
+    </span>
+  )
+}
+
+/**
+ * An expanded block of machine text, bounded and announcing its own bound.
+ *
+ * No margin of its own: every container that holds one is a flex column with
+ * the artboard's own gap, and a margin here would be added to it.
+ */
 function Pre({ text, tone }: { text: string; tone?: "fail" }) {
   const shown = text.length > MAX_PANEL_CHARS ? text.slice(0, MAX_PANEL_CHARS) : text
   const dropped = text.length - shown.length
   return (
     <span
       className={[
-        "mt-1.5 block rounded-[10px] border px-3 py-2.5",
+        "m block rounded-[10px] border px-3 py-2.5",
         "font-mono text-xs leading-relaxed whitespace-pre-wrap wrap-anywhere",
         tone === "fail" ? "border-[#F5D5D9] bg-white text-muted-900" : "border-hairline bg-panel text-muted-900",
       ].join(" ")}
@@ -399,7 +462,7 @@ function Pre({ text, tone }: { text: string; tone?: "fail" }) {
 /** The dashed badge the artboard puts in front of an unrecognised event. */
 function NewBadge() {
   return (
-    <span className="mr-1.5 inline-block rounded-md border border-dashed border-muted-300 px-[7px] py-px text-[11.5px] font-medium text-muted-900">
+    <span className="mr-1.5 inline-block rounded-md border border-dashed border-muted-300 px-[7px] py-px text-[11.5px] font-[550] text-muted-900">
       Unrecognised event
     </span>
   )
@@ -450,7 +513,7 @@ function Side({ title, lines }: { title: string; lines: Marked[] }) {
       <div className="border-b border-hairline px-3 py-[7px] text-[11.5px] font-semibold tracking-[0.05em] uppercase text-muted-400">
         {title}
       </div>
-      <pre className="m-0 overflow-x-auto py-2 font-mono text-xs leading-[1.7] text-muted-900">
+      <pre className="m m-0 overflow-x-auto py-2 font-mono text-xs leading-[1.7] text-muted-900">
         {shown.map((line, i) => (
           <span
             key={i}
@@ -495,10 +558,35 @@ interface View {
   body: ReactNode
   /** True when the row is a button that reveals more than the body shows. */
   expandable: boolean
-  /** Rendered below the row header, inside the measured element. */
+  /**
+   * Block-level detail, drawn full width **below** the row rather than in the
+   * body column, as `Return.dc.html` draws an edit's before/after: its own
+   * `<div>` outside the `<button>`, indented to the body column with
+   * `padding:4px 16px 14px 106px`.
+   *
+   * Everything else the artboards expand — the unrecognised event's raw JSON,
+   * a failing suite's output — is a `<span>` **inside** the body column
+   * instead, so it lines up under the text it belongs to. That is not a style
+   * choice either way: `<div>` and `<pre>` are not valid inside a `<button>`,
+   * and the row is a button whenever it expands.
+   */
   panel?: ReactNode
-  /** Tints the whole row. */
+  /**
+   * The row's own tint, as an inline style because the artboard writes it that
+   * way — and because it has to win: `.lr:hover{background:#FAFAFB}` is
+   * unlayered and would otherwise repaint a failing row on hover.
+   */
+  rowStyle?: CSSProperties
+  /** Extra classes on the row itself, for the artboard's per-kind geometry. */
   rowClass?: string
+  /**
+   * This row's body is sans-serif prose, not a machine value.
+   *
+   * The artboards set those two rows — `agent` and `tests` — a half-point
+   * larger than the rest at 13.5px, and nudge the label down a pixel to sit on
+   * the first line of it.
+   */
+  prose?: boolean
 }
 
 /**
@@ -582,6 +670,7 @@ function toolView(name: string, input: unknown): Omit<View, "expandable"> {
     case "NotebookEdit": {
       const path = field(input, "file_path") ?? field(input, "notebook_path")
       const edits = editPairs(input)
+      const { added, removed } = editCounts(edits)
       return {
         label: "edit",
         icon: "pencil",
@@ -589,6 +678,10 @@ function toolView(name: string, input: unknown): Omit<View, "expandable"> {
         body: path ? (
           <Mono>
             {path}
+            {/* `src/importer/map.ts +2 −1`, as `Return.dc.html` writes it: a
+                real minus sign, green for what came and red for what went. */}
+            {added > 0 ? <span className="font-semibold text-pass-deep"> +{group(added)}</span> : null}
+            {removed > 0 ? <span className="font-semibold text-fail"> −{group(removed)}</span> : null}
             {edits.length > 1 ? <span className="font-sans text-muted-500"> · {edits.length} edits</span> : null}
           </Mono>
         ) : (
@@ -683,6 +776,31 @@ function editPairs(input: unknown): { before: string; after: string }[] {
   return out
 }
 
+/**
+ * Lines that went and lines that came, across every pair of an edit.
+ *
+ * `Return.dc.html` prints these beside the path as `+2 −1`. They come from
+ * `markLines`, the same pass that tints the before/after panel, so the two can
+ * never disagree about what changed.
+ *
+ * An empty side counts as **no lines**, not as one. `editPairs` builds a pair
+ * from `field()`, which reports an empty string as absent, so `before: ""`
+ * means "this edit inserted and removed nothing" rather than "it removed one
+ * blank line" — and `markLines` would otherwise mark that empty string as a
+ * deleted line and put a `−1` on every pure insertion. A single genuinely
+ * blank `old_string` cannot reach here to be miscounted the other way.
+ */
+function editCounts(edits: readonly { before: string; after: string }[]): { added: number; removed: number } {
+  let added = 0
+  let removed = 0
+  for (const pair of edits) {
+    const marked = markLines(pair.before, pair.after)
+    if (pair.before !== "") removed += marked.before.filter((line) => line.mark === "del").length
+    if (pair.after !== "") added += marked.after.filter((line) => line.mark === "add").length
+  }
+  return { added, removed }
+}
+
 /** The `errors` field of a raw result line, as prose, if it holds any. */
 export function errorsProse(errors: unknown): string | undefined {
   if (errors === undefined || errors === null) return undefined
@@ -712,7 +830,7 @@ function resultView(event: Extract<Event, { kind: "result" }>, errors: unknown, 
     label: "result",
     icon: "flag",
     iconClass: event.isError ? "text-fail" : "text-pass-deep",
-    rowClass: event.isError ? "bg-[#FFFBFB]" : undefined,
+    rowStyle: event.isError ? FAIL_TINT : undefined,
     expandable: prose !== undefined,
     body: (
       <span className="flex min-w-0 flex-col gap-1.5">
@@ -736,7 +854,11 @@ export function viewFor(row: StreamRow, open: boolean): View {
       label: "tests",
       icon: "flask",
       iconClass: exitCode === 0 ? "text-pass-deep" : "text-fail",
-      rowClass: exitCode === 0 ? undefined : "bg-[#FFFBFB]",
+      rowStyle: exitCode === 0 ? undefined : FAIL_TINT,
+      /* `Return.dc.html` gives this row alone `padding:10px 16px` against every
+       * other row's 9px, and 13.5px prose with the label nudged to match. */
+      rowClass: "py-2.5",
+      prose: true,
       expandable: output !== undefined && output !== "",
       body: (
         <span className="flex min-w-0 flex-col gap-2">
@@ -744,10 +866,10 @@ export function viewFor(row: StreamRow, open: boolean): View {
             {attempt === undefined ? null : <span className="font-semibold">Attempt {group(attempt)}</span>}
             {summary ? <span className="font-semibold">{summary}</span> : null}
             <ExitCodeChip code={exitCode} />
-            <span className="inline-flex items-center gap-1 text-[12.5px] text-muted-500">
-              <Icon name="shieldCheck" className="size-[13px] shrink-0 text-pass-deep" />
-              read by kantan
-            </span>
+            {/* No glyph. The artboard writes this as plain 12.5px text beside
+                the chip: the digits say what the code was, these four words say
+                who read it, and neither needs a tick to be believed. */}
+            <span className="text-[12.5px] text-muted-500">read by kantan</span>
           </span>
           {open && output ? <Pre text={output} tone={exitCode === 0 ? undefined : "fail"} /> : null}
         </span>
@@ -779,6 +901,9 @@ export function viewFor(row: StreamRow, open: boolean): View {
         label: "agent",
         icon: "message",
         iconClass: "text-indigo",
+        /* The artboards' one larger row: `font-size:13.5px`, because this is
+         * the only place the agent speaks in sentences. */
+        prose: true,
         expandable: true,
         body: <Prose open={open}>{event.text === "" ? "The agent sent an empty message." : event.text}</Prose>,
       }
@@ -791,7 +916,7 @@ export function viewFor(row: StreamRow, open: boolean): View {
         expandable: false,
         body: (
           <span className="block min-w-0 text-muted-500">
-            thought for <span className="font-mono text-[12.5px]">{group(event.length)}</span> characters
+            thought for <span className="m font-mono text-[12.5px]">{group(event.length)}</span> characters
           </span>
         ),
       }
@@ -804,20 +929,21 @@ export function viewFor(row: StreamRow, open: boolean): View {
         expandable: false,
         body: (
           <span className="block min-w-0 text-muted-500">
-            <span className="font-mono text-[12.5px]">{group(event.tokens)}</span> thinking tokens
-            <span className="font-mono text-[12.5px]"> (+{group(event.delta)})</span>
+            <span className="m font-mono text-[12.5px]">{group(event.tokens)}</span> thinking tokens
+            <span className="m font-mono text-[12.5px]"> (+{group(event.delta)})</span>
           </span>
         ),
       }
 
     case "tool_use": {
       const view = toolView(event.name, event.input)
+      // Expandable whether or not there is more: the body names the field that
+      // matters, and the whole input is behind the control either way.
+      if (view.panel !== undefined) return { ...view, expandable: true }
       return {
         ...view,
-        // Expandable whether or not there is a panel: the body names the field
-        // that matters and the panel, or this fallback, keeps the rest.
         expandable: true,
-        panel: view.panel ?? <ToolInput input={event.input} />,
+        body: <Body head={view.body} detail={<ToolInput input={event.input} />} open={open} />,
       }
     }
 
@@ -828,7 +954,7 @@ export function viewFor(row: StreamRow, open: boolean): View {
         label: "result",
         icon: event.isError ? "warn" : "check",
         iconClass: event.isError ? "text-fail" : "text-pass-deep",
-        rowClass: event.isError ? "bg-[#FFFBFB]" : undefined,
+        rowStyle: event.isError ? FAIL_TINT : undefined,
         expandable: content !== "",
         body: (
           <span className="flex min-w-0 flex-col gap-1.5">
@@ -858,9 +984,27 @@ export function viewFor(row: StreamRow, open: boolean): View {
         body: (
           <span className="block min-w-0 text-muted-900">
             <span className="font-medium text-account-ink">{event.status === "" ? "unnamed status" : event.status}</span>
-            {event.utilization === undefined
+            {/*
+             * Two things the artboard's "41% of the 5-hour window used"
+             * cannot be followed on, and one it can.
+             *
+             * **A fraction, not a percentage.** `utilization` arrives as
+             * `0.41`, which the rail's `percentLabel` multiplies by 100 and
+             * this did not — so every rate-limit row in the record has been
+             * reading "0% of the window used" for a window at 41%. The same
+             * `Math.round(x * 100)` as the rail, so the two cannot disagree
+             * about the same number.
+             *
+             * **Not necessarily the five-hour one.** `src/stream.ts` reads
+             * whichever window `rateLimitType` names — `test/stream.test.ts`
+             * has it surface `seven_day` at 88% — and then drops the name. So
+             * the row cannot say which window this is, and "the window" is the
+             * only wording that is true of all of them. The artboard drew a
+             * five-hour case; naming it here would mislabel a weekly one.
+             */}
+            {event.utilization === undefined || !Number.isFinite(event.utilization)
               ? " · the window's utilisation was not reported"
-              : ` · ${Math.round(event.utilization)}% of the window used`}
+              : ` · ${Math.round(event.utilization * 100)}% of the window used`}
           </span>
         ),
       }
@@ -878,13 +1022,18 @@ export function viewFor(row: StreamRow, open: boolean): View {
         iconClass: "text-muted-400",
         expandable: true,
         body: (
-          <span className="block min-w-0">
-            <NewBadge />
-            <span className="font-mono text-[12.5px] wrap-anywhere">{discriminator(event.raw)}</span>
-            <span className="text-muted-500"> · shown as it arrived</span>
-          </span>
+          <Body
+            open={open}
+            head={
+              <span className="block min-w-0">
+                <NewBadge />
+                <span className="m font-mono text-[12.5px] wrap-anywhere">{discriminator(event.raw)}</span>
+                <span className="text-muted-500"> · shown as it arrived</span>
+              </span>
+            }
+            detail={<Pre text={json(event.raw, 2)} />}
+          />
         ),
-        panel: <Pre text={json(event.raw, 2)} />,
       }
 
     case "parse_error":
@@ -897,16 +1046,21 @@ export function viewFor(row: StreamRow, open: boolean): View {
         iconClass: "text-muted-300",
         expandable: true,
         body: (
-          <span className="block min-w-0 text-muted-500">
-            One line wasn't JSON, so it's kept as plain text.
-            <span className="font-mono text-[12.5px]"> {group(event.line.length)} characters</span>
-          </span>
-        ),
-        panel: (
-          <>
-            <Pre text={event.line === "" ? "(the line was empty)" : event.line} />
-            <span className="mt-1.5 block text-[12.5px] text-muted-500">The parser said: {event.error}</span>
-          </>
+          <Body
+            open={open}
+            head={
+              <span className="block min-w-0 text-muted-500">
+                One line wasn't JSON, so it's kept as plain text.
+                <span className="m font-mono text-[12.5px]"> {group(event.line.length)} characters</span>
+              </span>
+            }
+            detail={
+              <>
+                <Pre text={event.line === "" ? "(the line was empty)" : event.line} />
+                <span className="block text-[12.5px] text-muted-500">The parser said: {event.error}</span>
+              </>
+            }
+          />
         ),
       }
   }
@@ -940,23 +1094,69 @@ export interface RowProps {
    * re-animates on the way back.
    */
   enter: boolean
-  /** Entry delay in seconds, staggering a batch that arrived together. */
-  delay: number
+  /**
+   * Which step of the entrance stagger this row is on: 0 for the first row of
+   * a batch, 1 for the next, and so on.
+   *
+   * A step, not a duration. The delays live in `artboard.css` as `.d1`…`.d9`
+   * and this picks one of them, so the ladder has exactly one owner — and so
+   * that a value arriving as `3 * 0.05 === 0.15000000000000002` cannot miss it.
+   */
+  stagger: number
 }
 
 /**
- * The artboards' `kfade`: ten pixels up, out of a six-pixel blur.
+ * The entrance is the artboards' own, in CSS: `bf` is `kfade` — ten pixels up,
+ * out of a six-pixel blur, over .7s — and `d1`…`d9` is the stagger, .05s a
+ * step. Both live in `src/ui/artboard.css`, transcribed from the artboards.
  *
- * `main.tsx` wraps the app in `MotionConfig reducedMotion="user"`, and that is
- * not enough on its own — it drops transform animations and lets opacity and
- * filter keep running. So `Stream` reads the preference itself and passes
- * `enter: false`, which removes `initial` and `animate` entirely.
+ * ## Why not a Motion spring, which is what this was
+ *
+ * Three reasons, and the first is the one that actually bites here.
+ *
+ * **Cancelling a WAAPI animation rejects a promise nothing catches.** A
+ * sibling region measured 195 unhandled `AbortError`s in one test run from
+ * exactly this. An interrupted entrance is not an edge case for this component,
+ * it is the normal case: rows are virtualized, so one scrolls out mid-fade
+ * whenever the log moves, and the run stream replays from byte 0 on reconnect.
+ *
+ * **A CSS animation is covered by the reduced-motion guards; a JS one is not.**
+ * `tokens.css` kills every CSS animation under `prefers-reduced-motion`, and
+ * `artboard.css` adds the artboards' own `.kr *{animation:none!important}` on
+ * top. Neither can reach a Motion spring, which is why that path needed a
+ * hand-rolled gate — kept below as well, because a class that is never added
+ * cannot animate at all, which is stronger than one that is overridden.
+ *
+ * **Motion's reduced-motion answer is a module-level singleton** initialised by
+ * the first call anywhere in the process, and `CLAUDE.md` records it answering
+ * `false` with the media feature set. Every Motion component in a file is
+ * another chance to initialise it early for everyone else.
+ *
+ * What does not change: **which** rows animate. The class is added only when
+ * `enter` is true, and `enter` is `Stream`'s answer keyed on the row id — so a
+ * row that has been drawn before stays still, on a reconnect and on the way
+ * back up the log. That contract is the component's, not the animation's.
  */
-const ENTER_FROM = { opacity: 0, y: 10, filter: "blur(6px)" } as const
-const ENTER_TO = { opacity: 1, y: 0, filter: "blur(0px)" } as const
-const ENTER_EASE = [0.2, 0.7, 0.2, 1] as const
+const STAGGER_CLASSES = ["", "d1", "d2", "d3", "d4", "d5", "d6", "d7", "d8", "d9"] as const
 
-export function Row({ row, index, top, measure, resize, open, onToggle, enter, delay }: RowProps) {
+/**
+ * The delay class for a step of the stagger, for any number at all.
+ *
+ * The dimension is the step index, and its values are every number a caller
+ * can produce: `0` is the first row of a batch, `1`…`9` are the ladder, and
+ * anything past the end, negative, fractional or `NaN` is reachable the moment
+ * a caller counts differently. Guessing low costs nothing — a row enters
+ * sooner than the one before it — while falling through to no class at all
+ * would silently delete the stagger, so this clamps rather than tests.
+ * `Main.dc.html` stops at `d9` and the tenth row onward joins it there.
+ */
+function staggerClass(step: number): string {
+  const last = STAGGER_CLASSES.length - 1
+  const index = Number.isFinite(step) ? Math.min(Math.max(Math.trunc(step), 0), last) : 0
+  return STAGGER_CLASSES[index] ?? ""
+}
+
+export function Row({ row, index, top, measure, resize, open, onToggle, enter, stagger }: RowProps) {
   /* Latched on mount. Without this, the next event's render would strip
    * `initial` off a row still fading in and snap it into place. */
   const [entering] = useState(enter)
@@ -1007,34 +1207,49 @@ export function Row({ row, index, top, measure, resize, open, onToggle, enter, d
 
   const cells = (
     <>
-      <Icon name={view.icon} className={`mt-0.5 size-[15px] shrink-0 ${view.iconClass}`} />
-      <span className="pt-0.5 font-mono text-[10.5px] tracking-[0.06em] uppercase text-muted-400 wrap-anywhere">
+      <Icon name={view.icon} size={15} className={`mt-0.5 ${view.iconClass}`} />
+      <span
+        className={[
+          "m font-mono text-[10.5px] tracking-[0.06em] uppercase text-muted-400 wrap-anywhere",
+          /* 3px against the row's 13.5px prose, 2px against its 13px mono:
+             both artboards nudge the label onto the first line of the body. */
+          view.prose ? "pt-[3px]" : "pt-0.5",
+        ].join(" ")}
+      >
         {view.label}
       </span>
       {view.body}
-      <span className="font-mono text-[11.5px] tabular-nums text-muted-400">{time}</span>
+      <span className="m font-mono text-[11.5px] tabular-nums text-muted-400">{time}</span>
     </>
   )
 
-  /* The artboards' row grid. `minmax(0,1fr)` on the body track is what lets a
-   * long path wrap: a default `1fr` floors at `min-content` and overflows. */
-  const grid =
-    "grid w-full grid-cols-[22px_58px_minmax(0,1fr)_auto] items-start gap-2.5 border-t border-panel-2 px-4 py-[9px] text-left text-[13px] leading-[1.5] text-ink-deep"
+  /* The artboards' row grid, `22px 58px minmax(0,1fr) auto` at `gap:10px`,
+   * `padding:9px 16px`, `border-top:1px solid #F0F0F3`. `minmax(0,1fr)` on the
+   * body track is what lets a long path wrap: a default `1fr` floors at
+   * `min-content` and overflows.
+   *
+   * `lr` is the artboards' own list-row class and carries only the hover. The
+   * Tailwind `hover:bg-panel` is the same #FAFAFB, kept beside it so a row
+   * still responds if `artboard.css` is ever not loaded. */
+  const grid = [
+    "lr grid w-full grid-cols-[22px_58px_minmax(0,1fr)_auto] items-start gap-2.5",
+    "border-t border-panel-2 px-4 text-left leading-[1.5] text-ink-deep hover:bg-panel",
+    view.prose ? "text-[13.5px]" : "text-[13px]",
+    view.rowClass ?? "py-[9px]",
+  ].join(" ")
 
   return (
-    <motion.div
+    <div
       data-index={index}
       data-row-id={row.id}
       data-enter={entering ? "true" : "false"}
+      /* What the reduced-motion probes read, as in `Digest` and `Tree`. */
+      data-motion={entering ? "animated" : "static"}
       ref={attach}
+      /* `bf` is the artboards' blur fade and `d1`…`d9` its stagger; both come
+         from `artboard.css`. Only a row `Stream` has never drawn gets them. */
+      className={entering ? `bf ${staggerClass(stagger)}` : undefined}
       style={{ position: "absolute", top, left: 0, width: "100%" }}
-      {...(entering
-        ? {
-            initial: ENTER_FROM,
-            animate: ENTER_TO,
-            transition: { duration: 0.7, delay, ease: ENTER_EASE },
-          }
-        : {})}
     >
       {view.expandable ? (
         /* The ring is inset. A row is absolutely positioned and full width
@@ -1045,14 +1260,20 @@ export function Row({ row, index, top, measure, resize, open, onToggle, enter, d
           type="button"
           aria-expanded={open}
           onClick={onToggle}
-          className={`${grid} ${view.rowClass ?? ""} hover:bg-panel focus-visible:outline-2 focus-visible:outline-indigo focus-visible:[outline-offset:-2px]`}
+          style={view.rowStyle}
+          className={`${grid} focus-visible:outline-2 focus-visible:outline-indigo focus-visible:[outline-offset:-2px]`}
         >
           {cells}
         </button>
       ) : (
-        <div className={`${grid} ${view.rowClass ?? ""} hover:bg-panel`}>{cells}</div>
+        <div className={grid} style={view.rowStyle}>
+          {cells}
+        </div>
       )}
-      {open && view.panel ? <div className="border-t border-panel-2 bg-white">{view.panel}</div> : null}
-    </motion.div>
+      {/* Block-level detail only — an edit's before/after. Outside the button
+          because `<div>` and `<pre>` are not valid inside one, and inside the
+          measured element so the virtualizer learns the taller height. */}
+      {open && view.panel ? view.panel : null}
+    </div>
   )
 }

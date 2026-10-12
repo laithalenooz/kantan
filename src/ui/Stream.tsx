@@ -85,7 +85,7 @@
  */
 
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode, type UIEvent } from "react"
-import { motion, useReducedMotion } from "motion/react"
+import { useReducedMotion } from "motion/react"
 import { useVirtualizer } from "@tanstack/react-virtual"
 
 import { Icon, ROW_ESTIMATE_PX, Row, group, type StreamRow } from "./Row.tsx"
@@ -95,26 +95,20 @@ export type { EventRow, StreamRow, TestsRow, TestsSeen } from "./Row.tsx"
 /** How many rows past the window are kept mounted, so scrolling is not blank. */
 const OVERSCAN = 8
 
-/** The longest entry stagger, in rows. `Main.dc.html` stops at `d9`. */
-const MAX_STAGGER = 9
-
-/** Seconds between two staggered entries, matching the artboard's `.d*` steps. */
-const STAGGER_STEP = 0.05
-
 /** Within this many pixels of the end counts as "at the bottom". */
 const BOTTOM_SLACK = 24
 
 /**
- * `bf d3` from the artboards: the card arrives as one blur fade.
+ * `bf d3` from the artboards, on this same `<section>`: the card arrives as
+ * one blur fade, .15s behind the screen around it.
  *
- * This is the opening movement, and it is the only one on mount — see the file
- * comment on why the rows do not stagger behind it.
+ * It is the opening movement and the only one on mount — see the file comment
+ * on why the rows do not stagger behind it. `artboard.css` owns both classes,
+ * and because the fade is CSS the reduced-motion guards in `tokens.css` and
+ * `artboard.css` reach it; the gate below is kept anyway, because a class that
+ * is never added cannot animate at all.
  */
-const CARD_FADE = {
-  initial: { opacity: 0, y: 10, filter: "blur(6px)" },
-  animate: { opacity: 1, y: 0, filter: "blur(0px)" },
-  transition: { duration: 0.7, delay: 0.15, ease: [0.2, 0.7, 0.2, 1] as const },
-} as const
+const CARD_FADE = "bf d3"
 
 export interface StreamProps {
   /**
@@ -175,6 +169,54 @@ function usePrefersReducedMotion(): boolean {
   const motionsAnswer = useReducedMotion() === true
   const live = useSyncExternalStore(subscribeToReducePreference, readReducePreference, () => false)
   return motionsAnswer || live
+}
+
+/**
+ * The band under the last row, where every artboard puts the run's current
+ * state: `Main.dc.html`'s gate, `Question.dc.html`'s "Asked a question",
+ * `Return.dc.html`'s spinning "npm test · running, attempt 6".
+ *
+ * All three share one container — `display:flex;align-items:center;gap:12px;
+ * padding:14px 16px;border-top:1px solid #F0F0F3` — and the first two put a
+ * pill in it between two hairlines that fade out to the sides.
+ *
+ * ## The one decision here, and why it is the dull one
+ *
+ * `footer` is a `ReactNode`, and the only caller passes a **string**:
+ * `App.tsx`'s `footerFor` returns "Done", "Failed · …", "Gate · run paused
+ * until you decide", "Question · waiting for your answer", a blocked or
+ * stalled detail, or "<phase> · running". Before this, that string was dropped
+ * straight into the scroller and rendered as bare text hanging off the card's
+ * bottom-left corner.
+ *
+ * So the guard: the dimension is `typeof footer`, and its values are `string`,
+ * `number`, `boolean`, `undefined`, `object` — an element, an array, `null`.
+ * Text gets the band; everything else is rendered exactly as it arrived,
+ * because a node already draws its own chrome and wrapping it in a padded flex
+ * row would break a layout this component cannot see.
+ *
+ * And the pill is **neutral**, for every string. Choosing orange by matching
+ * `"Gate · "` would be reading another file's prose to colour a surface, and
+ * its worst case is the attention colour — which `tokens.css` reserves for
+ * "needs you" and nothing else — appearing on "Done" or "Failed" the day that
+ * wording changes. The cheap direction is a band that is never wrong about
+ * what it means, under a card that is already surrounded by the gate's own
+ * orange when there is a gate. A caller that wants the artboard's orange pill
+ * or its spinning row has the node path for it, and the node is drawn verbatim.
+ */
+function Footer({ children }: { children: ReactNode }) {
+  if (children === undefined || children === null) return null
+  if (typeof children !== "string" && typeof children !== "number") return <>{children}</>
+
+  return (
+    <div className="flex items-center gap-3 border-t border-panel-2 px-4 py-3.5">
+      <span aria-hidden="true" className="h-px flex-1 bg-gradient-to-r from-transparent to-edge" />
+      <span className="inline-flex items-center gap-2 rounded-full border border-edge bg-panel-3 px-3 py-[5px] text-center text-[12.5px] font-semibold text-muted-900">
+        {children}
+      </span>
+      <span aria-hidden="true" className="h-px flex-1 bg-gradient-to-r from-edge to-transparent" />
+    </div>
+  )
 }
 
 export function Stream({ rows, maxHeight = 520, footer, className }: StreamProps) {
@@ -276,36 +318,41 @@ export function Stream({ rows, maxHeight = 520, footer, className }: StreamProps
   let entering = 0
 
   return (
-    <motion.section
+    <section
       aria-labelledby={headingId}
+      data-motion={reduced ? "static" : "animated"}
+      /* `margin-top:28px`, `border-radius:20px`, the hairline and the two-part
+         shadow are the artboard's own, off the `<section>` in `Main.dc.html`. */
       className={[
-        "overflow-clip rounded-[20px] border border-edge bg-white",
+        reduced ? "" : CARD_FADE,
+        "mt-7 overflow-clip rounded-[20px] border border-edge bg-white",
         "shadow-[0_1px_2px_rgba(17,18,22,.04),0_12px_32px_-20px_rgba(17,18,22,.18)]",
         className ?? "",
       ].join(" ")}
-      {...(reduced ? {} : CARD_FADE)}
     >
       <div className="flex flex-wrap items-center gap-2.5 border-b border-hairline px-4 py-3.5">
-        <Icon name="terminal" className="size-4 shrink-0 text-muted-900" />
+        <Icon name="terminal" className="text-muted-900" />
         <h2 id={headingId} className="m-0 text-[15px] font-[620]">
           Run record
         </h2>
-        <span className="font-mono text-xs text-muted-400">
+        <span className="m font-mono text-xs text-muted-400">
           {group(rows.length)} {rows.length === 1 ? "event" : "events"} · newest at the bottom
         </span>
+        {/* `ghost` is the artboards' own hover for a quiet button; the
+            Tailwind hover beside it is the same #F6F6F8. */}
         <button
           type="button"
           aria-pressed={following}
           onClick={() => setFollowing((prev) => !prev)}
           className={[
-            "ml-auto inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-[12.5px]",
+            "ghost ml-auto inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-[12.5px]",
             "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo",
             following
               ? "border-[#CFD0F7] bg-[#F3F3FE] font-semibold text-indigo-deeper"
-              : "border-edge-soft bg-white font-medium text-muted-900 hover:bg-[#F6F6F8]",
+              : "border-edge-soft bg-white font-[550] text-muted-900 hover:bg-[#F6F6F8]",
           ].join(" ")}
         >
-          <Icon name="arrowDown" className="size-[13px] shrink-0" />
+          <Icon name="arrowDown" size={13} />
           {following ? "Following" : "Follow"}
         </button>
       </div>
@@ -315,7 +362,7 @@ export function Stream({ rows, maxHeight = 520, footer, className }: StreamProps
           own origin — inside, its height would offset every row by its own
           size and the window would be computed one row out. */}
       {above > 0 ? (
-        <div className="bg-gradient-to-b from-[#F7F7F9] to-white px-4 py-2.5 font-mono text-xs text-muted-400">
+        <div className="m bg-gradient-to-b from-[#F7F7F9] to-white px-4 py-2.5 font-mono text-xs text-muted-400">
           ↑ {group(above)} earlier {above === 1 ? "event" : "events"}, rendered as you scroll
         </div>
       ) : null}
@@ -351,7 +398,10 @@ export function Stream({ rows, maxHeight = 520, footer, className }: StreamProps
             if (!row) return null
 
             const isNew = !seen.has(row.id) && !reduced
-            const delay = isNew ? Math.min(entering++, MAX_STAGGER) * STAGGER_STEP : 0
+            /* Which step of `artboard.css`'s `.d1`…`.d9` ladder this row gets.
+               Counted over the rows that are actually entering, so a batch
+               arriving together staggers and a lone arrival does not wait. */
+            const stagger = isNew ? entering++ : 0
 
             return (
               <Row
@@ -364,13 +414,13 @@ export function Stream({ rows, maxHeight = 520, footer, className }: StreamProps
                 open={open.has(row.id)}
                 onToggle={() => toggle(row.id)}
                 enter={isNew}
-                delay={delay}
+                stagger={stagger}
               />
             )
           })}
         </div>
-        {footer}
+        <Footer>{footer}</Footer>
       </div>
-    </motion.section>
+    </section>
   )
 }
