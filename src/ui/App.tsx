@@ -187,7 +187,11 @@ export function App() {
 
   return (
     <div className="grid h-dvh grid-cols-[18rem_minmax(0,1fr)_14rem] overflow-hidden">
-      <div className="min-w-0 overflow-y-auto">
+      {/* A flex column, because `Tree` draws its own panel as an `<aside
+          className="basis-72 grow">` - and `grow` does nothing to a child of a
+          block, so the panel ends at its content and the ground shows through
+          below it. Caught in a screenshot; no assertion would have seen it. */}
+      <div className="flex min-w-0 flex-col overflow-y-auto">
         <Tree projects={projects} selected={selected} onSelect={setSelected} />
       </div>
 
