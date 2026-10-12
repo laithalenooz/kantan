@@ -33,9 +33,20 @@
  * reduced-motion tests would pass through Motion's hook alone — which is the
  * thing they exist to disprove. So `beforeEach` sets the feature off, the
  * first describe renders with it off, and the reduced-motion tests turn it on
- * themselves. Verified by deleting the live `matchMedia` read from
- * `usePrefersReducedMotion` in `src/ui/Digest.tsx`: the four tests in
- * "reduced motion" fail, and they are the only ones that do.
+ * themselves.
+ *
+ * Verified rather than asserted: deleting the live `matchMedia` read from
+ * `usePrefersReducedMotion` in `src/ui/Digest.tsx` — leaving Motion's hook
+ * alone, as the component would have had it — fails exactly three of this
+ * file's tests, all three in "reduced motion", and nothing else. The other two
+ * in that describe do not depend on the preference being honoured: one asserts
+ * the stagger when it is off, the other that each root ships its keyframes.
+ *
+ * **This file now runs first among the UI suites**, which has a consequence
+ * outside it: it is this file's first render that latches Motion's singleton,
+ * and it latches it to `false`. Any later suite that was relying on the
+ * singleton reading `true` — which is what it did when a suite that sets the
+ * feature early ran first — is now exercising its real animation path.
  */
 
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test"
@@ -290,17 +301,48 @@ describe('"nothing needs you"', () => {
   })
 
   /**
-   * The guard that matters. `needsYou` counts the tree; the run in front of
-   * you is its own fact, and a run parked on a human needs you whatever the
-   * count says. Claiming calm over a parked run is the expensive direction —
-   * the user walks away from a run that will never move — so a human wait
-   * suppresses the claim even when the caller passes 0.
+   * The whole matrix, because the guard reads two dimensions and the suite
+   * would otherwise only ever have varied one.
+   *
+   * Nine run states by three counts. Zero is only ever reported as calm over a
+   * **running** run: every other state is either parked on a human (gate,
+   * question, blocked, stalled) or finished with something still to do — a
+   * failure to read, a run to resume, a branch to merge. A count above zero is
+   * a fact about the tree and holds in every state; an absent count is not a
+   * fact at all.
    */
-  test("is never made over a run that is itself parked on a human", async () => {
-    for (const reason of ["gate", "question", "blocked"] as const) {
-      await render(band({ subject: { ...SUBJECT, state: { kind: "waiting", reason } }, needsYou: 0 }))
-      const text = flat(one('[data-testid="return-band"]').textContent)
-      expect(text).not.toContain("Nothing needs you")
+  test("the matrix: nine states by counted, not counted, and more than zero", async () => {
+    const claimOf = (): string | null => {
+      const found = host.querySelector('[data-testid="band-claim"]')
+      return found === null ? null : flat(found.textContent)
+    }
+
+    for (const state of STATES) {
+      const running = state.kind === "running"
+      const subject = { ...SUBJECT, state }
+
+      await render(band({ subject, needsYou: 0 }))
+      expect(claimOf()).toBe(running ? "Nothing needs you" : null)
+
+      await render(band({ subject, needsYou: 1 }))
+      expect(claimOf()).toBe("1 task needs you")
+
+      await render(band({ subject, needsYou: 4 }))
+      expect(claimOf()).toBe("4 tasks need you")
+
+      await render(band({ subject, needsYou: undefined }))
+      expect(claimOf()).toBeNull()
+
+      /* And the heading never says it where the band would not. */
+      await render(digest({ subject, needsYou: 0 }))
+      const heading = textOf('[data-testid="digest-heading"]')
+      expect(heading.includes("Nothing needs you")).toBe(running)
+    }
+  })
+
+  test("a count that is not a whole number of tasks is not a count", async () => {
+    for (const bad of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await render(band({ needsYou: bad }))
       expect(host.querySelector('[data-testid="band-claim"]')).toBeNull()
     }
   })
@@ -767,29 +809,80 @@ describe("reduced motion", () => {
  * on identity rather than on id would replay its whole entrance each time.
  */
 describe("a reconnect does not replay the entrance", () => {
-  test("the same ids, in a new array, do not animate again", async () => {
+  test("the same ids, in a new array, are the same elements with the same stagger", async () => {
     await render(digest())
     /* The opening stagger: every entry is an arrival the first time. */
-    expect(entries().every((item) => item.dataset["motion"] === "animated")).toBe(true)
+    const first = entries()
+    expect(first.every((item) => item.dataset["motion"] === "animated")).toBe(true)
+    const delays = first.map((item) => item.style.animationDelay)
+    expect(delays.slice(0, 3)).toEqual(["0s", "0.05s", "0.1s"])
     await settle()
 
-    /* A fresh array, same ids: this is what a replay looks like. */
+    /* A fresh array, same ids: this is what a replay looks like. Nothing
+     * remounts, so nothing can play its entrance a second time — a CSS
+     * animation runs once per element, and these are the same elements. */
     await render(digest({ entries: [...TIMELINE] }))
-    expect(entries().every((item) => item.dataset["motion"] === "static")).toBe(true)
-    expect(entries().every((item) => !item.className.includes("kantan-digest-fade"))).toBe(true)
-    expect(entries().every((item) => item.style.animationDelay === "")).toBe(true)
+    const again = entries()
+    expect(again).toHaveLength(first.length)
+    expect(again.every((item, index) => item === first[index])).toBe(true)
+    expect(again.map((item) => item.style.animationDelay)).toEqual(delays)
   })
 
-  test("but an entry nobody has seen does", async () => {
+  /**
+   * The failure this guards is ids minted per delivery rather than per log
+   * record. That remounts every row, and remounted rows replay the whole
+   * entrance on every reconnect.
+   */
+  test("ids minted per delivery would remount the whole list, and are visible as that", async () => {
     await render(digest())
+    const first = entries()
+    await settle()
+
+    const churned = TIMELINE.map((entry, index) => ({ ...entry, id: `delivery-2#${index}` }))
+    await render(digest({ entries: churned }))
+    const after = entries()
+    expect(after.some((item, index) => item !== first[index])).toBe(true)
+    expect(after.every((item) => item.dataset["motion"] === "animated")).toBe(true)
+  })
+
+  test("but an entry nobody has seen gets its own entrance, and disturbs no one else's", async () => {
+    await render(digest())
+    const first = entries()
+    const delays = first.map((item) => item.style.animationDelay)
     await settle()
 
     const arrival: DigestEntry = { id: id(10), kind: "tests", attempt: 7, exitCode: 0, summary: "11 passing" }
     await render(digest({ entries: [...TIMELINE, arrival] }))
 
     const items = entries()
+    expect(items).toHaveLength(TIMELINE.length + 1)
     const last = items[items.length - 1]
     expect(last?.dataset["motion"]).toBe("animated")
-    expect(items.slice(0, -1).every((item) => item.dataset["motion"] === "static")).toBe(true)
+    expect(last?.className).toContain("kantan-digest-fade")
+    /* The one that arrived is the only one staggering, so it waits for nobody. */
+    expect(last?.style.animationDelay).toBe("0s")
+    /* And the rows already here keep the delays they started with: changing
+     * one restarts its animation. */
+    expect(items.slice(0, -1).map((item) => item.style.animationDelay)).toEqual(delays)
+    expect(items.slice(0, -1).every((item, index) => item === first[index])).toBe(true)
+  })
+
+  /**
+   * The case the sticky entrance exists for: the stream delivers one record
+   * per SSE event, so this card re-renders while the opening stagger is still
+   * playing. An entrance dropped on the next render would snap the row to its
+   * resting frame, and the stagger would almost never be seen.
+   */
+  test("a record arriving mid-stagger does not cut the entrance short", async () => {
+    await render(digest())
+    const before = entries().map((item) => item.className)
+
+    /* No settle: the opening is still in flight. */
+    const arrival: DigestEntry = { id: id(11), kind: "tests", attempt: 7, exitCode: 1 }
+    await render(digest({ entries: [...TIMELINE, arrival] }))
+
+    const items = entries()
+    expect(items.slice(0, -1).every((item) => item.className.includes("kantan-digest-fade"))).toBe(true)
+    expect(items.slice(0, -1).map((item) => item.className)).toEqual(before)
   })
 })

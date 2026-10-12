@@ -32,9 +32,11 @@
  *   expensive direction: the user closes the tab and a parked run waits until
  *   they next remember it. A withheld claim costs a glance at the tree. So the
  *   claim is made only from a non-negative integer, it is dropped entirely when
- *   the count is absent or unusable, and **a run that is itself parked on a
- *   human suppresses it even at zero** — whatever the tree says, the run in
- *   front of you needs you.
+ *   the count is absent or unusable, and **zero is only ever reported as
+ *   "nothing needs you" over a run that is running**. Every other state is
+ *   either parked on a human or finished with something left to do — reading,
+ *   resuming, merging — and the artboard only ever draws this claim beside
+ *   "Still going".
  * - The matrix is in `test/ui/Digest.test.tsx` under `"nothing needs you"`.
  *
  * ## Exit codes are printed or declared missing. There is no third option
@@ -354,16 +356,6 @@ export interface StateReading {
   glyph: Glyph
   /** `state.why`, or where an interrupted run resumes. Printed verbatim. */
   detail?: string
-  /**
-   * Is a human what this run is waiting for?
-   *
-   * `waiting(stalled)` counts, even though it is not drawn in the "needs you"
-   * colour: it is parked and nothing but a person will move it, so the calm
-   * claim must not be made over it. Any wait reason this build does not know
-   * folds the same way, because something is parked on a human whatever it is
-   * called — the same reading `src/ui/Tree.tsx` takes.
-   */
-  parked: boolean
 }
 
 /** Shared by the states that are neither running nor waiting on a person. */
@@ -381,7 +373,6 @@ export function stateReading(state: RunState): StateReading {
         ink: "#20205E",
         border: "#D6D7FA",
         glyph: "running",
-        parked: false,
       }
 
     case "waiting": {
@@ -393,7 +384,6 @@ export function stateReading(state: RunState): StateReading {
           ...CALM_PLATE,
           ink: "#93307A",
           glyph: "stalled",
-          parked: true,
         }
       }
       const waits: Record<"gate" | "question" | "blocked", { label: string; heading: string }> = {
@@ -411,7 +401,6 @@ export function stateReading(state: RunState): StateReading {
         core: "#FF6A1A",
         ...ATTENTION_PLATE,
         glyph: "attention",
-        parked: true,
       }
     }
 
@@ -424,7 +413,6 @@ export function stateReading(state: RunState): StateReading {
             ...CALM_PLATE,
             ink: "#0F7A54",
             glyph: "pass",
-            parked: false,
           }
         : {
             label: "Done · unmerged",
@@ -433,7 +421,6 @@ export function stateReading(state: RunState): StateReading {
             ...CALM_PLATE,
             ink: "#0B6C75",
             glyph: "unmerged",
-            parked: false,
           }
 
     case "failed":
@@ -445,7 +432,6 @@ export function stateReading(state: RunState): StateReading {
         ink: "#C4232F",
         glyph: "fail",
         detail: state.why,
-        parked: false,
       }
 
     case "interrupted":
@@ -457,7 +443,6 @@ export function stateReading(state: RunState): StateReading {
         ink: "#556274",
         glyph: "interrupted",
         detail: `resumes from ${state.resumeFrom}`,
-        parked: false,
       }
   }
 }
@@ -465,13 +450,28 @@ export function stateReading(state: RunState): StateReading {
 /**
  * The claim, or nothing.
  *
- * See the file comment for the guard this implements. Note what it refuses: a
- * fractional or negative count, which is a caller that lost its arithmetic, and
- * zero over a run that is parked on a human.
+ * See the file comment for the guard this implements. Two things it refuses:
+ *
+ * A **fractional or negative count**, which is a caller that lost its
+ * arithmetic rather than a tree with no work waiting.
+ *
+ * **Zero over anything but a running run.** `parked` is the obvious half — a
+ * run waiting at a gate needs you whatever the tree says — but it is not the
+ * whole one. A `failed` run wants reading, an `interrupted` one never moves
+ * until someone resumes it, and `done` with `merged: false` is work that is
+ * written and not integrated. None of those count toward `needsYou`, because
+ * `src/ui/Tree.tsx` reads them as their own states rather than as "needs you",
+ * so a caller can honestly pass 0 over all three. "Nothing needs you" printed
+ * over them is the expensive direction twice over, and it is also the only
+ * place the band and the digest's heading could have disagreed: the heading
+ * makes this claim for a running run and nothing else, and now so does this.
+ *
+ * A count **above** zero is still printed in every state, because it is a fact
+ * about the tree that holds whatever this run is doing.
  */
-function needsYouClaim(needsYou: number | undefined, parked: boolean): string | undefined {
+function needsYouClaim(needsYou: number | undefined, running: boolean): string | undefined {
   if (needsYou === undefined || !Number.isInteger(needsYou) || needsYou < 0) return undefined
-  if (needsYou === 0) return parked ? undefined : "Nothing needs you"
+  if (needsYou === 0) return running ? "Nothing needs you" : undefined
   return needsYou === 1 ? "1 task needs you" : `${needsYou} tasks need you`
 }
 
@@ -844,7 +844,7 @@ function BandGlyph({ reading, reduced }: { reading: StateReading; reduced: boole
 export function ReturnBand({ subject, needsYou, className }: ReturnBandProps) {
   const reduced = usePrefersReducedMotion()
   const reading = stateReading(subject.state)
-  const claim = needsYouClaim(needsYou, reading.parked)
+  const claim = needsYouClaim(needsYou, subject.state.kind === "running")
 
   return (
     <div
@@ -1095,8 +1095,32 @@ export function Digest({
    * Writing it during render would make StrictMode's second pass disagree with
    * its first and decide a row was old before it had ever appeared. */
   const [seen] = useState<Set<string>>(() => new Set<string>())
+
+  /**
+   * Every id that has been given the entrance here, with the delay it was
+   * given. Both halves are load-bearing.
+   *
+   * **It is sticky.** The class is what plays the animation, and the keyframe
+   * fills `both` — so taking the class away while it is still running snaps the
+   * entry to its resting frame. The live stream delivers one record per SSE
+   * event with no batching (docs/HANDOFF.md), so this card re-renders many
+   * times a second during a replay, and an entrance that was dropped on the
+   * next render would mean the opening stagger almost never plays. Leaving the
+   * class on costs nothing: a CSS animation runs once per element, and the
+   * element lives as long as its id does.
+   *
+   * **The delay is remembered with it.** Changing `animation-delay` on an
+   * element restarts its animation, so an entry that is mid-flight has to keep
+   * the number it started with rather than being recomputed against whoever
+   * else is new in this render.
+   */
+  const playing = useRef<Map<string, number>>(new Map())
+  /* Filled during render, applied after the commit that drew it. */
+  const started: Array<[string, number]> = []
+
   const absorbed = useRef<readonly DigestEntry[] | null>(null)
   useEffect(() => {
+    for (const [id, delay] of started) playing.current.set(id, delay)
     if (absorbed.current === entries) return
     absorbed.current = entries
     for (const entry of entries) seen.add(entry.id)
@@ -1115,9 +1139,9 @@ export function Digest({
     nowClock === undefined ? undefined : `now ${nowClock}`,
   ].filter((part): part is string => part !== undefined)
 
-  const claim = needsYouClaim(needsYou, reading.parked)
-  const heading =
-    subject.state.kind === "running" && claim === "Nothing needs you" ? `${reading.heading} ${claim}.` : reading.heading
+  const claim = needsYouClaim(needsYou, subject.state.kind === "running")
+  /* The band says the same words on the same terms; `needsYouClaim` is why. */
+  const heading = claim === "Nothing needs you" ? `${reading.heading} ${claim}.` : reading.heading
 
   let staggered = 0
 
@@ -1181,8 +1205,13 @@ export function Digest({
           className="relative m-0 list-none px-[clamp(20px,4vw,44px)] pt-1.5 pb-2.5"
         >
           {entries.map((entry, index) => {
-            const isNew = !seen.has(entry.id) && !reduced
-            const delay = isNew ? Math.min(staggered++, MAX_STAGGER) * STAGGER_STEP : 0
+            const known = playing.current.get(entry.id)
+            const isNew = known === undefined && !seen.has(entry.id) && !reduced
+            /* Already playing, or playing now. Never under a reduced-motion
+             * preference, including one turned on while this card is open. */
+            const animating = !reduced && (known !== undefined || isNew)
+            const delay = known ?? (isNew ? Math.min(staggered++, MAX_STAGGER) * STAGGER_STEP : 0)
+            if (isNew) started.push([entry.id, delay])
             const highlighted = entry.kind === "escalation"
             /* Is this row happening, or is it the record of what the run was
              * doing when it stopped? Only the run's own state can say. */
@@ -1194,7 +1223,7 @@ export function Digest({
                 key={entry.id}
                 data-digest-entry
                 data-kind={entry.kind}
-                data-motion={isNew ? "animated" : "static"}
+                data-motion={animating ? "animated" : "static"}
                 className={[
                   "grid grid-cols-[48px_20px_minmax(0,1fr)_auto] gap-3 py-[9px]",
                   /* The artboard centres its rows, which is right for the one
@@ -1207,11 +1236,12 @@ export function Digest({
                   highlighted ? "-mx-3 my-0.5 rounded-xl bg-[#F3F3FE] px-3 py-2.5" : "",
                   index > 0 && !highlighted ? "border-t border-[#F0F0F3]" : "",
                   /* The stagger, and the only thing that makes an entry move.
-                   * An entry already seen carries neither the class nor the
-                   * delay, so it cannot animate however often it re-renders. */
-                  isNew ? FADE_CLASS : "",
+                   * An entry that was already here before this card opened
+                   * carries neither the class nor the delay, so it cannot
+                   * animate however often it re-renders. */
+                  animating ? FADE_CLASS : "",
                 ].join(" ")}
-                style={isNew ? { animationDelay: `${delay}s` } : undefined}
+                style={animating ? { animationDelay: `${delay}s` } : undefined}
               >
                 <span
                   className={[
