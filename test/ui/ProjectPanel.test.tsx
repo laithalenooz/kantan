@@ -1304,6 +1304,48 @@ describe("removing the project: the only modal", () => {
     await open()
     expect(classesOf("[data-scrim]")).toContain("kr")
   })
+
+  /**
+   * A screenshot caught this; no assertion in this file did, which is exactly
+   * what `CLAUDE.md`'s screenshot rule says to expect.
+   *
+   * `.bf` is `animation: kfade ... both`, and `kfade` ends on `filter:
+   * blur(0)`. `blur(0)` is a filter, not `none`, so the fill mode leaves one
+   * applied forever - and **an element with a filter is the containing block
+   * for its `position: fixed` descendants**. The scrim rendered inside the
+   * card was therefore laid out against the card rather than the viewport, and
+   * then clipped by the card's `overflow: clip`: a quarter-size scrim with the
+   * dialog cut in half. Every DOM assertion passed.
+   *
+   * So the invariant is structural, and it is the cause rather than the
+   * symptom: neither fixed layer may sit under an animated ancestor. The
+   * artboard already places both outside the card - this is fidelity, not a
+   * workaround.
+   */
+  test("no fixed layer sits inside an animated ancestor, which would trap it", async () => {
+    const h = handlers()
+    await render(<api.ProjectPanel project={project("personal")} accounts={ACCOUNTS} {...h.props} />)
+    await click(byText("button", "Remove your-app"))
+    await click(byText('[role="alertdialog"] button', "Keep it"))
+
+    await click(one(CARD("work")))
+    await click(byText('[data-confirm="panel"] button', "Switch to work"))
+    await settle()
+    await click(byText("button", "Remove your-app"))
+
+    for (const selector of ["[data-scrim]", "[data-toast]"]) {
+      let node: HTMLElement | null = one<HTMLElement>(selector).parentElement
+      while (node !== null && node !== host) {
+        const classes = (node.getAttribute("class") ?? "").split(/\s+/)
+        expect({ selector, ancestor: node.tagName, classes }).toEqual({
+          selector,
+          ancestor: node.tagName,
+          classes: expect.not.arrayContaining(["bf", "pop", "dim", "toast", "ring", "spin"]),
+        })
+        node = node.parentElement
+      }
+    }
+  })
 })
 
 describe("motion stops when it is asked to", () => {

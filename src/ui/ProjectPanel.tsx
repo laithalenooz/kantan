@@ -1101,6 +1101,8 @@ export function ProjectPanel({
   const headingId = useId()
   const switcher = useAccountSwitch(stored, onSwitchAccount)
   const target = accounts.find((a) => a.kind === switcher.pending)
+  const [removeOpen, setRemoveOpen] = useState(false)
+  const removeTrigger = useRef<HTMLButtonElement | null>(null)
 
   return (
     <main
@@ -1170,9 +1172,29 @@ export function ProjectPanel({
             <CeilingSection budgetUsd={budgetUsd} onSaveBudget={onSaveBudget} anim={anim} />
           )}
 
-          <DangerSection name={name} anim={anim} animate={animate} onRemove={onRemove} />
+          <DangerSection name={name} anim={anim} triggerRef={removeTrigger} onAsk={() => setRemoveOpen(true)} />
         </section>
       </div>
+
+      {/* Outside the card, exactly as the artboard places it, and the placement
+          is load-bearing rather than tidy. `.bf` ends on `filter: blur(0)` with
+          `animation-fill-mode: both`, and a filter other than `none` makes an
+          element the containing block for `position: fixed` descendants - so a
+          scrim rendered inside the card was laid out against the card and then
+          clipped by its `overflow: clip`. Caught by a screenshot; no DOM
+          assertion saw it. `test/ui/ProjectPanel.test.tsx` now pins the
+          structure that avoids it. */}
+      {removeOpen && (
+        <RemoveDialog
+          name={name}
+          animate={animate}
+          onRemove={onRemove}
+          onClose={() => {
+            setRemoveOpen(false)
+            removeTrigger.current?.focus()
+          }}
+        />
+      )}
 
       {switcher.toast !== null && (
         <SwitchToast
@@ -2064,7 +2086,12 @@ function CeilingSection({
 /* -------------------------------------------------------------------------- */
 
 /**
- * Remove from kantan, and the one modal in the design.
+ * Remove from kantan: the section, which is only copy and a trigger.
+ *
+ * The dialog it opens is rendered by `ProjectPanel` at the panel root rather
+ * than here. See the comment at that call site: `.bf` leaves a `filter` behind,
+ * a filter makes an element the containing block for `position: fixed`, and the
+ * card is `overflow: clip`.
  *
  * The copy diverges from the artboard on purpose. `docs/design/Project.dc.html`
  * says removal "deletes its run history"; `src/projects.ts`'s `removeProject`
@@ -2077,76 +2104,14 @@ function CeilingSection({
 function DangerSection({
   name,
   anim,
-  animate,
-  onRemove,
+  triggerRef,
+  onAsk,
 }: {
   name: string
   anim: (classes: string) => string | undefined
-  animate: boolean
-  onRemove: () => void | Promise<void>
+  triggerRef: React.RefObject<HTMLButtonElement | null>
+  onAsk: () => void
 }): ReactElement {
-  const [open, setOpen] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const triggerRef = useRef<HTMLButtonElement | null>(null)
-  const keepRef = useRef<HTMLButtonElement | null>(null)
-  const dialogRef = useRef<HTMLDivElement | null>(null)
-  const headingId = useId()
-  const bodyId = useId()
-
-  /* Focus starts on the safe choice, never on the destructive one. */
-  useEffect(() => {
-    if (!open) return
-    keepRef.current?.focus()
-  }, [open])
-
-  const close = (): void => {
-    setOpen(false)
-    setError(null)
-    triggerRef.current?.focus()
-  }
-
-  const go = (): void => {
-    if (busy) return
-    setBusy(true)
-    setError(null)
-    void (async () => {
-      try {
-        await onRemove()
-        setOpen(false)
-        triggerRef.current?.focus()
-      } catch (cause) {
-        setError(messageOf(cause))
-      } finally {
-        setBusy(false)
-      }
-    })()
-  }
-
-  const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
-    if (event.key === "Escape") {
-      event.preventDefault()
-      if (!busy) close()
-      return
-    }
-    if (event.key !== "Tab") return
-    const nodes = focusablesIn(dialogRef.current)
-    const first = nodes[0]
-    const last = nodes.at(-1)
-    if (first === undefined || last === undefined) return
-    const active = document.activeElement
-    /* Trapped both ways. Without this, Tab walks out of a modal into controls
-       the scrim is covering, which is how a destructive dialog gets confirmed
-       by a keystroke aimed at something behind it. */
-    if (event.shiftKey && active === first) {
-      event.preventDefault()
-      last.focus()
-    } else if (!event.shiftKey && active === last) {
-      event.preventDefault()
-      first.focus()
-    }
-  }
-
   return (
     <div
       data-danger
@@ -2169,7 +2134,7 @@ function DangerSection({
       <button
         type="button"
         ref={triggerRef}
-        onClick={() => setOpen(true)}
+        onClick={onAsk}
         className={PILL_GHOST}
         style={{
           height: 44,
@@ -2184,109 +2149,178 @@ function DangerSection({
       >
         Remove {name}
       </button>
+    </div>
+  )
+}
 
-      {open && (
-        <div
-          data-scrim
-          /* `.kr` on the scrim too: it is `position: fixed`, so the
-             kill-switch's descendant selector would not otherwise reach it. */
-          className={`kr${animate ? " dim" : ""}`}
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 40,
-            background: "rgba(17,18,22,.32)",
-            display: "grid",
-            placeItems: "center",
-            padding: 16,
-          }}
-        >
-          <div
-            ref={dialogRef}
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby={headingId}
-            aria-describedby={bodyId}
-            onKeyDown={onKeyDown}
-            className={animate ? "pop" : undefined}
+/**
+ * The one modal in the whole design, with the semantics a modal owes: focus
+ * starts on the safe choice, Tab is trapped both ways, Escape closes, and
+ * focus returns to the control that opened it.
+ */
+function RemoveDialog({
+  name,
+  animate,
+  onRemove,
+  onClose,
+}: {
+  name: string
+  animate: boolean
+  onRemove: () => void | Promise<void>
+  onClose: () => void
+}): ReactElement {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const keepRef = useRef<HTMLButtonElement | null>(null)
+  const dialogRef = useRef<HTMLDivElement | null>(null)
+  const headingId = useId()
+  const bodyId = useId()
+
+  /* Focus starts on the safe choice, never on the destructive one. */
+  useEffect(() => {
+    keepRef.current?.focus()
+  }, [])
+
+  const go = (): void => {
+    if (busy) return
+    setBusy(true)
+    setError(null)
+    void (async () => {
+      try {
+        await onRemove()
+        onClose()
+      } catch (cause) {
+        setError(messageOf(cause))
+      } finally {
+        setBusy(false)
+      }
+    })()
+  }
+
+  const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (event.key === "Escape") {
+      event.preventDefault()
+      if (!busy) onClose()
+      return
+    }
+    if (event.key !== "Tab") return
+    const nodes = focusablesIn(dialogRef.current)
+    const first = nodes[0]
+    const last = nodes.at(-1)
+    if (first === undefined || last === undefined) return
+    const active = document.activeElement
+    /* Trapped both ways. Without this, Tab walks out of a modal into controls
+       the scrim is covering, which is how a destructive dialog gets confirmed
+       by a keystroke aimed at something behind it. */
+    if (event.shiftKey && active === first) {
+      event.preventDefault()
+      last.focus()
+    } else if (!event.shiftKey && active === last) {
+      event.preventDefault()
+      first.focus()
+    }
+  }
+
+  return (
+    <div
+      data-scrim
+      /* `.kr` on the scrim as well as the root: it is `position: fixed`, and
+         the kill-switch is a descendant selector. */
+      className={`kr${animate ? " dim" : ""}`}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 40,
+        background: "rgba(17,18,22,.32)",
+        display: "grid",
+        placeItems: "center",
+        padding: 16,
+      }}
+    >
+      <div
+        ref={dialogRef}
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby={headingId}
+        aria-describedby={bodyId}
+        onKeyDown={onKeyDown}
+        className={animate ? "pop" : undefined}
+        style={{
+          width: "100%",
+          maxWidth: 440,
+          boxSizing: "border-box",
+          padding: 24,
+          borderRadius: 20,
+          background: "#fff",
+          boxShadow: "0 30px 80px -20px rgba(17,18,22,.5)",
+          lineHeight: "normal",
+        }}
+      >
+        <h2 id={headingId} style={{ margin: 0, fontSize: 20, fontWeight: 650, letterSpacing: "-.02em" }}>
+          Remove {name} from kantan?
+        </h2>
+        <p id={bodyId} style={{ margin: "10px 0 20px", fontSize: 14.5, lineHeight: 1.55, color: "#3A3D45" }}>
+          kantan stops tracking it. The repository, its branches and its task files stay exactly as they are &mdash;
+          nothing is deleted from disk, and the runs it has already done keep their logs. You can add it again at any
+          time, and its history comes back with it.
+        </p>
+        {error !== null && (
+          <p
+            role="alert"
             style={{
-              width: "100%",
-              maxWidth: 440,
-              boxSizing: "border-box",
-              padding: 24,
-              borderRadius: 20,
-              background: "#fff",
-              boxShadow: "0 30px 80px -20px rgba(17,18,22,.5)",
-              lineHeight: "normal",
+              margin: "0 0 16px",
+              borderRadius: 10,
+              border: "1px solid #F3C6C9",
+              background: "#FDF2F3",
+              padding: "10px 12px",
+              fontSize: 13,
+              lineHeight: 1.5,
+              color: "#D92D3A",
             }}
           >
-            <h2 id={headingId} style={{ margin: 0, fontSize: 20, fontWeight: 650, letterSpacing: "-.02em" }}>
-              Remove {name} from kantan?
-            </h2>
-            <p id={bodyId} style={{ margin: "10px 0 20px", fontSize: 14.5, lineHeight: 1.55, color: "#3A3D45" }}>
-              kantan stops tracking it. The repository, its branches and its task files stay exactly as they are
-              &mdash; nothing is deleted from disk, and the runs it has already done keep their logs. You can add it
-              again at any time, and its history comes back with it.
-            </p>
-            {error !== null && (
-              <p
-                role="alert"
-                style={{
-                  margin: "0 0 16px",
-                  borderRadius: 10,
-                  border: "1px solid #F3C6C9",
-                  background: "#FDF2F3",
-                  padding: "10px 12px",
-                  fontSize: 13,
-                  lineHeight: 1.5,
-                  color: "#D92D3A",
-                }}
-              >
-                {error}
-              </p>
-            )}
-            <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: 8 }}>
-              <button
-                type="button"
-                ref={keepRef}
-                onClick={close}
-                className={PILL_GHOST}
-                style={{
-                  height: 44,
-                  padding: "0 18px",
-                  borderRadius: 999,
-                  border: "1px solid #D9D9DF",
-                  background: "#fff",
-                  fontSize: 14,
-                  fontWeight: 560,
-                  color: "#1E2026",
-                }}
-              >
-                Keep it
-              </button>
-              <button
-                type="button"
-                onClick={go}
-                disabled={busy}
-                className="inline-flex items-center justify-center focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo"
-                style={{
-                  height: 44,
-                  padding: "0 18px",
-                  borderRadius: 999,
-                  border: 0,
-                  background: "#B4232F",
-                  color: "#fff",
-                  fontSize: 14,
-                  fontWeight: 620,
-                  opacity: busy ? 0.6 : 1,
-                }}
-              >
-                {busy ? "Removing…" : "Remove project"}
-              </button>
-            </div>
-          </div>
+            {error}
+          </p>
+        )}
+        <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: 8 }}>
+          <button
+            type="button"
+            ref={keepRef}
+            onClick={onClose}
+            className={PILL_GHOST}
+            style={{
+              height: 44,
+              padding: "0 18px",
+              borderRadius: 999,
+              border: "1px solid #D9D9DF",
+              background: "#fff",
+              fontSize: 14,
+              fontWeight: 560,
+              color: "#1E2026",
+            }}
+          >
+            Keep it
+          </button>
+          <button
+            type="button"
+            onClick={go}
+            disabled={busy}
+            className="inline-flex items-center justify-center focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo"
+            style={{
+              height: 44,
+              padding: "0 18px",
+              borderRadius: 999,
+              border: 0,
+              background: "#B4232F",
+              color: "#fff",
+              fontSize: 14,
+              fontWeight: 620,
+              opacity: busy ? 0.6 : 1,
+            }}
+          >
+            {busy ? "Removing…" : "Remove project"}
+          </button>
         </div>
-      )}
+      </div>
     </div>
   )
 }
