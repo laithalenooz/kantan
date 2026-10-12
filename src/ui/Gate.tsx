@@ -1446,6 +1446,13 @@ export function Gate(props: GateProps) {
                 /* Advertised only while the listener is actually registered:
                    announcing a shortcut that does nothing is worse than none. */
                 aria-keyshortcuts={loaded ? "a Meta+Enter Control+Enter" : undefined}
+                /* `aria-keyshortcuts` tells a screen reader about `a`; nothing
+                   told anyone else, because the artboard draws the chord's chip
+                   alone and a visual pass rightly restored that. A shortcut
+                   that starts an implementation run should not be a secret
+                   from the person most likely to press it, so the hint lives
+                   here instead: no pixels, no second chip, still findable. */
+                title={loaded ? "Approve plan — press A, or ⌘↵" : undefined}
                 aria-describedby={loaded ? undefined : whyId}
               >
                 <CheckIcon className="kg-approve-icon" />

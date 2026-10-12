@@ -965,6 +965,25 @@ describe("`a` approves, and the one letter that does is the one that must not fi
     expect(calls).toEqual([])
   })
 
+  test("the `a` shortcut is discoverable without reading the source", async () => {
+    /*
+     * `a` starts an implementation run, and a keystroke that expensive must not
+     * be a secret. The artboard draws one key chip, `⌘↵`, and a visual pass
+     * removed the second one this suite used to require - so this test no
+     * longer dictates *where* the hint lives, only that one exists where a
+     * person can find it. A chip, a title, either: what it forbids is both
+     * going away and leaving a working shortcut nobody can learn about.
+     */
+    const { host } = await render(<Gate {...gateProps()} />)
+    const approve = buttonNamed(host, /approve/i)
+    const printed = [...approve.querySelectorAll(".kg-kbd")].map((c) => (c.textContent ?? "").trim())
+    const hint = `${approve.getAttribute("title") ?? ""} ${printed.join(" ")}`
+    expect(hint).toMatch(/\bA\b/i)
+
+    /* And the chord it shares the button with stays legible too. */
+    expect(hint).toContain("\u2318\u21b5")
+  })
+
   test("`a` is announced on the control that owns it, and only while it works", async () => {
     const { host } = await render(<Gate {...gateProps()} />)
     expect(buttonNamed(host, /approve/i).getAttribute("aria-keyshortcuts")).toBe(
