@@ -1,0 +1,23 @@
+# kantan
+
+Real, open work on kantan itself, taken from `docs/HANDOFF.md`. Each line is a
+task kantan can run: it plans, waits for your approval, implements, and then
+runs `bun run check` until the exit code says it passed.
+
+- [ ] T1 Serve the built UI from `GET /` so kantan runs as one process
+      `INDEX_STUB` in `src/server.ts` still answers "the UI arrives in a later task".
+      `vite build` writes `dist/` and nothing serves it, so the only supported way to
+      run kantan is two terminals. Fall back to the stub when `dist/` is absent, and
+      register the asset routes inside `ROUTES` — a route in `Bun.serve({routes})` is
+      matched before the guard chain and would never meet it.
+- [ ] T2 Give a project an account kind, so the chip stops reading "account unknown"
+      `Account` in `src/ui/Tree.tsx` is `personal | work | unknown` and its doc comment
+      forbids defaulting to "personal", because billing a client from the wrong account
+      is the defect it exists to prevent. `Project` carries a `configDir` and nothing
+      maps one to a kind. The mapping has to be something the user states, not something
+      a path is parsed for.
+- [ ] T3 Surface `system/vcs_state_changed` as a real event instead of an unknown row
+      A real run emits it twice — the CLI reporting that the agent committed, carrying
+      `{kind:"commit", branch, cwd, uuid, session_id}`. The fixtures predate it, so
+      `src/stream.ts` classifies it as `unknown` and the log shows a raw blob. Needs an
+      `Event` variant and a `Row.tsx` renderer.
