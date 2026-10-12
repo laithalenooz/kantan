@@ -894,6 +894,79 @@ run is not evidence**, in either direction: it can hide a broken fallback (see
 the Stream entry above) and it can invent a failure that does not exist in the
 full run. Judge by `bun run check`.
 
+### Magic UI was evaluated and deliberately NOT installed
+
+`DESIGN.md` names Magic UI and shadcn components throughout, and the user asked
+for Magic UI by link at the start. It is still the wrong dependency, for a
+reason stronger than dependency weight: **the artboards are not Magic UI.**
+`docs/design/*.dc.html` is plain HTML with inline styles and one `<style>`
+block, and `DESIGN.md` was describing that block's hand-written keyframes in
+Magic UI's vocabulary. Installing would have moved the build *away* from the
+design the user approved.
+
+Probed anyway, so nobody re-opens it blind: all twelve registry items at
+`https://magicui.design/r/<name>.json` are Tailwind-v4-native, so the install
+would have been technically clean - but it pulls `next-themes`, `shiki`,
+`@shikijs/transformers`, `lucide-react` and `@radix-ui/react-accordion`, plus a
+`cn()`/`components.json`/`@/*` alias layer, and `shadcn init` writes
+`@import "shadcn/tailwind.css"` into the project's global CSS, which here is
+`tokens.css`. Zero dependencies were added.
+
+`src/ui/artboard.css` is the answer instead: 44 classes and 17 keyframes
+extracted from the five artboards. (`DESIGN.md` names twelve keyframes; it
+omits `kpulsed`, `kpulsei` and `kshineb`.)
+
+### artboard.css MUST stay layered, or it silently beats Tailwind
+
+The artboards' CSS is unlayered, because they had no Tailwind. **Unlayered CSS
+beats all layered CSS regardless of specificity**, and Tailwind v4 puts
+preflight in `@layer base` and every utility in `@layer utilities`. Copied
+verbatim, the file broke four utility families everywhere, measured against
+real production builds:
+
+| | verbatim (unlayered) | as shipped (layered) |
+|---|---|---|
+| `svg.ic.size-3` | **16px** | 12px |
+| `button.text-xs` | **16px** | 12px |
+| `button.font-mono` | **Geist** | Geist Mono |
+| `a.text-*` | **#4B4BC8** | correct |
+
+So: element rules in `@layer base`, class rules in `@layer components`,
+`@property`/`@keyframes`/kill-switches unlayered. Do not "fix" an apparent
+conflict with `!important`.
+
+Two more facts from that verification. **`@property --a` must survive
+minification** - it does, with all three descriptors; an unregistered custom
+property reads `0deg` forever and renders a plausible *static* ring with
+nothing thrown, so a frozen beam is the symptom to check for
+(`grep -o '@property --[as][^}]*}' dist/assets/index-*.css`). And **`.ring`
+collides by name with Tailwind's `ring` utility** - different properties, so
+both apply: harmless on the SVG circle the artboard uses, a stray box-shadow on
+any HTML element.
+
+### `.plan ol li` needs react-markdown to wrap each item in a span
+
+`.plan ol li` is `grid-template-columns:28px minmax(0,1fr)` with the step number
+as `::before`. The artboard wraps each item's content in one `<span>`;
+`react-markdown` emits text, `<code>` and `<strong>` as **siblings**, so each
+becomes its own grid item and flows into the 28px counter column. Measured: li
+height **27px -> 105px**, content column **618px -> 273.5px**. That is the
+"one character per line" defect recorded in `CLAUDE.md`, with its cause.
+
+The CSS is right; the fix belongs in the adoption:
+`components={{ li: ({children, ...p}) => <li {...p}><span>{children}</span></li> }}`.
+
+### The Empty artboard disagrees with the other four, on purpose
+
+`Empty.dc.html` uses a longer, softer entrance (12px/`blur(8px)`/.8s against
+10px/6px/.7s), an 8px pulse ring, a `.08s` delay ladder with an irregular tail,
+and different dot geometry. Carried as `kfade-empty`/`kpulse-empty` under a
+`.kr-empty` scope: its root adds one token and everything else ports unchanged.
+
+`States.dc.html` also differs (11px ring, `.04s` ladder) and is **deliberately
+not carried** - it is a specimen sheet, and a scope nobody applies is
+over-building.
+
 ## Settled: decisions with non-obvious reasons
 
 | Decision | Why it is not the obvious thing |
