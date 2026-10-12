@@ -11,12 +11,13 @@ process.env.GIT_COMMITTER_NAME = "kantan test"
 process.env.GIT_COMMITTER_EMAIL = "test@example.invalid"
 
 import { expect, test } from "bun:test"
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, sep } from "node:path"
 import { realpath } from "node:fs/promises"
 import {
   acquireRunLock,
+  commitPaths,
   createTaskBranch,
   isMergedIntoBase,
   recordBaseBranch,
@@ -905,3 +906,133 @@ async function readLock(repo: Repo): Promise<LockRecord | null> {
     return null
   }
 }
+
+// --- Committing a file kantan wrote into the user's repo --------------------
+
+test("commitPaths commits a file git has never seen, which a bare pathspec commit cannot", async () => {
+  // **Probed, because `tickCheckbox`'s pattern does not transfer.** That one
+  // commits an *existing* tracked file, so `git commit -m ... -- <path>` is
+  // enough. On a file git has never seen the same command fails outright with
+  // "pathspec '<path>' did not match any file(s) known to git" - so the draft
+  // route, whose whole job is writing a new file, needs the `git add` first.
+  // Discovering that at runtime would mean the route answered 201 and left its
+  // own output untracked, which is the bug this exists to fix.
+  const { dir, repo } = await repoWithCommit()
+  await mkdir(join(dir, "docs", "features"), { recursive: true })
+  await writeFile(join(dir, "docs/features/importer.md"), "# Importer\n\n- [ ] T1 Read it\n")
+
+  const failed = await commitPaths(repo, {
+    subject: "chore: draft docs/features/importer.md",
+    body: "kantan drafted this from the user's description.",
+    paths: ["docs/features/importer.md"],
+  })
+
+  expect(failed).toBeNull()
+  expect(await git(dir, "status", "--porcelain")).toBe("")
+  expect(await git(dir, "log", "-1", "--format=%s")).toContain("docs/features/importer.md")
+  expect(await git(dir, "log", "-1", "--format=%B")).toContain("drafted")
+})
+
+test("commitPaths takes only the paths it names, leaving another writer's staged file staged", async () => {
+  // The property that makes this safe to run in a repo someone else is working
+  // in, and the same one CLAUDE.md relies on for this project's own commits: a
+  // pathspec commit builds from HEAD plus the named paths only. Without it,
+  // drafting a task file would sweep whatever the user had staged into a commit
+  // whose message says it drafted a feature file.
+  const { dir, repo } = await repoWithCommit()
+  await writeFile(join(dir, "docs-draft.md"), "# Draft\n")
+  await writeFile(join(dir, "theirs.txt"), "work in progress\n")
+  await git(dir, "add", "theirs.txt")
+
+  const failed = await commitPaths(repo, {
+    subject: "chore: draft docs-draft.md",
+    body: "why",
+    paths: ["docs-draft.md"],
+  })
+
+  expect(failed).toBeNull()
+  expect(await git(dir, "show", "--stat", "--format=", "HEAD")).not.toContain("theirs.txt")
+  // Still staged, still uncommitted: they can commit it themselves.
+  expect(await git(dir, "status", "--porcelain")).toContain("A  theirs.txt")
+})
+
+test("commitPaths reports git's own complaint instead of throwing", async () => {
+  // The caller decides what a failed commit means. For the draft route the file
+  // is already written and the draft is not lost, so a failure is a warning on
+  // a 201 rather than a 5xx - `tickCheckbox`'s precedent, where a tick that
+  // cannot be committed is a warning on a run that did pass.
+  const { repo } = await repoWithCommit()
+
+  const failed = await commitPaths(repo, {
+    subject: "chore: nothing",
+    body: "why",
+    paths: ["docs/features/never-written.md"],
+  })
+
+  expect(failed).not.toBeNull()
+  expect(failed ?? "").toContain("never-written.md")
+})
+
+test("commitPaths leaves an unrelated dirty file alone and does not commit it", async () => {
+  const { dir, repo } = await repoWithCommit()
+  await writeFile(join(dir, "a.txt"), "- [ ] T1 edited by the human\n")
+  await writeFile(join(dir, "fresh.md"), "# Fresh\n")
+
+  await commitPaths(repo, { subject: "chore: add fresh.md", body: "why", paths: ["fresh.md"] })
+
+  expect(await git(dir, "show", "--stat", "--format=", "HEAD")).not.toContain("a.txt")
+  expect(await git(dir, "status", "--porcelain")).toContain("a.txt")
+})
+
+test("a commit that fails leaves the file untracked, not staged for the user's next commit", async () => {
+  // The back door on the failure path. `git add` succeeds and `git commit`
+  // fails - a rejecting pre-commit hook, a gpg signing failure, a partial
+  // commit during a merge - and the file is left staged `A`. The user's next
+  // plain `git commit` then sweeps it into whatever they were committing, which
+  // is exactly the sweep the pathspec is there to prevent, arriving by another
+  // route. So the staging is undone and the file goes back to untracked, which
+  // is where the caller's warning points the human.
+  const { dir, repo } = await repoWithCommit()
+  await mkdir(join(dir, ".git", "hooks"), { recursive: true })
+  const hook = join(dir, ".git", "hooks", "pre-commit")
+  await writeFile(hook, "#!/bin/sh\necho 'policy says no' >&2\nexit 1\n")
+  await chmod(hook, 0o755)
+  await writeFile(join(dir, "drafted.md"), "# Drafted\n")
+
+  const failed = await commitPaths(repo, {
+    subject: "chore: draft drafted.md",
+    body: "why",
+    paths: ["drafted.md"],
+  })
+
+  expect(failed).not.toBeNull()
+  // Untracked (`??`), never staged (`A `).
+  const status = await git(dir, "status", "--porcelain")
+  expect(status).toContain("?? drafted.md")
+  expect(status).not.toContain("A  drafted.md")
+  // And the draft itself is still on disk: nothing was lost.
+  expect(await readFile(join(dir, "drafted.md"), "utf8")).toBe("# Drafted\n")
+})
+
+test("a path with glob characters commits that file and not the one it would match", async () => {
+  // `--` stops a path being read as an *option*; it does not stop it being read
+  // as a **pathspec**. Without `--literal-pathspecs`, `a[1].md` globs and would
+  // commit `a1.md` - a file the caller never named - and a path beginning `:`
+  // is read as pathspec magic. A slug derived from a human's prose is not a
+  // place to assume these characters cannot appear.
+  const { dir, repo } = await repoWithCommit()
+  await writeFile(join(dir, "a1.md"), "the file the glob would match\n")
+  await writeFile(join(dir, "a[1].md"), "the file actually named\n")
+
+  const failed = await commitPaths(repo, {
+    subject: "chore: add a[1].md",
+    body: "why",
+    paths: ["a[1].md"],
+  })
+
+  expect(failed).toBeNull()
+  const landed = await git(dir, "show", "--stat", "--format=", "HEAD")
+  expect(landed).toContain("a[1].md")
+  // The glob's victim is still untracked.
+  expect(await git(dir, "status", "--porcelain")).toContain("?? a1.md")
+})

@@ -7,7 +7,8 @@ import { parseFeature } from "./backlog"
 import type { Task } from "./backlog"
 import { draftFeature, type Draft } from "./draft"
 import { listFeatureFiles } from "./featurefile"
-import { requireUsableRepo, taskBranchName } from "./git"
+import { commitPaths, requireUsableRepo, taskBranchName } from "./git"
+import type { Repo } from "./git"
 import {
   addProject,
   defaults,
@@ -2361,6 +2362,24 @@ async function editProject(req: Request, ctx: RouteContext): Promise<Response> {
  * registry is the machine's - and it is one request wide against a human
  * clicking two things at once, where the worst case is the case this refuses.
  */
+/**
+ * The id of a live run in `projectPath`, or `null` when there is none.
+ *
+ * Split out of `liveRunFor` because two rules now read it and they answer
+ * differently: a removal is refused outright, while a draft is written and left
+ * uncommitted. Sharing the *lookup* and not the prose is the point - one of
+ * these messages is about an unreachable run and the other about a file that
+ * would vanish on a branch switch.
+ */
+async function liveRunIdFor(ctx: RouteContext, projectPath: string): Promise<string | null> {
+  const live = ctx.liveRunIds
+  if (live === null) return null
+  for (const id of live()) {
+    if ((await projectOfRun(id, ctx.runsDir)) === projectPath) return id
+  }
+  return null
+}
+
 async function liveRunFor(ctx: RouteContext, projectPath: string): Promise<string | null> {
   const live = ctx.liveRunIds
   if (live === null) return null
@@ -2470,7 +2489,71 @@ async function draftFeatureFile(req: Request, ctx: RouteContext): Promise<Respon
     throw cause
   }
 
-  return Response.json({ ok: true, path: draft.path, tasks: draft.feature.tasks.length }, { status: 201 })
+  // **Commit what we just wrote.** Leaving it untracked closed a loop the user
+  // walked straight into: drafting a task file through the UI made the repo
+  // dirty with kantan's own output, and `requireCleanTreeForNewRun` then
+  // refused to start that very task - so the only route to creating tasks
+  // blocked running them. Writing into someone's repo and leaving it untracked
+  // is the inconsistency, not committing it: `tickCheckbox` in `src/run.ts`
+  // already commits into the user's repo with an explicit pathspec and a
+  // message saying what it did and why.
+  //
+  // A failed commit is a **warning on the 201**, not a 5xx, which is
+  // `tickCheckbox`'s precedent: the draft is written and parsed, the result the
+  // caller asked for exists, and the only thing missing is a commit a human can
+  // make themselves. Turning that into an error would discard a good draft over
+  // a rejecting pre-commit hook. `commitPaths` unstages on failure, so the
+  // human finds an untracked file rather than a staged one their next commit
+  // would sweep up.
+  let warning: string | null = null
+
+  // **Not while a run is in flight in this repo**, and this guard exists
+  // *because* of the commit above rather than beside it. A live run has the
+  // checkout on its own `orch/<task>` branch, so the commit would land there -
+  // and `returnToBase` at the end of that run would then take the drafted file
+  // out of the working tree entirely. The user would watch a file they just
+  // created disappear, recoverable only from a branch nobody told them about.
+  // `git add` also takes `.git/index.lock`, which can fail the agent's own
+  // concurrent commit.
+  //
+  // So the file is still written and still answered - the draft is never lost,
+  // which is why this is not a 409 like the removal route's version - it just
+  // stays untracked, exactly as it did before this change. The user commits it
+  // themselves, or drafts again once the run is done.
+  const live = await liveRunIdFor(ctx, project.path)
+  if (live !== null) {
+    warning = `${draft.path} was written but not committed: run ${live} is in flight in this repository, so the checkout is on that run's own branch and committing there would take this file out of your working tree when the run finishes. It is untracked - commit it yourself, or leave it and it will be there when the run is done.`
+  } else {
+    // `requireUsableRepo` is the only call here that throws; `commitPaths`
+    // reports git's complaint as a value. Narrow on purpose: a broad `try`
+    // around both would launder a programming error into a cosmetic warning and
+    // answer 201 on every request with the file still untracked - the exact
+    // loop this change closes, hidden behind a green test that checked only the
+    // status and the path.
+    let repo: Repo
+    try {
+      repo = await requireUsableRepo(project.path)
+    } catch (cause) {
+      return refuse(400, (cause as Error).message)
+    }
+    warning = await commitPaths(repo, {
+      subject: `chore: draft ${draft.path}`,
+      body: `kantan drafted this feature file from a description the user typed. It holds ${draft.feature.tasks.length} task${draft.feature.tasks.length === 1 ? "" : "s"}, none of which has been run or verified.`,
+      paths: [draft.path],
+    })
+  }
+
+  return Response.json(
+    {
+      ok: true,
+      path: draft.path,
+      tasks: draft.feature.tasks.length,
+      // Only when there is something to say, so a client can treat the key's
+      // presence as "tell the human" rather than comparing against "".
+      ...(warning === null ? {} : { warning }),
+    },
+    { status: 201 },
+  )
 }
 
 export function createServer(opts: ServerOptions = {}): Launch {

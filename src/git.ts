@@ -260,6 +260,63 @@ function stashAdvice(entries: readonly DirtyEntry[]): string {
   return "Commit or stash them first: `git stash`."
 }
 
+// --- Committing a file kantan wrote into the user's repo -------------------
+
+/**
+ * Commits the named repo-relative paths, and nothing else, in the user's repo.
+ *
+ * Returns `null` when it worked, or git's own complaint when it did not. It
+ * does **not** throw: every caller writes the file first, so the content is
+ * already safe on disk and a failed commit is a note to a human rather than a
+ * lost result. `tickCheckbox` in `src/run.ts` set that precedent - a tick it
+ * cannot commit is a warning on a run that really did pass - and the draft
+ * route follows it, answering 201 with a warning rather than a 5xx for a file
+ * it successfully wrote.
+ *
+ * **`git add` first, and that is not redundant.** Probed: `git commit -m ... --
+ * <path>` on a path git has never seen fails outright with *"pathspec '<path>'
+ * did not match any file(s) known to git"*. `tickCheckbox` gets away without it
+ * because it commits an existing tracked file; every caller here is writing a
+ * **new** one, so the staging step is the difference between committing the
+ * file and answering 201 over an untracked file - which is the bug this
+ * function exists to fix.
+ *
+ * **The pathspec on the commit is what makes it safe in a repo someone else is
+ * working in.** Probed: it builds from HEAD plus the named paths only, so
+ * another writer's staged file stays staged and uncommitted and can still be
+ * committed by them. Without it, drafting a task file would sweep whatever the
+ * user had staged into a commit whose message says it drafted a feature file.
+ * This is the same property CLAUDE.md relies on for this project's own commits.
+ */
+export async function commitPaths(
+  repo: Repo,
+  what: { subject: string; body: string; paths: readonly string[] },
+): Promise<string | null> {
+  if (what.paths.length === 0) return "nothing to commit: no paths were named"
+  const staged = await runGit(repo.root, ["--literal-pathspecs", "add", "--", ...what.paths])
+  if (staged.code !== 0) return `could not stage ${what.paths.join(", ")}: ${gitSaid(staged)}`
+  const committed = await runGit(repo.root, [
+    "--literal-pathspecs",
+    "commit",
+    "-m",
+    what.subject,
+    "-m",
+    what.body,
+    "--",
+    ...what.paths,
+  ])
+  if (committed.code !== 0) {
+    // Unstage what we staged. Leaving it `A` would hand the user a file their
+    // next plain `git commit` sweeps in - the exact sweep the pathspec above
+    // exists to prevent, arriving by the back door on the failure path. The
+    // file itself stays on disk, untracked, which is where the caller's own
+    // warning points the human.
+    await runGit(repo.root, ["--literal-pathspecs", "reset", "-q", "--", ...what.paths])
+    return `could not commit ${what.paths.join(", ")}: ${gitSaid(committed)}`
+  }
+  return null
+}
+
 // --- Slugifying a task into a branch name ----------------------------------
 
 /**
