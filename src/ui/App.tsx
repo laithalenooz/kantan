@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { Tree, canStart, type Account, type TaskId, type TreeProject, type TreeTask } from "./Tree.tsx"
+import { Tree, canResume, canStart, type Account, type TaskId, type TreeProject, type TreeTask } from "./Tree.tsx"
 import { Gate, type GateProps } from "./Gate.tsx"
 import { Stream } from "./Stream.tsx"
 import { Sidebar, sumProcessCost, type AccountWindow } from "./Sidebar.tsx"
 import { Digest, ReturnBand, type DigestSubject } from "./Digest.tsx"
 import { AppBar, Breadcrumb, NeedsYouBand, usePageAttention } from "./Chrome.tsx"
 import { Empty } from "./Empty.tsx"
-import { draftFeature, registerProject, startRun, taskKeyOf, type RunView } from "./live.ts"
+import { draftFeature, registerProject, removeProject, startRun, taskKeyOf, updateProject, type RunView } from "./live.ts"
 import { useAction, usePlan, useRun, useTree } from "./useRun.ts"
 import type { RunPhase } from "../runlog.ts"
 import type { AskingPhase } from "./Gate.tsx"
@@ -334,12 +334,134 @@ function DescribeWork({ projectPath, onDone, onCancel }: { projectPath: string; 
   )
 }
 
+/** Changing a project's settings. Only what is edited is sent. */
+function ProjectSettings({ project, onDone, onCancel }: { project: TreeProject; onDone: () => void; onCancel: () => void }) {
+  const [testCmd, setTestCmd] = useState(project.testCmd)
+  const stored: "personal" | "work" | "" =
+    project.account.kind === "personal" || project.account.kind === "work" ? project.account.kind : ""
+  const [account, setAccount] = useState<"personal" | "work" | "">(stored)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const submit = async (e: React.FormEvent): Promise<void> => {
+    e.preventDefault()
+    setBusy(true)
+    setError(null)
+    try {
+      // Only what actually changed. A PATCH that sent every field would
+      // rewrite settings this dialog never shows - the budget, the models, the
+      // tool allowlist - which is the exact reason registering twice is
+      // refused rather than treated as an edit.
+      await updateProject(project.path, {
+        ...(testCmd.trim() === project.testCmd ? {} : { testCmd: testCmd.trim() }),
+        ...(account === "" || account === stored ? {} : { account }),
+      })
+      onDone()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-[#111216]/30 p-6" role="dialog" aria-modal="true" aria-label="Project settings">
+      <form onSubmit={(e) => void submit(e)} className="w-full max-w-[520px] rounded-[18px] border border-edge bg-white p-6 shadow-lg">
+        <h2 className="text-[19px] font-[650] tracking-[-.015em] text-ink">{repoName(project.path)}</h2>
+        <p className="m mt-1 text-[12.5px] text-muted-400">{project.path}</p>
+
+        <label className="mt-5 block text-[12.5px] font-semibold text-muted-400" htmlFor="ps-cmd">Test command</label>
+        <input id="ps-cmd" value={testCmd} onChange={(e) => setTestCmd(e.target.value)} required
+          className="m mt-1.5 w-full rounded-[10px] border border-edge px-3 py-2 text-[13.5px] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#5B5BD6]" />
+
+        <fieldset className="mt-4 border-0 p-0">
+          <legend className="text-[12.5px] font-semibold text-muted-400">Claude account</legend>
+          <div className="mt-2 flex gap-2">
+            {([["personal", "Personal"], ["work", "Work"], ["", "Not sure"]] as const).map(([value, label]) => (
+              <button key={label} type="button" onClick={() => setAccount(value)} aria-pressed={account === value}
+                className={`rounded-full border px-3 py-1.5 text-[12.5px] font-semibold ${
+                  account === value ? "border-ink bg-ink text-white" : "border-edge text-muted-500"
+                }`}>
+                {label}
+              </button>
+            ))}
+          </div>
+          {/* Deliberately not offered as a thing to unset: "not sure" leaves
+              whatever is stored alone rather than erasing a stated account. */}
+          <p className="mt-2 text-[12px] leading-[1.5] text-muted-400">
+            Choosing &ldquo;Not sure&rdquo; leaves the stored account as it is.
+          </p>
+        </fieldset>
+
+        {error !== null && (
+          <p role="alert" className="mt-4 rounded-[10px] border border-[#F3C6C9] bg-[#FDF2F3] px-3 py-2 text-[12.5px] leading-[1.5] text-[#D92D3A]">{error}</p>
+        )}
+
+        <div className="mt-6 flex items-center justify-end gap-3">
+          <button type="button" onClick={onCancel} className="ghost rounded-full px-4 py-2 text-[13px] font-semibold text-muted-500">Cancel</button>
+          <button type="submit" disabled={busy} className="cta rounded-full bg-ink px-4 py-2 text-[13px] font-semibold text-white disabled:opacity-50">
+            {busy ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </form>
+    </div>
+  )
+}
+
+/** Confirming removal, and saying plainly what is and is not deleted. */
+function ConfirmRemove({
+  project,
+  onDone,
+  onCancel,
+  onError,
+}: {
+  project: TreeProject
+  onDone: () => void
+  onCancel: () => void
+  onError: (message: string) => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const go = async (): Promise<void> => {
+    setBusy(true)
+    try {
+      await removeProject(project.path)
+      onDone()
+    } catch (cause) {
+      onError(cause instanceof Error ? cause.message : String(cause))
+      onCancel()
+    }
+  }
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-[#111216]/30 p-6" role="dialog" aria-modal="true" aria-label="Remove project">
+      <div className="w-full max-w-[480px] rounded-[18px] border border-edge bg-white p-6 shadow-lg">
+        <h2 className="text-[19px] font-[650] tracking-[-.015em] text-ink">Remove {repoName(project.path)}?</h2>
+        {/* The sentence that matters: this is the one destructive-looking
+            action in the app, and it touches nothing on disk. */}
+        <p className="mt-2 text-[13.5px] leading-[1.55] text-muted-500">
+          kantan stops tracking it. Your repository, its branches and its task files are not touched — nothing is
+          deleted from disk. You can add it again at any time.
+        </p>
+        <div className="mt-6 flex items-center justify-end gap-3">
+          <button type="button" onClick={onCancel} className="ghost rounded-full px-4 py-2 text-[13px] font-semibold text-muted-500">Cancel</button>
+          <button type="button" onClick={() => void go()} disabled={busy}
+            className="rounded-full bg-[#D92D3A] px-4 py-2 text-[13px] font-semibold text-white disabled:opacity-50">
+            {busy ? "Removing…" : "Remove"}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function App() {
   const { tree, origin, error: treeError, reload } = useTree()
   const [adding, setAdding] = useState(false)
   const [describing, setDescribing] = useState<string | null>(null)
   /** A project opened in its own right, rather than one of its tasks. */
   const [openProject, setOpenProject] = useState<string | null>(null)
+  const [editing, setEditing] = useState<TreeProject | null>(null)
+  const [removing, setRemoving] = useState<TreeProject | null>(null)
+  const [projectError, setProjectError] = useState<string | null>(null)
   const nowMs = useNow()
   const [selected, setSelected] = useState<TaskId | null>(null)
   const [started, setStarted] = useState<Record<string, string>>({})
@@ -472,7 +594,7 @@ export function App() {
         : null
   const noProjects = treeError === null && tree !== null && projects.length === 0
 
-  const failure = treeError ?? startError ?? actionError
+  const failure = treeError ?? startError ?? actionError ?? projectError
 
   return (
     /* `kr` is the artboards' own root class, and `artboard.css`'s reduced-motion
@@ -608,14 +730,46 @@ export function App() {
               </>
             )}
 
+            <div className="mt-5 flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setDescribing(panelProject.path)}
+                className="cta rounded-full bg-ink px-4 py-2 text-[13px] font-semibold text-white"
+              >
+                Describe what you want done
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditing(panelProject)}
+                className="ghost rounded-full border border-edge px-4 py-2 text-[13px] font-semibold text-muted-500"
+              >
+                Settings
+              </button>
+              <button
+                type="button"
+                onClick={() => setRemoving(panelProject)}
+                className="ghost rounded-full px-4 py-2 text-[13px] font-semibold text-[#D92D3A]"
+              >
+                Remove
+              </button>
+            </div>
+          </section>
+        )}
+
+        {task !== null && canResume(task) && runId !== null && (
+          <div className="m-4 max-w-[620px] rounded-[14px] border border-edge bg-panel px-5 py-[18px]">
+            <p className="text-[13.5px] leading-[1.55] text-muted-500">
+              {task.ref} was interrupted — the run was killed before it finished, so its log just stops. Resuming
+              picks it up from the last phase it recorded, on the branch it was already using.
+            </p>
             <button
               type="button"
-              onClick={() => setDescribing(panelProject.path)}
-              className="cta mt-5 rounded-full bg-ink px-4 py-2 text-[13px] font-semibold text-white"
+              onClick={() => void send({ kind: "resume" })}
+              className="cta mt-3 rounded-full bg-ink px-4 py-2 text-[13px] font-semibold text-white"
             >
-              Describe what you want done
+              Resume this run
             </button>
-          </section>
+          </div>
         )}
 
         {runId === null && task !== null && canStart(task) && (
@@ -652,6 +806,32 @@ export function App() {
       </div>
       )}
       </div>
+
+      {editing !== null && (
+        <ProjectSettings
+          project={editing}
+          onDone={() => {
+            setEditing(null)
+            reload()
+          }}
+          onCancel={() => setEditing(null)}
+        />
+      )}
+
+      {removing !== null && (
+        <ConfirmRemove
+          project={removing}
+          onDone={() => {
+            // The panel was about a project that no longer exists.
+            if (openProject === removing.path) setOpenProject(null)
+            if (selected?.projectPath === removing.path) setSelected(null)
+            setRemoving(null)
+            reload()
+          }}
+          onCancel={() => setRemoving(null)}
+          onError={setProjectError}
+        />
+      )}
 
       {describing !== null && (
         <DescribeWork

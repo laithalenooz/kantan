@@ -672,12 +672,54 @@ export async function draftFeature(
   return answer.path
 }
 
+/** Stops tracking a repository. The repo itself is untouched. */
+export async function removeProject(path: string, fetcher: typeof fetch = fetch): Promise<void> {
+  const res = await withSession(fetcher, (f) =>
+    f(`${API}/projects`, { method: "DELETE", cache: "no-store", body: JSON.stringify({ path }) }),
+  )
+  if (!res.ok) throw new Error(`that project could not be removed: ${res.status} ${await text(res)}`)
+}
+
+/**
+ * Changes some of a project's settings, leaving the rest alone.
+ *
+ * A **partial** update on purpose. Registering again is refused with a 409
+ * whose message explains why: a second trip through a three-field dialog would
+ * reset a `budgetUsd` or an `allowedTools` list that was tuned by hand, and the
+ * store is the one piece of state no repository can rebuild. Only the keys
+ * sent here change.
+ *
+ * `path` is the identity and is never editable: run logs reference the spelling
+ * it was registered under, so changing it is a remove plus an add.
+ */
+export async function updateProject(
+  path: string,
+  changes: { testCmd?: string; account?: "personal" | "work"; configDir?: string; budgetUsd?: number },
+  fetcher: typeof fetch = fetch,
+): Promise<void> {
+  const res = await withSession(fetcher, (f) =>
+    f(`${API}/projects`, { method: "PATCH", cache: "no-store", body: JSON.stringify({ path, ...changes }) }),
+  )
+  if (!res.ok) throw new Error(`that change could not be saved: ${res.status} ${await text(res)}`)
+}
+
 /** The actions, design §4.4. POST, never GET: see the header of `src/server.ts`. */
 export type Action =
   | { kind: "approve" }
   | { kind: "feedback"; text: string }
   | { kind: "answer"; text: string }
   | { kind: "stop" }
+  /**
+   * Picks a killed run back up from where its log stops.
+   *
+   * `resumeRun` has existed in `src/run.ts` since the phase machine landed and
+   * nothing could call it. The distinction that matters to a human here is in
+   * `resumeTaskBranch`'s dirty check: a run's own half-written files are exempt
+   * **only while the checkout is still on its branch**, so "I had uncommitted
+   * work from the run that was cut" is fine and "I have unrelated work on my
+   * base branch" is not. The refusal says which.
+   */
+  | { kind: "resume" }
   | { kind: "raise"; budgetUsd: number }
 
 export async function act(runId: string, action: Action, fetcher: typeof fetch = fetch): Promise<void> {
