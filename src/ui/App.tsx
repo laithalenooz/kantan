@@ -5,6 +5,7 @@ import { Stream } from "./Stream.tsx"
 import { Sidebar, sumProcessCost, type AccountWindow } from "./Sidebar.tsx"
 import { Digest, ReturnBand, type DigestSubject } from "./Digest.tsx"
 import { AppBar, Breadcrumb, NeedsYouBand, usePageAttention } from "./Chrome.tsx"
+import { Accounts } from "./Accounts.tsx"
 import { Empty } from "./Empty.tsx"
 import { AddRepo, type Detection } from "./AddRepo.tsx"
 import { AddTasks } from "./AddTasks.tsx"
@@ -12,7 +13,7 @@ import { ProjectPanel, accountOptionsFor, type AccountOption } from "./ProjectPa
 import { StartPanel } from "./StartPanel.tsx"
 import { act, addTasks, detectPath, draftFeature, proposeTasks, registerProject, removeProject, removeTask, runTestCommand, startRun, summaryOf, taskKeyOf, updateProject, type RunView } from "./live.ts"
 import { useAction, usePlan, useRun, useTree } from "./useRun.ts"
-import { useNewTaskFile, useProjectSettings, useRunStart, useTaskRemoval } from "./actions.ts"
+import { useAccounts, useNewTaskFile, useProjectSettings, useRunStart, useTaskRemoval } from "./actions.ts"
 import type { RunPhase } from "../runlog.ts"
 import type { AskingPhase } from "./Gate.tsx"
 
@@ -217,6 +218,8 @@ type Panel =
   | { kind: "addTasks"; projectPath: string; featureFile: string }
   /** A **new** task file, for work none of the project's files is about. */
   | { kind: "newTaskFile"; projectPath: string }
+  /** The accounts view, which is about no project in particular. */
+  | { kind: "accounts" }
   | { kind: "project"; path: string }
   | null
 
@@ -238,6 +241,10 @@ export function App() {
   const runStart = useRunStart()
   const removal = useTaskRemoval(reload, selected, setSelected)
   const newFile = useNewTaskFile(reload)
+  /* Polls only while its panel is open: a rate-limit reading changes when a
+     run emits one, so re-reading the logs for a screen nobody is looking at
+     buys nothing. */
+  const accounts = useAccounts(panel?.kind === "accounts")
 
 
   const projects = tree?.projects ?? []
@@ -525,6 +532,10 @@ export function App() {
     <div className="kr flex min-h-dvh flex-col">
       <AppBar
         origin={origin}
+        onAccounts={() => {
+          setSelected(null)
+          setPanel({ kind: "accounts" })
+        }}
         /* The initial screen is "nothing selected, no panel open" - there is no
            router here, so home is a state rather than a URL. */
         onHome={() => {
@@ -602,6 +613,16 @@ export function App() {
           `flex:999 1 560px` is read in a COLUMN context and becomes
           `height:560px` - which sliced the card at 560 with 830 of content, the
           clipping that looked like a layout bug and was a nesting one. */}
+      {panel?.kind === "accounts" && (
+        <Accounts
+          accounts={accounts.accounts}
+          error={accounts.error}
+          busy={accounts.busy}
+          onRefresh={accounts.refresh}
+          onClose={() => setPanel(null)}
+        />
+      )}
+
       {panelProject !== null && (
         <ProjectPanel
           project={panelProject}
@@ -682,7 +703,7 @@ export function App() {
           children included - putting it on the container faded the digest and
           erased the run record below the mask's 75% stop. */}
       <main
-        hidden={noProjects || nothingSelected || panel?.kind === "project" || panel?.kind === "addRepo"}
+        hidden={noProjects || nothingSelected || panel?.kind === "project" || panel?.kind === "addRepo" || panel?.kind === "accounts"}
         className="relative flex min-w-0 flex-[999_1_560px] flex-col px-[clamp(16px,3vw,44px)] pt-6 pb-12"
       >
         <div className="dots pointer-events-none absolute inset-0" aria-hidden="true" />

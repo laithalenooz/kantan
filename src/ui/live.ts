@@ -828,6 +828,50 @@ export async function proposeTasks(
   return tasks
 }
 
+/** One rate-limit window, as `src/accounts.ts` reports it. */
+export interface UsageWindow {
+  name: string
+  utilization: number | undefined
+  /** Epoch **seconds**, the unit the CLI sends. */
+  resetsAt: number | undefined
+}
+
+export type Freshness = "live" | "current" | "expired" | "never"
+
+export interface AccountUsage {
+  profile: string | null
+  freshness: Freshness
+  status?: string
+  windows?: UsageWindow[]
+  runId?: string
+  seenDuringRunStartedAt?: string
+}
+
+/**
+ * Where each Claude account's rate-limit windows stood the last time kantan
+ * saw.
+ *
+ * There is no way to ask for this: `claude` has no subcommand that reports
+ * usage, so the `rate_limit_event` a run emits is the only source, and
+ * `freshness` is how a reading says whether it can still be believed. A reader
+ * that ignores it and prints the percentage would claim a window that may have
+ * reset hours ago.
+ */
+export async function fetchAccounts(fetcher: typeof fetch = fetch): Promise<AccountUsage[]> {
+  const res = await withSession(fetcher, (f) => f(`${API}/accounts`, { cache: "no-store" }))
+  if (!res.ok) throw new Error(`the accounts could not be read: ${res.status} ${await text(res)}`)
+  const body = (await res.json()) as { accounts?: unknown }
+  const accounts = body.accounts
+  /* Read, not cast - the lesson `fetchPlan` paid for. An answer this page
+     cannot read is an error, never an empty list: "no accounts" and "the
+     server said something I do not understand" look identical in a UI that
+     renders `[]` and mean opposite things. */
+  if (!Array.isArray(accounts)) {
+    throw new Error("the server's answer carried no accounts; it may be running a different version than this page")
+  }
+  return accounts as AccountUsage[]
+}
+
 /** What `POST /api/test` answers. */
 export interface TestRunAnswer {
   testCmd: string

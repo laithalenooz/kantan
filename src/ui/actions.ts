@@ -24,9 +24,10 @@
  *   repository" and that sentence must not appear for a budget edit.
  */
 
-import { useCallback, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 
-import { draftFeature, removeTask, startRun, updateProject } from "./live.ts"
+import { draftFeature, fetchAccounts, removeTask, startRun, updateProject } from "./live.ts"
+import type { AccountUsage } from "./live.ts"
 import type { AccountOption } from "./ProjectPanel.tsx"
 import type { AdvancedSettings } from "./Tree.tsx"
 import type { TaskId } from "./Tree.tsx"
@@ -317,4 +318,72 @@ export function useRunStart(): RunStart {
   )
 
   return { started, error, dirtyRefusal, start, dismissDirty: useCallback(() => setDirtyRefusal(null), []) }
+}
+
+
+export interface Accounts {
+  accounts: AccountUsage[] | null
+  error: Failure
+  /** Refetches now. The button beside the list, and what the poll calls. */
+  refresh: () => void
+  /** A refetch is in flight, so the control can say so rather than look dead. */
+  busy: boolean
+}
+
+/**
+ * How often the list refetches while it is on screen.
+ *
+ * Ten seconds, and the figure is a judgement about what "real time" can mean
+ * here rather than a default. A rate-limit reading only changes when a run
+ * emits one, so between runs a faster poll reads the same bytes more often. A
+ * live run emits them every few turns, and ten seconds is inside that. The
+ * cost of each poll is reading the tail of a few log files.
+ */
+const POLL_MS = 10_000
+
+/**
+ * The accounts list, refetched while it is open.
+ *
+ * Polled rather than streamed, deliberately. `GET /api/runs/:id/stream` carries
+ * `rate_limit_event` for **one** run, and this list is about every account -
+ * including the ones nothing is running on, whose figures change only when the
+ * window resets. A poll is the honest shape for "re-read a derived answer",
+ * and it stops when the panel closes rather than holding a connection for a
+ * screen nobody is looking at.
+ */
+export function useAccounts(open: boolean): Accounts {
+  const [accounts, setAccounts] = useState<AccountUsage[] | null>(null)
+  const [error, setError] = useState<Failure>(null)
+  const [busy, setBusy] = useState(false)
+  const [nonce, setNonce] = useState(0)
+
+  useEffect(() => {
+    if (!open) return
+    let alive = true
+    const read = async (): Promise<void> => {
+      setBusy(true)
+      try {
+        const got = await fetchAccounts()
+        if (alive) {
+          setAccounts(got)
+          setError(null)
+        }
+      } catch (cause) {
+        /* The previous answer stays on screen beside the message: a reading
+           that was true a minute ago is more use than an empty list, and
+           blanking it would make a dropped poll look like "no accounts". */
+        if (alive) setError(reason(cause))
+      } finally {
+        if (alive) setBusy(false)
+      }
+    }
+    void read()
+    const timer = setInterval(() => void read(), POLL_MS)
+    return () => {
+      alive = false
+      clearInterval(timer)
+    }
+  }, [open, nonce])
+
+  return { accounts, error, busy, refresh: useCallback(() => setNonce((n) => n + 1), []) }
 }

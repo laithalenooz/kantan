@@ -95,6 +95,7 @@ import {
 } from "./routes/features"
 import { runTestCommand } from "./routes/test"
 import { detectRepoPath } from "./routes/detect"
+import { readAccounts } from "./routes/accounts"
 export type { PlanSource } from "./routes/plan"
 import type { FileRead } from "./http/readinside"
 
@@ -283,6 +284,12 @@ export const ROUTES: Record<string, RouteHandler> = {
    * the screen sat at `idle` and someone adding a repository typed a path blind
    * and met the register route's raw 400 instead. */
   "POST /api/detect": (req, ctx) => detectRepoPath(req, ctx),
+
+  /** Where each Claude account's rate-limit windows stood the last time kantan
+   * saw. A GET, because it reads logs and changes nothing - and the only
+   * source there is: `claude` has no subcommand that reports usage, so the
+   * `rate_limit_event` a run emits is all anyone has. */
+  "GET /api/accounts": (_req, ctx) => readAccounts(ctx),
 }
 
 /**

@@ -191,6 +191,15 @@ export interface AppBarProps {
    */
   onHome?: () => void
   /**
+   * Opens the accounts view. Absent draws no control.
+   *
+   * In the bar because it is the one screen that is about **no project in
+   * particular**: rate limits belong to a `CLAUDE_CONFIG_DIR`, and several
+   * projects can bill to one. Putting it inside a project's settings would
+   * have made a machine-wide fact look like a per-project one.
+   */
+  onAccounts?: () => void
+  /**
    * Where **kantan** is, spelled however the caller spells it, e.g.
    * `localhost:4317`.
    *
@@ -207,7 +216,7 @@ export interface AppBarProps {
   className?: string
 }
 
-export function AppBar({ origin, onHome, className }: AppBarProps) {
+export function AppBar({ origin, onHome, onAccounts, className }: AppBarProps) {
   return (
     <header
       className={className}
@@ -260,6 +269,36 @@ export function AppBar({ origin, onHome, className }: AppBarProps) {
           }}
         >
           kantan
+        </button>
+      )}
+
+      {onAccounts !== undefined && (
+        <button
+          type="button"
+          data-accounts-open
+          onClick={onAccounts}
+          className="ghost focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo"
+          style={{
+            marginLeft: "auto",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 7,
+            height: 32,
+            padding: "0 12px",
+            borderRadius: 999,
+            border: "1px solid #E2E2E7",
+            background: "#fff",
+            fontSize: 13,
+            fontWeight: 560,
+            color: "#3A3D45",
+            cursor: "pointer",
+          }}
+        >
+          <svg aria-hidden="true" viewBox="0 0 24 24" style={{ width: 14, height: 14 }} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
+            <circle cx="12" cy="7" r="4" />
+          </svg>
+          Accounts
         </button>
       )}
 
