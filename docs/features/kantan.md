@@ -22,6 +22,7 @@ underneath.
       to a kind. The mapping has to be something the user states, not something a path
       is parsed for.
 - [ ] T3 Render `vcs_state_changed` instead of an unknown row
+- [ ] T4 Offer a way to start a new task file from the tree
       A real run emits it twice — the CLI reporting that the agent committed, carrying
       `{kind:"commit", branch, cwd, uuid, session_id}`. The fixtures predate it, so
       `src/stream.ts` classifies it as `unknown` and the log shows a raw blob. Needs an
