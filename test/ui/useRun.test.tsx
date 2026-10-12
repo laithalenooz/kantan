@@ -167,10 +167,20 @@ describe("useRun", () => {
   })
 })
 
+/**
+ * Every stub below answers `{ ok: true, plan }`, because that is what
+ * `planAnswer` in `src/server.ts` writes.
+ *
+ * They used to answer the bare `PlanSource`, agreeing with `fetchPlan`'s cast
+ * rather than with the server - so the suite was green while the gate told
+ * every parked run it had recorded no plan. A transport stub that invents its
+ * own envelope tests the caller against itself. `test/ui/live.test.ts` pins the
+ * envelope directly; these pin what the hooks do with it.
+ */
 describe("usePlan", () => {
   test("asks for nothing until something is waiting at a gate", async () => {
     const { fetcher, urls } = stub({
-      "/api/runs/r-1/plan": () => Response.json({ status: "undictated" }),
+      "/api/runs/r-1/plan": () => Response.json({ ok: true, plan: { status: "undictated" } }),
     })
     function Probe({ want }: { want: boolean }): React.ReactNode {
       usePlan("r-1", want, fetcher)
@@ -196,9 +206,9 @@ describe("usePlan", () => {
     const fetcher = (async (url: string | URL | Request) => {
       if (String(url).includes("r-slow")) {
         await slow
-        return Response.json({ status: "loaded", path: "slow.md", markdown: "# slow" })
+        return Response.json({ ok: true, plan: { status: "loaded", path: "slow.md", markdown: "# slow" } })
       }
-      return Response.json({ status: "loaded", path: "fast.md", markdown: "# fast" })
+      return Response.json({ ok: true, plan: { status: "loaded", path: "fast.md", markdown: "# fast" } })
     }) as unknown as typeof fetch
 
     const seen: { plan: unknown } = { plan: null }
@@ -308,7 +318,7 @@ describe("a selection change must not leave the old run on screen", () => {
 
   test("the same holds for the plan the gate renders", async () => {
     const fetcher = (async (url: string | URL | Request) =>
-      Response.json({ status: "loaded", path: `${String(url).includes("r-1") ? "one" : "two"}.md`, markdown: "#" })) as unknown as typeof fetch
+      Response.json({ ok: true, plan: { status: "loaded", path: `${String(url).includes("r-1") ? "one" : "two"}.md`, markdown: "#" } })) as unknown as typeof fetch
 
     const seen: { asked: string; planFrom: string | null }[] = []
     function Probe({ id }: { id: string }): React.ReactNode {
