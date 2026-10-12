@@ -189,15 +189,52 @@ export function parseFeature(src: string): Feature {
  * guessing: an unknown ref, or a ref that appears on more than one line.
  */
 export function tickTask(src: string, ref: string): string {
-  const matches = parseFeature(src).tasks.filter((t) => t.ref === ref)
-  if (matches.length > 1) {
-    const where = matches.map((t) => t.line + 1).join(", ")
-    throw new Error(`task ${ref} appears on lines ${where}; refusing to guess which to tick`)
-  }
-  const task = matches[0]
-  if (!task) throw new Error(`no task ${ref} in this feature file`)
+  const task = only(src, ref, "tick")
   if (task.done) return src
 
   const lines = src.split("\n")
   return lines.map((l, i) => (i === task.line ? l.replace(OPEN_BOX_RE, "$1- [x]") : l)).join("\n")
+}
+
+/**
+ * The one task `ref` names, or a refusal saying why there isn't one.
+ *
+ * Shared by `tickTask` and `removeTask` rather than written twice, and that is
+ * not tidiness: two resolvers would eventually disagree about which line `T1`
+ * is, and then ticking and removing the same ref would act on different lines
+ * of the same file. `verb` only shapes the duplicate message.
+ */
+function only(src: string, ref: string, verb: string): Task {
+  const matches = parseFeature(src).tasks.filter((t) => t.ref === ref)
+  if (matches.length > 1) {
+    const where = matches.map((t) => t.line + 1).join(", ")
+    throw new Error(`task ${ref} appears on lines ${where}; refusing to guess which to ${verb}`)
+  }
+  const task = matches[0]
+  if (!task) throw new Error(`no task ${ref} in this feature file`)
+  return task
+}
+
+/**
+ * `src` without the line `ref` is on, and with every other byte untouched.
+ *
+ * Exactly one element of `src.split("\n")` goes, which is what keeps the
+ * blast radius to the line the human pointed at. The costs here are not
+ * symmetric: removing too much takes a neighbouring task, a heading or a note
+ * with it, inside the user's own repository and with nothing on any surface to
+ * say what went missing, while removing too little leaves a blank line that
+ * they would have tidied anyway. So nothing adjacent is swept up - not the
+ * blank line after a task, not an indented continuation under it, which
+ * belongs to the item rather than being it.
+ *
+ * The split/join round-trip is byte-exact, including CRLF (the `\r` stays at
+ * the end of its line) and a BOM (it belongs to line zero). It also gets the
+ * trailing newline right without a special case: a file ending in one splits
+ * to a final `""` element, which survives the removal and joins back to the
+ * same terminator, and a file ending without one has no such element to add.
+ */
+export function removeTask(src: string, ref: string): string {
+  const task = only(src, ref, "remove")
+  const lines = src.split("\n")
+  return [...lines.slice(0, task.line), ...lines.slice(task.line + 1)].join("\n")
 }

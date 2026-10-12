@@ -1,7 +1,7 @@
 import { open, readFile, readdir, realpath, rename, stat, unlink } from "node:fs/promises"
 import { basename, dirname, join, resolve } from "node:path"
 import { randomUUID } from "node:crypto"
-import { parseFeature, tickTask } from "./backlog"
+import { parseFeature, removeTask, tickTask } from "./backlog"
 import type { Feature } from "./backlog"
 
 /** The backlog lives in the user's own repo, in a flat directory. */
@@ -173,6 +173,59 @@ export async function tickTaskInFile(file: FeatureFile, ref: string): Promise<Ti
 
   await writeExact(file.path, out)
   return { written: true, src: out, warning }
+}
+
+/** What removing a task did. Mirrors `TickResult`, and for the same reasons. */
+export interface RemoveResult {
+  /** The bytes now on disk. */
+  src: string
+  /** The text of the task that went, so a caller can say what it removed. */
+  removed: string
+  /** Set when the file had changed since it was parsed; see `TickResult`. */
+  warning: string | null
+}
+
+/**
+ * Removes `ref` from `file` on disk.
+ *
+ * The file is re-read first and the ref re-resolved against the bytes now on
+ * disk, exactly as `tickTaskInFile` does and for the same reason: the human
+ * edits the markdown while kantan is looking at it, and cached line numbers
+ * describe a string that no longer exists. Here that re-read is doing more
+ * work than it does for a tick - a stale line number would make a tick write
+ * `[x]` on the wrong line, and would make *this* delete the wrong line.
+ *
+ * There is no idempotent case to skip. A tick of an already-ticked task is a
+ * no-op because the end state is the same either way; a ref that is not in the
+ * file has no end state to reach, so `removeTask` refuses and that refusal is
+ * passed on rather than swallowed. "It was already gone" and "it is gone
+ * because I removed it" are different answers, and only one of them should let
+ * a caller report a removal.
+ */
+export async function removeTaskFromFile(file: FeatureFile, ref: string): Promise<RemoveResult> {
+  const fresh = decode(await readFile(file.path), file.path)
+  const changed = fresh !== file.src
+  const warning = changed
+    ? `${file.path} changed on disk since it was parsed; ${ref} was re-resolved against the bytes now on disk`
+    : null
+
+  // Read before the write, from the same bytes the write is computed from, so
+  // the text reported is the text that actually went.
+  const going = parseFeature(fresh).tasks.find((t) => t.ref === ref)
+
+  let out: string
+  try {
+    out = removeTask(fresh, ref)
+  } catch (e) {
+    if (!changed) throw e
+    throw new Error(
+      `${file.path} changed on disk since it was parsed, and ${ref} can no longer be removed: ${describe(e)}`,
+      { cause: e },
+    )
+  }
+
+  await writeExact(file.path, out)
+  return { src: out, removed: going?.text ?? ref, warning }
 }
 
 function describe(e: unknown): string {

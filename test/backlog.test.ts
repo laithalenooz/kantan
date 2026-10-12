@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test"
-import { parseFeature, tickTask } from "../src/backlog"
+import { describe, expect, test } from "bun:test"
+import { parseFeature, removeTask, tickTask } from "../src/backlog"
 
 const SAMPLE = `---
 status: active
@@ -382,4 +382,124 @@ test("a rule under an unindented continuation line is not a setext heading", () 
   // what separates this from the `Notes` guard two tests down.
   const src = "# F\n\n- [ ] T1 a\nnote\n---\n- [ ] T2 b\n"
   expect(parseFeature(src).tasks.map((t) => t.ref)).toEqual(["T1", "T2"])
+})
+
+/* ========================================================================== */
+/* Removing a task                                                            */
+/* ========================================================================== */
+
+/**
+ * The dimension: **what surrounds the line being removed.** Values: the only
+ * task; the first of several; the middle; the last with a trailing newline;
+ * the last without one; a line using CRLF; and the ref occurring in *prose*
+ * rather than as a task.
+ *
+ * The costs are not symmetric and the matrix is written for the expensive one.
+ * Removing too much destroys the user's file - a neighbouring task, a heading,
+ * a note under the task - inside their own repository, and nothing on the
+ * surface would say what went missing. Removing too little leaves a blank
+ * line, which is cosmetic and which they would have edited anyway. So this
+ * removes exactly one element of `src.split("\n")` and joins, and the matrix
+ * pins every byte that is not that line.
+ *
+ * It resolves the ref through `parseFeature` rather than a regex of its own,
+ * for the reason the duplicate test below gives: two resolvers would
+ * eventually disagree about which line `T1` is, and then ticking and removing
+ * would act on different lines of the same file.
+ */
+describe("removeTask", () => {
+  const ROWS: ReadonlyArray<{ why: string; src: string; ref: string; out: string }> = [
+    {
+      why: "the middle of a list",
+      src: "# F\n\n- [ ] T1 a\n- [ ] T2 b\n- [ ] T3 c\n",
+      ref: "T2",
+      out: "# F\n\n- [ ] T1 a\n- [ ] T3 c\n",
+    },
+    {
+      why: "the first task",
+      src: "# F\n\n- [ ] T1 a\n- [ ] T2 b\n",
+      ref: "T1",
+      out: "# F\n\n- [ ] T2 b\n",
+    },
+    {
+      why: "the last task, file ending in a newline",
+      src: "# F\n\n- [ ] T1 a\n- [ ] T2 b\n",
+      ref: "T2",
+      out: "# F\n\n- [ ] T1 a\n",
+    },
+    {
+      why: "the last task, file ending without one",
+      src: "# F\n\n- [ ] T1 a\n- [ ] T2 b",
+      ref: "T2",
+      out: "# F\n\n- [ ] T1 a",
+    },
+    {
+      why: "a done task",
+      src: "# F\n\n- [x] T1 a\n- [ ] T2 b\n",
+      ref: "T1",
+      out: "# F\n\n- [ ] T2 b\n",
+    },
+    {
+      why: "CRLF line endings, which must survive on every other line",
+      src: "# F\r\n\r\n- [ ] T1 a\r\n- [ ] T2 b\r\n",
+      ref: "T1",
+      out: "# F\r\n\r\n- [ ] T2 b\r\n",
+    },
+    {
+      why: "a BOM, which belongs to the file and not to the task",
+      src: "﻿# F\n\n- [ ] T1 a\n- [ ] T2 b\n",
+      ref: "T2",
+      out: "﻿# F\n\n- [ ] T1 a\n",
+    },
+    {
+      why: "the only task, leaving the prose that framed it",
+      src: "# F\n\nSome notes.\n\n- [ ] T1 a\n",
+      ref: "T1",
+      out: "# F\n\nSome notes.\n\n",
+    },
+    {
+      why: "a note under the task, which is not the task",
+      src: "# F\n\n- [ ] T1 a\n  more about T1\n- [ ] T2 b\n",
+      ref: "T2",
+      out: "# F\n\n- [ ] T1 a\n  more about T1\n",
+    },
+  ]
+
+  for (const { why, src, ref, out } of ROWS) {
+    test(`removes ${why}`, () => {
+      expect(removeTask(src, ref)).toBe(out)
+    })
+  }
+
+  test("leaves every other task exactly where it was", () => {
+    const src = "# F\n\n- [ ] T1 a\n- [ ] T2 b\n- [ ] T3 c\n"
+    const after = parseFeature(removeTask(src, "T2"))
+    expect(after.tasks.map((t) => t.ref)).toEqual(["T1", "T3"])
+    expect(after.title).toBe("F")
+  })
+
+  /** A ref in prose is not a task, and the parser is what says so. */
+  test("does not touch a line that merely mentions the ref", () => {
+    const src = "# F\n\nT1 is described in the design.\n\n- [ ] T1 a\n"
+    expect(removeTask(src, "T1")).toBe("# F\n\nT1 is described in the design.\n\n")
+  })
+
+  test("refuses a ref that is not there, rather than writing the file back unchanged", () => {
+    expect(() => removeTask("# F\n\n- [ ] T1 a\n", "T9")).toThrow("no task T9")
+  })
+
+  /**
+   * The same refusal `tickTask` makes, and deliberately the same words: a
+   * duplicate ref means the file cannot say which line is meant, and a tool
+   * that guessed here would delete one of two lines a human cannot tell apart.
+   */
+  test("refuses a duplicated ref, naming both lines", () => {
+    const src = "# F\n\n- [ ] T1 a\n- [ ] T1 b\n"
+    expect(() => removeTask(src, "T1")).toThrow("lines 3, 4")
+  })
+
+  test("a task with no ref cannot be addressed at all", () => {
+    const src = "# F\n\n- [ ] no ref here\n- [ ] T1 a\n"
+    expect(removeTask(src, "T1")).toBe("# F\n\n- [ ] no ref here\n")
+  })
 })

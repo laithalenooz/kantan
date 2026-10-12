@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { listFeatureFiles, readFeature, tickTaskInFile } from "../src/featurefile"
+import { listFeatureFiles, readFeature, removeTaskFromFile, tickTaskInFile } from "../src/featurefile"
 import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, stat, symlink, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -353,4 +353,142 @@ test.skipIf(isRoot)("a write that fails after the temp file exists leaves no tem
   expect(new TextDecoder().decode(proc.stderr)).toContain("EFBIG")
   expect(await readdir(features)).toEqual(["big.md"])
   expect(await readFile(path, "utf8")).toContain("- [ ] T1 one")
+})
+
+// --- Removing a task --------------------------------------------------------
+// `removeTask` in `src/backlog.ts` owns which bytes go; these own the disk:
+// the atomic rename, the mode, the symlink, and the re-read that makes a
+// concurrent human edit safe. They are the tick's own disk tests, asked of the
+// one operation whose mistake is unrecoverable from the file alone.
+
+test("removing a task takes its line and leaves the rest byte-identical", async () => {
+  const { features } = await repo()
+  const path = join(features, "widget.md")
+  await writeFile(path, FEATURE)
+
+  const result = await removeTaskFromFile(await readFeature(path), "T2")
+
+  expect(result.removed).toBe("Map records to rows")
+  expect(result.warning).toBeNull()
+  const after = await readFile(path, "utf8")
+  expect(after).toBe(`# Widget export
+
+- [x] T1 Parse the manifest
+      run: 2026-10-11T09:14 · passed
+- [ ] T3 Runtime shim (v1.2)
+`)
+  // The continuation line under T1 is T1's, not a task, and it stays.
+  expect(after).toContain("run: 2026-10-11T09:14")
+})
+
+test("a CRLF file round-trips byte-identically through a removal", async () => {
+  const { features } = await repo()
+  const path = join(features, "crlf.md")
+  await writeFile(path, "# F\r\n\r\n- [ ] T1 a\r\n- [ ] T2 b\r\n")
+
+  await removeTaskFromFile(await readFeature(path), "T1")
+  expect(await readFile(path, "utf8")).toBe("# F\r\n\r\n- [ ] T2 b\r\n")
+})
+
+test("a leading BOM survives a removal", async () => {
+  const { features } = await repo()
+  const path = join(features, "bom.md")
+  await writeFile(path, "﻿# F\n\n- [ ] T1 a\n- [ ] T2 b\n")
+
+  await removeTaskFromFile(await readFeature(path), "T2")
+  expect(await readFile(path, "utf8")).toBe("﻿# F\n\n- [ ] T1 a\n")
+})
+
+test("a file with no trailing newline does not gain one", async () => {
+  const { features } = await repo()
+  const path = join(features, "bare.md")
+  await writeFile(path, "# F\n\n- [ ] T1 a\n- [ ] T2 b")
+
+  await removeTaskFromFile(await readFeature(path), "T2")
+  expect(await readFile(path, "utf8")).toBe("# F\n\n- [ ] T1 a")
+})
+
+test("the file's mode is the user's, not the temp file's", async () => {
+  const { features } = await repo()
+  const path = join(features, "mode.md")
+  await writeFile(path, FEATURE)
+  await chmod(path, 0o664)
+
+  await removeTaskFromFile(await readFeature(path), "T2")
+  expect((await stat(path)).mode & 0o777).toBe(0o664)
+})
+
+test("a symlinked feature file is written through, and stays a symlink", async () => {
+  const { root, features } = await repo()
+  const real = join(root, "elsewhere.md")
+  await writeFile(real, FEATURE)
+  const link = join(features, "linked.md")
+  await symlink(real, link)
+
+  await removeTaskFromFile(await readFeature(link), "T3")
+
+  expect((await lstat(link)).isSymbolicLink()).toBe(true)
+  expect(await readFile(real, "utf8")).not.toContain("T3")
+})
+
+test("no temp file is left beside the target", async () => {
+  const { features } = await repo()
+  const path = join(features, "clean.md")
+  await writeFile(path, FEATURE)
+
+  await removeTaskFromFile(await readFeature(path), "T2")
+  expect(await readdir(features)).toEqual(["clean.md"])
+})
+
+test("a file edited between parse and write is re-resolved by ref, not by line", async () => {
+  const { features } = await repo()
+  const path = join(features, "moved.md")
+  await writeFile(path, FEATURE)
+  const parsed = await readFeature(path)
+
+  // The human inserts a task above, so every cached line number is now wrong.
+  await writeFile(path, `# Widget export
+
+- [ ] T9 Something urgent
+- [x] T1 Parse the manifest
+      run: 2026-10-11T09:14 · passed
+- [ ] T2 Map records to rows
+- [ ] T3 Runtime shim (v1.2)
+`)
+
+  const result = await removeTaskFromFile(parsed, "T2")
+
+  expect(result.warning).toContain("changed on disk")
+  const after = await readFile(path, "utf8")
+  // The line the stale number pointed at is T1's continuation; it is still here.
+  expect(after).toContain("run: 2026-10-11T09:14")
+  expect(after).toContain("T9 Something urgent")
+  expect(after).not.toContain("T2 Map records to rows")
+})
+
+test("a ref the file no longer has is refused, and nothing is written", async () => {
+  const { features } = await repo()
+  const path = join(features, "gone.md")
+  await writeFile(path, FEATURE)
+  const parsed = await readFeature(path)
+  await writeFile(path, "# Widget export\n\n- [ ] T1 Parse the manifest\n")
+  const before = await readFile(path, "utf8")
+
+  await expect(removeTaskFromFile(parsed, "T2")).rejects.toThrow("can no longer be removed")
+  expect(await readFile(path, "utf8")).toBe(before)
+})
+
+/**
+ * Not idempotent, deliberately, and this is the test that says so: a tick of a
+ * ticked task is a no-op because both paths end in the same file, while a
+ * second removal has no end state to reach. "It was already gone" must not
+ * read as "I removed it".
+ */
+test("removing the same task twice refuses the second time", async () => {
+  const { features } = await repo()
+  const path = join(features, "twice.md")
+  await writeFile(path, FEATURE)
+
+  await removeTaskFromFile(await readFeature(path), "T2")
+  await expect(removeTaskFromFile(await readFeature(path), "T2")).rejects.toThrow("no task T2")
 })
