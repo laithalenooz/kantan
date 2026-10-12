@@ -14,7 +14,7 @@ import {
 import { connect } from "node:net"
 import { networkInterfaces, tmpdir } from "node:os"
 import { dirname, join, sep } from "node:path"
-import { requireCleanTreeForNewRun, requireUsableRepo, taskBranchName } from "../src/git"
+import { requireCleanTreeForNewRun, requireUsableRepo, resumeTaskBranch, taskBranchName } from "../src/git"
 import { addProject, defaults, loadProjects } from "../src/projects"
 import type { Project } from "../src/projects"
 import { taskKey } from "../src/runindex"
@@ -1321,11 +1321,19 @@ const ANSWER = "POST /api/runs/:id/answer"
  * is a number, so it owns a 400 no other action has. */
 const RAISE = "POST /api/runs/:id/raise"
 const STOP = "POST /api/runs/:id/stop"
-const ACTION_ROUTES = [START, APPROVE, FEEDBACK, ANSWER, RAISE, STOP]
+/**
+ * Picking a killed run back up, which nothing could reach: `resumeRun` has been
+ * exported from `src/run.ts` since the phase machine landed and was called by
+ * nobody, so a run the server died in the middle of was a row in the tree with
+ * no action behind it. `Tree.tsx` already decides when to offer it (`canResume`,
+ * which is `interrupted` and nothing else).
+ */
+const RESUME = "POST /api/runs/:id/resume"
+const ACTION_ROUTES = [START, APPROVE, FEEDBACK, ANSWER, RAISE, RESUME, STOP]
 
 /** One call the server made on the machine, in arrival order. */
 interface RunnerCall {
-  name: "start" | "approve" | "feedback" | "answer" | "raise" | "stop"
+  name: "start" | "approve" | "feedback" | "answer" | "raise" | "resume" | "stop"
   /** Present on `start`, as the server built it from the body. */
   request?: StartRequest
   /** Present on the four `:id` actions, exactly as the URL spelled it. */
@@ -1369,6 +1377,10 @@ function fakeRunner(over: Partial<Runner> = {}): Fake {
     async raise(runId, budgetUsd) {
       calls.push({ name: "raise", runId, budgetUsd })
       return over.raise === undefined ? { ok: true } : await over.raise(runId, budgetUsd)
+    },
+    async resume(runId) {
+      calls.push({ name: "resume", runId })
+      return over.resume === undefined ? { ok: true } : await over.resume(runId)
     },
     async stop(runId) {
       calls.push({ name: "stop", runId })
@@ -1603,6 +1615,73 @@ test("an answer to a run that is not waiting on one is a 409 whose message is wo
   expect(body.error).toContain("not waiting for an answer")
 })
 
+test("resume reaches the machine's resume, and nothing else does", async () => {
+  // The run actions are one route each precisely so a state transition cannot
+  // be reached by a route that means something different: approve re-parks an
+  // interrupted run, stop only ends it, and neither picks it up from the last
+  // phase record in its log.
+  const { l, fake } = await withRunner()
+  const res = await post(l, "/api/runs/abc/resume")
+  expect(res.status).toBe(200)
+  expect(JSON.parse(res.body)).toEqual({ ok: true })
+  expect(fake.calls).toEqual([{ name: "resume", runId: "abc" }])
+})
+
+test("a resume refused because the checkout moved is a 409 carrying git's own words", async () => {
+  // The double calls the real guard, so this proves the sentence `src/git.ts`
+  // writes survives into the HTTP body - and that sentence is the whole
+  // guidance a person gets at the moment they need it. `resumeTaskBranch`
+  // exempts a run's own half-written files **only while the checkout is still
+  // on its branch**; here HEAD has moved, so the dirty files are somebody
+  // else's and switching would carry them onto the task branch for the agent
+  // to commit. The message has to say which of those two situations it is.
+  const repo = await dirtyRepo()
+  const branch = taskBranchName({ feature: "docs/features/x.md", ref: "T7" })
+  await gitIn(repo, "branch", branch)
+  const { l } = await withRunner({
+    async resume() {
+      try {
+        await resumeTaskBranch(await requireUsableRepo(repo), branch)
+      } catch (e) {
+        return { ok: false, refusal: "dirty", message: (e as Error).message }
+      }
+      return { ok: true }
+    },
+  })
+
+  const res = await post(l, "/api/runs/abc/resume")
+  expect(res.status).toBe(409)
+  const body = JSON.parse(res.body) as { error: string; refusal: string }
+  expect(body.refusal).toBe("dirty")
+  // Which situation the user is in: not on the branch, these files, and the
+  // two ways out.
+  expect(body.error).toContain("not on")
+  expect(body.error).toContain(branch)
+  expect(body.error).toContain("app.txt")
+  expect(body.error).toContain("git stash")
+  expect(body.error).toContain(`git switch ${branch}`)
+})
+
+test("a resume of a run that has already finished is a 409, not a second run", async () => {
+  // `rehydrate` refuses a run with an `end` record: the fold stops there, the
+  // stream stops there, and starting the task again is a different action with
+  // a different branch guard behind it.
+  const { l } = await withRunner({
+    async resume() {
+      return {
+        ok: false,
+        refusal: "wrong-state",
+        message: "run abc already finished (done), so there is nothing left to drive. Start the task again.",
+      }
+    },
+  })
+  const res = await post(l, "/api/runs/abc/resume")
+  expect(res.status).toBe(409)
+  const body = JSON.parse(res.body) as { error: string; refusal: string }
+  expect(body.refusal).toBe("wrong-state")
+  expect(body.error).toContain("Start the task again")
+})
+
 test("stop answers 200 on a live run and 409 on one that is already over", async () => {
   const { l, fake } = await withRunner()
   expect((await post(l, "/api/runs/abc/stop")).status).toBe(200)
@@ -1641,6 +1720,9 @@ test("an unknown run id is a 404 on every action, not a 500", async () => {
         return unknown
       },
       async raise() {
+        return unknown
+      },
+      async resume() {
         return unknown
       },
       async stop() {
@@ -1704,7 +1786,7 @@ test("an id runLogPath refuses is a 4xx and never reaches the machine", async ()
     liveRunIds: null,
   }
 
-  for (const key of [APPROVE, FEEDBACK, ANSWER, RAISE, STOP]) {
+  for (const key of [APPROVE, FEEDBACK, ANSWER, RAISE, RESUME, STOP]) {
     const handler = ROUTES[key]
     if (handler === undefined) throw new Error(`${key} is not registered`)
     for (const id of ["..", ".", "", "a/b", "a\\b", "a\0b"]) {
@@ -1746,6 +1828,7 @@ const START_PATH = "/api/runs"
 const APPROVE_PATH = "/api/runs/abc/approve"
 const FEEDBACK_PATH = "/api/runs/abc/feedback"
 const ANSWER_PATH = "/api/runs/abc/answer"
+const RESUME_PATH = "/api/runs/abc/resume"
 const STOP_PATH = "/api/runs/abc/stop"
 
 const bodyRows: BodyRow[] = [
@@ -1811,6 +1894,15 @@ const bodyRows: BodyRow[] = [
   { path: APPROVE_PATH, body: JSON.stringify({ text: "no, narrow it" }), status: 400, why: "approve must not silently swallow feedback" },
   { path: STOP_PATH, body: JSON.stringify({ reason: "mistake" }), status: 400, why: "stop takes no keys either" },
   { path: APPROVE_PATH, body: JSON.stringify(TASK), status: 400, why: "nor a start request" },
+
+  // Resume takes no keys either: where it resumes from is the last complete
+  // phase record in the run's own log, never anything a client could name.
+  { path: RESUME_PATH, status: 200, why: "resume has nothing to say, so no body is the normal case" },
+  { path: RESUME_PATH, body: "{}", status: 200, why: "an empty object says nothing either" },
+  { path: RESUME_PATH, body: " \n ", status: 200, why: "and whitespace reads as absent, as it does on approve" },
+  { path: RESUME_PATH, body: JSON.stringify({ text: "carry on" }), status: 400, why: "a resume is not an answer: a client that put a reply here would resume the run without it, and the question would still be unanswered" },
+  { path: RESUME_PATH, body: JSON.stringify({ resumeFrom: "implement" }), status: 400, why: "the phase is the log's to decide, so naming one is a key this route does not take" },
+  { path: RESUME_PATH, body: "null", status: 400, why: "typeof null is object, which is the trap" },
 
   // Oddities that are still well-formed.
   { path: START_PATH, body: `{"projectPath":"/repo","featureFile":"docs/features/x.md","taskRef":"T1","taskRef":"T7"}`, status: 201, why: "a duplicated key: JSON.parse keeps the last, and one parser reads the body so there is no second opinion to exploit" },

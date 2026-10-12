@@ -2522,6 +2522,10 @@ export type Acted = { ok: true } | Refused
  * It keeps `answer` as well, which the server's port now has too: a run that
  * asked a question is otherwise unreachable, since stopping and resuming only
  * re-park it. `POST /api/runs/:id/answer` is the route.
+ *
+ * `resume` is the newest member and the plainest case of the same gap: the
+ * function was here from the start, and without a method on this port the tree
+ * could show an interrupted run and offer nothing to do about it.
  */
 export interface Runner {
   start(request: StartRequest): Promise<Started>
@@ -2538,6 +2542,15 @@ export interface Runner {
    * other action either refuses for want of funds or re-parks it.
    */
   raise(runId: string, budgetUsd: number): Promise<Acted>
+  /**
+   * Picks a run back up after a crash, a reload or a stop.
+   *
+   * `resumeRun` has existed here since the phase machine landed and was called
+   * by nothing: `interrupted` was the one state the task tree could offer no
+   * action for, because this port had no method and so no route could exist.
+   * `POST /api/runs/:id/resume` is the route.
+   */
+  resume(runId: string): Promise<Acted>
   stop(runId: string): Promise<Acted>
 }
 
@@ -2717,6 +2730,24 @@ export function createRunner(options: RunnerOptions = {}): Runner {
             runId,
             project: await projectForRun(runId),
             budgetUsd,
+            accepted,
+            ...(runsDir === undefined ? {} : { runsDir }),
+          }),
+        () => ({ ok: true as const }),
+      )
+    },
+
+    async resume(runId) {
+      // `resumeRun` itself, never a second path to the same place: it owns the
+      // rules that a run parked at a human is reported rather than driven,
+      // that a plan phase is re-prompted while an implement phase is resumed,
+      // and that a conversation which never started gets the implement prompt
+      // instead of `--resume` on an id the CLI has never seen.
+      return await act(
+        async (accepted) =>
+          await resumeRun({
+            runId,
+            project: await projectForRun(runId),
             accepted,
             ...(runsDir === undefined ? {} : { runsDir }),
           }),

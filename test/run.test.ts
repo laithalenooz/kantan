@@ -250,6 +250,12 @@ for (const step of job.steps) {
           // Only an accepted action has a run to wait on; a refusal moved
           // nothing, and waiting for a rest point would wait forever.
           if (acted.ok) await untilRest()
+        } else if (call.m === "resume") {
+          const acted = await runner.resume(runId)
+          answers.push(acted)
+          // Only an accepted action has a run to wait on; a refusal moved
+          // nothing, and waiting for a rest point would wait forever.
+          if (acted.ok) await untilRest()
         } else if (call.m === "stop") {
           answers.push(await runner.stop(runId))
         } else {
@@ -1486,6 +1492,51 @@ test("a run killed mid-implement is resumable from its implement session id", as
   expect(await lockExists(ws)).toBe(false)
 }, 240_000)
 
+test("the port's resume is the same resumeRun the kill case drives, not a second path", async () => {
+  // `resumeRun` was exported from this module and called by nothing, so the
+  // kill case above drives it directly. The port method has to reach **that**
+  // function: it owns the rules a reimplementation would get wrong - a run
+  // parked at a human is reported rather than driven, a plan phase is
+  // re-prompted while an implement phase is resumed, and a conversation that
+  // never started gets the implement prompt instead of `--resume` on an id the
+  // CLI has never seen. Driven through `createRunner` here, which is what the
+  // HTTP route calls.
+  const ws = await workspace("runner-resume")
+  await projectsFile(ws, [project(ws)])
+  const done = await fixture(ws, "done", "ORCH: done")
+  await script(ws, [{ fixture: PLAN_FIXTURE }, { fixture: done }])
+
+  const out = await drive(ws, {
+    steps: [
+      { action: "start" },
+      // The lock goes, the branch and the log stay: the run is interrupted and
+      // nothing is driving it, which is the state the tree offers resume for.
+      { action: "stop" },
+      { action: "runner", calls: [{ m: "resume" }] },
+      // The discriminator. `ok: true` alone cannot tell a resume from a
+      // no-op: the approve below rehydrates the run by itself, so it would
+      // still reach `done` if `resume` had quietly done nothing. Only
+      // `resumeRun` registers the run in this process and takes the project's
+      // lock again, and `liveRunIds()` is where that is visible.
+      { action: "live" },
+      { action: "runner", calls: [{ m: "approve" }] },
+    ],
+  })
+  expect(out.results[1]).toMatchObject({ state: { kind: "interrupted" } })
+  // The transition is accepted, which is all an HTTP request can wait for.
+  expect((out.results[2] as unknown as Record<string, unknown>[])[0]).toMatchObject({ ok: true })
+  expect(out.results[3]).toMatchObject({ live: [out.runId] })
+  // And the resumed run is reachable again: an approve on the same port now
+  // finds it at the gate, where before the resume there was no route that
+  // could put it back there.
+  expect((out.results[4] as unknown as Record<string, unknown>[])[0]).toMatchObject({ ok: true })
+
+  const records = await runLog(ws, out.runId)
+  expect(records.filter((r) => r["kind"] === "end").length).toBe(1)
+  expect(records.filter((r) => r["kind"] === "end")[0]).toMatchObject({ state: "done" })
+  expect(await lockExists(ws)).toBe(false)
+}, 180_000)
+
 test("an escalated effort survives a restart rather than dropping back", async () => {
   const ws = await workspace("resume-effort")
   const done = await fixture(ws, "done", "ORCH: done")
@@ -1884,6 +1935,9 @@ test("the runner answers a refusal with a code rather than throwing", async () =
           { m: "start", projectPath: ws.repo, featureFile: ws.featurePath, taskRef: "" },
           // No such run.
           { m: "approve" },
+          // Nor is there one to resume: `resumeRun` was unreachable until this
+          // port had a method, so this is the first thing that asks it.
+          { m: "resume" },
         ],
       },
     ],
@@ -1897,6 +1951,7 @@ test("the runner answers a refusal with a code rather than throwing", async () =
     "unknown-feature",
     "unknown-task",
     "unknown-task",
+    "unknown-run",
     "unknown-run",
   ])
   // The machine's own prose, rendered as written: the ref-less message says what

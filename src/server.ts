@@ -72,14 +72,15 @@ import type { Account, TreeFeature, TreeProject, TreeTask } from "./ui/Tree.tsx"
  * owns the child process, so a reconnecting client replays everything and then
  * tails, with no cursor and no reconnect state machine.
  *
- * Every action - start, approve, feedback, answer, stop, and registering a
- * project - is a `POST`, and that is not a stylistic choice. `SameSite=Strict`
+ * Every action - start, approve, feedback, answer, raise, resume, stop, and
+ * registering, editing or removing a project - uses a method a browser sends an
+ * `Origin` with, and that is not a stylistic choice. `SameSite=Strict`
  * ignores **ports**, so a page on any other localhost port is same-site: its
  * no-cors GETs (an `img`, a `script`, a navigation) carry the auth cookie and
  * send no `Origin`. A convenience GET that started a run would be reachable
  * from every other local page on this machine.
  *
- * None of the five run actions does any orchestration here. They validate a
+ * None of the seven run actions does any orchestration here. They validate a
  * request and hand it to the `Runner` the server was constructed with - the
  * phase machine - so the states a run can be in are decided in one place
  * rather than encoded a second time in a status code.
@@ -175,7 +176,7 @@ export type Started = { ok: true; runId: string } | Refused
 export type Acted = { ok: true } | Refused
 
 /**
- * The phase machine, as these four routes need it. `src/run.ts` (Task 13)
+ * The phase machine, as these routes need it. `src/run.ts` (Task 13)
  * satisfies it; the server is constructed with one so a test can inject a
  * double, and so this file imports nothing from the machine.
  *
@@ -264,6 +265,32 @@ export interface Runner {
    */
   raise(runId: string, budgetUsd: number): Promise<Acted>
   /**
+   * Picks a run back up after a crash, a reload or a stop.
+   *
+   * **Without this the one state the tree can offer no action for is
+   * `interrupted`.** `src/run.ts` has exported `resumeRun` since the phase
+   * machine landed and nothing called it, `RunState` carries
+   * `{kind:"interrupted", resumeFrom}`, and `Tree.tsx` already exports
+   * `canResume` - so the row existed, the mechanism existed, and the port in
+   * between had no method.
+   *
+   * Where it resumes from is **the last complete `phase` record**, which is why
+   * this takes no argument but the run id: a client naming a phase would be
+   * guessing at something the log already knows, and a run that was parked at a
+   * human is simply reported rather than driven.
+   *
+   * Its refusals are the guidance a person gets at the worst moment, so they
+   * are forwarded as written. The one that matters is the dirty check
+   * `resumeTaskBranch` carries: a run's own half-written files are exempt
+   * **only while the checkout is still on its branch**, and anywhere else they
+   * are somebody's and a `git switch` would carry them onto the task branch for
+   * the agent to commit. "I have uncommitted work from the run that was cut" is
+   * therefore fine, and "I have unrelated work on my base branch" is not, and
+   * the message says which - including the `git switch` that makes the second
+   * one deliberate.
+   */
+  resume(runId: string): Promise<Acted>
+  /**
    * Stops the run and leaves it **resumable**: SIGTERM the child, per
    * `src/spawn.ts`'s `terminate`, which deliberately does not close stdin or
    * clean up, because the session resumes from the same id and stopping
@@ -292,7 +319,7 @@ export interface ServerOptions {
   streamPollMs?: number
   /** How often an idle run stream sends a keep-alive comment. */
   streamKeepAliveMs?: number
-  /** The phase machine the five run actions drive. Absent means a server that
+  /** The phase machine the run actions drive. Absent means a server that
    * can serve pages and stream run logs but cannot drive a run, which answers
    * 503 on every action rather than 500 or a missing route. */
   runner?: Runner
@@ -449,6 +476,9 @@ export const ROUTES: Record<string, RouteHandler> = {
    * number, so it owns a 400 no other route has - and a `POST`, like every
    * other action, because `SameSite=Strict` ignores ports. */
   "POST /api/runs/:id/raise": (req, ctx, params) => raiseRun(req, ctx, params?.["id"] ?? ""),
+  /** Picking a killed run back up. No body: where it resumes from is the last
+   * complete phase record in its own log, not something a client may name. */
+  "POST /api/runs/:id/resume": (req, ctx, params) => resumeRun(req, ctx, params?.["id"] ?? ""),
   "POST /api/runs/:id/stop": (req, ctx, params) => stopRun(req, ctx, params?.["id"] ?? ""),
 
   /** Registering a repository, which is what the design's empty state offers
@@ -1914,6 +1944,28 @@ async function raiseRun(req: Request, ctx: RouteContext, id: string): Promise<Re
     return badBody(RAISE_KEYS, "a ceiling must be a finite figure above zero, or it funds no turn at all and the CLI refuses it")
   }
   return acted(await gate.runner.raise(id, figure))
+}
+
+/**
+ * Picks a killed run back up, which until now nothing could ask for.
+ *
+ * No keys, like approve and stop, and for the sharper of the two reasons those
+ * give: a client that put the human's reply on this route would resume the run
+ * **without** it, and the question the agent asked would still be unanswered -
+ * so the text would be lost rather than merely ignored. Which phase to continue
+ * from is the log's answer, not a client's.
+ *
+ * Every refusal is the machine's: `unknown-run` for a log that is not there,
+ * `wrong-state` for a run that has already finished or is working right now,
+ * `busy` for one whose lock another run holds, and `dirty` for a checkout that
+ * has moved away from the task's branch with uncommitted work on it. Each
+ * carries the guard's own sentence, which is the only guidance available at
+ * that moment.
+ */
+async function resumeRun(req: Request, ctx: RouteContext, id: string): Promise<Response> {
+  const gate = await actionGate(req, ctx, id, NO_KEYS)
+  if ("refused" in gate) return gate.refused
+  return acted(await gate.runner.resume(id))
 }
 
 async function stopRun(req: Request, ctx: RouteContext, id: string): Promise<Response> {
