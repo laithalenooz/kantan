@@ -49,6 +49,15 @@ replays, so report the method together with what it cannot see.
   it never owns truth.
 - **The server runs the tests, not the agent.** Branch on the exit code. Never on the agent
   reporting success. Verification from outside the agent cannot be talked out of.
+
+  **One exception, decided by the user on 2026-10-12**: a project may set `testCmd: null`, meaning
+  it has no suite, and then the agent verifies its own work. Most repositories have none, and
+  requiring one excluded them. The rule above still holds wherever a command exists, and the
+  exception carries a condition that is not optional — **nothing may claim a verification it did
+  not observe**. `EndRecord.verifiedBy` records which happened, `verificationOf()` in
+  `src/runindex.ts` reads it and answers `"unknown"` for a log written before the field, and no
+  surface may print an exit code, a green tick or the word "passed" for a run that was
+  self-checked. See `docs/HANDOFF.md`, *"A project may have no test command"*.
 - **Plan and implement are two conversations.** That is what lets them run different models.
   Switching models inside one conversation cold-starts the prompt cache and drops thinking blocks
   the new model cannot read.
