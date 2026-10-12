@@ -735,6 +735,32 @@ export async function removeProject(path: string, fetcher: typeof fetch = fetch)
 }
 
 /**
+ * Removes one task from one task file.
+ *
+ * Unlike `removeProject`, a 404 is **not** folded into success. There it is:
+ * the caller wanted the project gone and it is gone, however that happened. A
+ * 404 here says the *task file* is not in the project, which is not the same
+ * claim as "the task is no longer in it" - the file may be mis-spelled, or
+ * renamed since the tree was read, and the task is still sitting in it under
+ * another path. Reporting that as a removal would take a row off the screen
+ * that the next refetch brings back.
+ *
+ * The 409s are the interesting refusals and their words come straight through:
+ * a run in flight in the repository, a ref that is not in the file, a ref on
+ * two lines. Each is a sentence the human can act on, and none of them is
+ * something this layer can improve by rewording.
+ */
+export async function removeTask(
+  task: { projectPath: string; featureFile: string; taskRef: string },
+  fetcher: typeof fetch = fetch,
+): Promise<void> {
+  const res = await withSession(fetcher, (f) =>
+    f(`${API}/features/task`, { method: "DELETE", cache: "no-store", body: JSON.stringify(task) }),
+  )
+  if (!res.ok) throw new Error(`that task could not be removed: ${res.status} ${await text(res)}`)
+}
+
+/**
  * Changes some of a project's settings, leaving the rest alone.
  *
  * A **partial** update on purpose. Registering again is refused with a 409

@@ -828,6 +828,18 @@ export interface TreeProps {
    * name the file it will append to.
    */
   onAddTask?: (projectPath: string, featureFile: string) => void
+  /**
+   * Asks to remove one task. Absent draws no remove control at all.
+   *
+   * It only *asks*: this component is presentational and the confirmation is
+   * the shell's, which is why no state lives here. A destructive action on a
+   * file in the user's own repository gets confirmed, and `App.tsx` owns that
+   * dialog the way `ProjectPanel` owns the one for removing a project.
+   *
+   * A task with no ref is not offered: `DELETE /api/features/task` addresses a
+   * task by ref, and there is nothing to send for a line that has none.
+   */
+  onRemoveTask?: (projectPath: string, featureFile: string, taskRef: string) => void
 }
 
 /** Does this triple address this task? Compared whole; a bare ref is ambiguous. */
@@ -892,6 +904,7 @@ export function Tree({
   selectedProject,
   accountSlot,
   onAddTask,
+  onRemoveTask,
 }: TreeProps): ReactElement {
   const eyebrow = "text-[11.5px] font-semibold uppercase tracking-[.07em] text-muted-400"
   const ids = useId()
@@ -1080,6 +1093,7 @@ export function Tree({
             {...(selectedProject === undefined ? {} : { selectedProject })}
             {...(accountSlot === undefined ? {} : { accountSlot })}
             {...(onAddTask === undefined ? {} : { onAddTask })}
+            {...(onRemoveTask === undefined ? {} : { onRemoveTask })}
             project={project}
             first={index === 0}
             order={index}
@@ -1111,11 +1125,24 @@ function ProjectBlock({
   selectedProject,
   accountSlot,
   onAddTask,
+  onRemoveTask,
 }: {
   onSelectProject?: (path: string) => void
   selectedProject?: string | null
   accountSlot?: (project: TreeProject) => ReactNode
   onAddTask?: (projectPath: string, featureFile: string) => void
+  /**
+   * Asks to remove one task. Absent draws no remove control at all.
+   *
+   * It only *asks*: this component is presentational and the confirmation is
+   * the shell's, which is why no state lives here. A destructive action on a
+   * file in the user's own repository gets confirmed, and `App.tsx` owns that
+   * dialog the way `ProjectPanel` owns the one for removing a project.
+   *
+   * A task with no ref is not offered: `DELETE /api/features/task` addresses a
+   * task by ref, and there is nothing to send for a line that has none.
+   */
+  onRemoveTask?: (projectPath: string, featureFile: string, taskRef: string) => void
   project: TreeProject
   first: boolean
   /** Position in the column, which is the artboard's `.d1`-`.d9` stagger step. */
@@ -1202,8 +1229,20 @@ function ProjectBlock({
                     featureFile: feature.path,
                     taskRef: task.ref,
                   }
+                  /* Captured here so the guard below narrows it. Reading
+                     `task.ref` inside the handler would not: the closure
+                     outlives the check, which is why a `!` would have been
+                     needed - and `src/` holds none. */
+                  const ref = task.ref
                   return (
-                    <li key={`${feature.path}\u0000${task.ref ?? `#${position}`}`}>
+                    <li
+                      key={`${feature.path}\u0000${task.ref ?? `#${position}`}`}
+                      /* `group/task` so the remove control can appear on hover
+                         of the row, and `focus-within` so it appears for a
+                         keyboard user too - a control reachable only by a
+                         pointer is not reachable. */
+                      className="group/task relative flex items-center"
+                    >
                       <TaskRow
                         task={task}
                         id={id}
@@ -1211,6 +1250,29 @@ function ProjectBlock({
                         isStop={task.ref !== null && isSameTask(stop, id)}
                         onSelect={onSelect}
                       />
+                      {/* A **sibling** of the row, not a child: the row is a
+                          `<button>`, and a button inside a button is invalid
+                          and swallows its own clicks. The account chip on the
+                          project row was nested like that once; this is the
+                          same lesson. */}
+                      {onRemoveTask !== undefined && ref !== null && (
+                        <button
+                          type="button"
+                          aria-label={`Remove ${ref}`}
+                          title={`Remove ${ref} from ${feature.path}`}
+                          data-remove-task={ref}
+                          onClick={() => onRemoveTask(project.path, feature.path, ref)}
+                          className="absolute right-[6px] grid size-[26px] place-items-center rounded-[8px] border border-transparent bg-white/0 text-muted-400 opacity-0 transition-opacity hover:border-[#F0B8BE] hover:bg-white hover:text-[#A61B27] focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-indigo group-hover/task:opacity-100 group-focus-within/task:opacity-100"
+                        >
+                          <svg aria-hidden viewBox="0 0 24 24" className="ic size-[14px]" {...LINE}>
+                            <path d="M3 6h18" />
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                            <path d="M10 11v6" />
+                            <path d="M14 11v6" />
+                            <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                          </svg>
+                        </button>
+                      )}
                     </li>
                   )
                 })}

@@ -10,7 +10,7 @@ import { AddRepo, type Detection } from "./AddRepo.tsx"
 import { AddTasks } from "./AddTasks.tsx"
 import { ProjectPanel, type AccountOption } from "./ProjectPanel.tsx"
 import { StartPanel } from "./StartPanel.tsx"
-import { act, detectPath, registerProject, removeProject, startRun, taskKeyOf, updateProject, type RunView } from "./live.ts"
+import { act, detectPath, registerProject, removeProject, removeTask, startRun, taskKeyOf, updateProject, type RunView } from "./live.ts"
 import { useAction, usePlan, useRun, useTree } from "./useRun.ts"
 import type { RunPhase } from "../runlog.ts"
 import type { AskingPhase } from "./Gate.tsx"
@@ -428,6 +428,47 @@ export function App() {
     [guard],
   )
 
+  /**
+   * The task a removal has been asked about, or `null`.
+   *
+   * Confirmed rather than done on the click, because it edits a file in the
+   * user's own repository and the row it came from is one of a dozen a few
+   * pixels apart. `ProjectPanel` confirms removing a project for the same
+   * reason and in the same shape.
+   */
+  const [removing, setRemoving] = useState<{ projectPath: string; featureFile: string; taskRef: string } | null>(null)
+  const [removeError, setRemoveError] = useState<string | null>(null)
+  const [removeBusy, setRemoveBusy] = useState(false)
+
+  const confirmRemoveTask = useCallback(async (): Promise<void> => {
+    if (removing === null || removeBusy) return
+    setRemoveBusy(true)
+    setRemoveError(null)
+    try {
+      await removeTask(removing)
+      /* The selection goes with the task. A row the tree no longer draws
+         cannot stay the subject of the centre column, and `runIdFor` would
+         keep resolving it from the run index after the task that named it is
+         gone. */
+      if (
+        selected?.projectPath === removing.projectPath &&
+        selected.featureFile === removing.featureFile &&
+        selected.taskRef === removing.taskRef
+      ) {
+        setSelected(null)
+      }
+      setRemoving(null)
+      reload()
+    } catch (cause) {
+      /* Kept on the dialog, not the page: every refusal this can hit names
+         the task - a run in flight, a ref on two lines, a file that moved -
+         and the dialog is where the human still has the context to read it. */
+      setRemoveError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setRemoveBusy(false)
+    }
+  }, [reload, removeBusy, removing, selected])
+
   const onRemoveProject = useCallback(
     async (project: TreeProject): Promise<void> => {
       await guard(async () => {
@@ -614,6 +655,10 @@ export function App() {
             setSelected(null)
             setPanel({ kind: "addTasks", projectPath, featureFile })
           }}
+          onRemoveTask={(projectPath, featureFile, taskRef) => {
+            setRemoveError(null)
+            setRemoving({ projectPath, featureFile, taskRef })
+          }}
         />
 
       {/* Empty renders its own `<main>` and its own `.dots` layer, because
@@ -797,8 +842,72 @@ export function App() {
       )}
       </div>
 
-
-
+      {removing !== null && (
+        <div
+          data-scrim
+          /* `.kr` on the scrim as well as the root: it is `position: fixed`,
+             and the kill-switch is a descendant selector. Rendered here,
+             outside every column, because an ancestor carrying a `filter`
+             becomes the containing block for a fixed child - which is how a
+             scrim inside a card ended up clipped by that card's
+             `overflow: clip`. `ProjectPanel` records the same trap. */
+          className="kr dim fixed inset-0 z-40 grid place-items-center bg-[rgba(17,18,22,.32)] p-4"
+        >
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="kantan-remove-task"
+            aria-describedby="kantan-remove-task-why"
+            className="pop w-full max-w-[440px] box-border rounded-[20px] bg-white p-6 leading-[normal] shadow-[0_30px_80px_-20px_rgba(17,18,22,.5)]"
+          >
+            <h2
+              id="kantan-remove-task"
+              className="m-0 text-[20px] font-[650] tracking-[-.02em]"
+            >
+              Remove {removing.taskRef} from {removing.featureFile.split("/").at(-1)}?
+            </h2>
+            <p
+              id="kantan-remove-task-why"
+              className="mt-[10px] mb-5 text-[14.5px] leading-[1.55] text-muted-700"
+            >
+              The line is deleted from{" "}
+              <span className="m font-mono text-[13px] [overflow-wrap:anywhere]">{removing.featureFile}</span> in your
+              repository, and kantan commits that one file so the change is in your history rather than loose in your
+              working tree. Every other task in the file is left exactly as it is. If {removing.taskRef} has already
+              been run, its log and its branch are kept.
+            </p>
+            {removeError !== null && (
+              <p
+                role="alert"
+                className="mt-0 mb-4 rounded-[10px] border border-[#F3C6C9] bg-[#FDF2F3] px-3 py-[10px] text-[13px] leading-[1.5] text-[#D92D3A]"
+              >
+                {removeError}
+              </p>
+            )}
+            <div className="flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setRemoving(null)
+                  setRemoveError(null)
+                }}
+                className="ghost h-11 rounded-full border border-edge-strong bg-white px-[18px] text-[14px] font-[560] text-ink-deep"
+              >
+                Keep it
+              </button>
+              <button
+                type="button"
+                autoFocus
+                disabled={removeBusy}
+                onClick={() => void confirmRemoveTask()}
+                className="h-11 rounded-full border-0 bg-[#A61B27] px-[18px] text-[14px] font-[620] text-white disabled:opacity-60"
+              >
+                {removeBusy ? "Removing…" : `Remove ${removing.taskRef}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   )

@@ -1709,3 +1709,97 @@ describe("reduced motion holds the glyphs still", () => {
     }
   })
 })
+
+/* ========================================================================== */
+/* Removing a task                                                            */
+/* ========================================================================== */
+
+/**
+ * `Tree` only *asks*. The confirmation and the request are the shell's, which
+ * is why these assert markup rather than behaviour - and why the control is a
+ * sibling of the row rather than a child of it.
+ */
+describe("the remove-task control", () => {
+  test("is not drawn at all when nothing can remove a task", () => {
+    const host = render(<Tree projects={projects()} />)
+    expect(host.querySelectorAll("[data-remove-task]")).toHaveLength(0)
+  })
+
+  test("is drawn for every task that has a ref, and named by it", () => {
+    const host = render(<Tree projects={projects()} onRemoveTask={() => {}} />)
+    const refs = [...host.querySelectorAll("[data-remove-task]")].map((b) =>
+      b.getAttribute("data-remove-task"),
+    )
+    const withRefs = projects()
+      .flatMap((p) => p.features)
+      .flatMap((f) => f.tasks)
+      .filter((t) => t.ref !== null)
+      .map((t) => t.ref)
+    expect(refs).toEqual(withRefs)
+    for (const button of host.querySelectorAll("[data-remove-task]")) {
+      const ref = button.getAttribute("data-remove-task")
+      expect(button.getAttribute("aria-label")).toBe(`Remove ${ref}`)
+    }
+  })
+
+  /**
+   * A line with no ref cannot be addressed: `DELETE /api/features/task` takes
+   * a ref, and there is nothing to send. Its own fixture, because `projects()`
+   * is the artboard's and has no such line - a row this file had to add is
+   * still a row `src/backlog.ts` parses, and `parseFeature` yields
+   * `ref: null` for any `- [ ]` line without a `T<n>`.
+   */
+  test("is not drawn for a line with no ref", () => {
+    const mixed: TreeProject[] = [
+      {
+        path: "/home/me/code/app",
+        account: { kind: "personal" },
+        testCmd: "npm test",
+        features: [
+          {
+            path: "docs/features/x.md",
+            tasks: [
+              { ref: "T1", text: "Addressable", done: false },
+              { ref: null, text: "A line with no ref", done: false },
+            ],
+          },
+        ],
+      },
+    ]
+    const host = render(<Tree projects={mixed} onRemoveTask={() => {}} />)
+
+    const controls = [...host.querySelectorAll("[data-remove-task]")]
+    expect(controls.map((b) => b.getAttribute("data-remove-task"))).toEqual(["T1"])
+
+    // The refless row is a `div`, not a button, and carries no control.
+    const rows = [...host.querySelectorAll("[data-task-row]")]
+    const refless = rows.filter((r) => r.tagName === "DIV")
+    expect(refless).toHaveLength(1)
+    expect(refless[0]?.parentElement?.querySelector("[data-remove-task]")).toBeNull()
+  })
+
+  /**
+   * A button inside a button is invalid HTML and swallows its own clicks. The
+   * project row's account chip was nested like that once, and this pins the
+   * lesson rather than trusting it: the control is a *sibling* of the row.
+   */
+  test("is never nested inside the row button", () => {
+    const host = render(<Tree projects={projects()} onRemoveTask={() => {}} />)
+    for (const button of host.querySelectorAll("[data-remove-task]")) {
+      expect(button.closest("[data-task-row]")).toBeNull()
+      expect(button.parentElement?.tagName).toBe("LI")
+    }
+  })
+
+  /** Reachable by keyboard as well as by hover; a pointer-only control is not
+   *  reachable. The row is the tree's one Tab stop, so `focus-within` on the
+   *  item is what brings this into view for the arrow-key navigation. */
+  test("appears on focus as well as on hover", () => {
+    const host = render(<Tree projects={projects()} onRemoveTask={() => {}} />)
+    const first = host.querySelector("[data-remove-task]")
+    const classes = first?.getAttribute("class") ?? ""
+    expect(classes).toContain("group-hover/task:opacity-100")
+    expect(classes).toContain("group-focus-within/task:opacity-100")
+    expect(classes).toContain("focus-visible:opacity-100")
+  })
+})
