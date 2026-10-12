@@ -338,6 +338,17 @@ async function pickAccount(kind: "personal" | "work" | "unknown"): Promise<void>
   await click(one(`[data-account="${kind}"]`))
 }
 
+/** Chooses one specific profile, which `kind` alone cannot name. */
+async function pickProfile(kind: "personal" | "work", configDir: string): Promise<void> {
+  await click(one(`[data-account-key="${kind}\\0${configDir}"]`))
+}
+
+function checkedAccountKeys(): string[] {
+  return all('[role="radio"]')
+    .filter((el) => el.getAttribute("aria-checked") === "true")
+    .map((el) => el.getAttribute("data-account-key") ?? "")
+}
+
 /** The detection list, as text per row, or `null` when no list is drawn. */
 function detectionRows(): string[] | null {
   const list = maybe('[data-addrepo="checks"]')
@@ -793,6 +804,12 @@ describe("the form appears as it is answered", () => {
     expect(prose()).toContain("Check the folder first.")
   })
 
+  test("the hint does not contradict the spinner", async () => {
+    await render(<api.AddRepo {...props({ path: USABLE_PATH, detection: { phase: "checking", path: USABLE_PATH } })} />)
+    expect(prose()).toContain("Checking that folder now.")
+    expect(prose()).not.toContain("Check the folder first.")
+  })
+
   test("the hint names one missing thing at a time, in order", async () => {
     await render(<api.AddRepo {...checked()} />)
     expect(prose()).toContain("Say which Claude account runs it.")
@@ -832,6 +849,67 @@ describe("which account runs it", () => {
        answer. `Tree.tsx`'s `Account` renders it as a neutral chip. */
     expect(drafts).toEqual([{ path: USABLE_PATH, testCmd: "bun test" }])
     expect(Object.hasOwn(drafts[0] ?? {}, "account")).toBe(false)
+  })
+
+  /**
+   * Two accounts of one kind, which this panel asks for.
+   *
+   * `Project.account` has two words, so a second client profile is another
+   * `kind: "work"` — and "Add another account" is one of this panel's own
+   * controls. Selecting by the word would check both cards and submit the
+   * first one's `configDir`: a run billed from the wrong place, which is the
+   * defect the question exists to prevent, on a dimension the rest of this
+   * file never varies.
+   */
+  describe("two accounts of the same kind", () => {
+    const ACME = "/home/lalenooz/.claude-acme"
+    const GLOBEX = "/home/lalenooz/.claude-globex"
+    const TWO_WORK = [
+      { kind: "work" as const, label: "work · acme", configDir: ACME },
+      { kind: "work" as const, label: "work · globex", configDir: GLOBEX },
+    ]
+
+    test("each submits its own profile, and only the clicked one is checked", async () => {
+      const drafts: RepoDraft[] = []
+      await render(<api.AddRepo {...checked({ onSubmit: (d) => void drafts.push(d), accounts: TWO_WORK })} />)
+      await pickProfile("work", GLOBEX)
+      expect(checkedAccountKeys()).toEqual([`work\0${GLOBEX}`])
+      await type(one<HTMLInputElement>(CMD_FIELD), "bun test")
+      await click(addButton())
+      expect(drafts).toEqual([{ path: USABLE_PATH, testCmd: "bun test", account: "work", configDir: GLOBEX }])
+    })
+
+    test("the selection follows the account when the list reorders", async () => {
+      /* Not the slot. A list that reorders — or grows when `onAddAccount`
+         returns — would otherwise move a selection to another client in
+         silence, and nothing on screen would say it had moved. */
+      const drafts: RepoDraft[] = []
+      const base = checked({ onSubmit: (d) => void drafts.push(d), accounts: TWO_WORK })
+      await render(<api.AddRepo {...base} />)
+      await pickProfile("work", ACME)
+      await render(<api.AddRepo {...base} accounts={[...TWO_WORK].reverse()} />)
+      expect(checkedAccountKeys()).toEqual([`work\0${ACME}`])
+      await type(one<HTMLInputElement>(CMD_FIELD), "bun test")
+      await click(addButton())
+      expect(drafts).toEqual([{ path: USABLE_PATH, testCmd: "bun test", account: "work", configDir: ACME }])
+    })
+
+    test("an account that stops being offered reads as unanswered", async () => {
+      const base = checked({ accounts: TWO_WORK })
+      await render(<api.AddRepo {...base} />)
+      await pickProfile("work", GLOBEX)
+      await type(one<HTMLInputElement>(CMD_FIELD), "bun test")
+      expect(addButton().disabled).toBe(false)
+
+      await render(<api.AddRepo {...base} accounts={[TWO_WORK[0] as (typeof TWO_WORK)[number]]} />)
+      /* Carrying the word forward after the profile behind it has gone would
+         register a billing label nothing backs. */
+      expect(checkedAccountKeys()).toEqual([])
+      expect(addButton().disabled).toBe(true)
+      expect(prose()).toContain("Say which Claude account runs it.")
+      /* The question stays on screen, because disclosure latches. */
+      expect(section(2)).not.toBeNull()
+    })
   })
 
   test("the chosen account's own profile directory goes with it, and is never invented", async () => {

@@ -21,7 +21,8 @@
  * So this panel checks as the path is typed and shows the result beside the
  * field — and `src/git.ts`'s own sentences are what it shows, verbatim,
  * including the one that locates the typo: *"The deepest part of that path
- * which does exist is /home — check the spelling of what comes after it."*
+ * which does exist is /home - check the spelling of what comes after it."*
+ * (That is an ASCII hyphen, because that is the byte `git.ts` writes.)
  * Nothing here re-authors a message from a code, because that sentence is the
  * only one that says where to look and it would be the first casualty.
  *
@@ -130,17 +131,38 @@
  *
  * ## What the server still has to expose
  *
- * One route, which does not exist today:
+ * One route, which does not exist today. `POST /api/detect` with a JSON body
+ * through `parseBody`'s fixed key list is the house shape and the safe one; a
+ * `GET` with the path in the query works too, as long as both ends agree on
+ * the encoding — `URLSearchParams` writes a space as `+` and a hand-rolled
+ * `decodeURIComponent` does not read it back.
  *
- *     GET /api/detect?path=<raw, percent-encoded>
+ * Which it is barely matters, because **the shell keys `detection.path` on the
+ * string it sent, captured at request time, not on whatever comes back.** Then
+ * no transport detail can make a stale answer look fresh, and a late reply for
+ * `/a` cannot land on a box that now reads `/ab`. The response should still
+ * carry `root` — the resolved, symlink-followed spelling — because that is
+ * what names the repository and what will be registered.
  *
- * It must echo the **raw** `path` it was given beside the `root` it resolved,
- * because the freshness guard above compares against what the user typed and
- * not against a tidied spelling. It must run `src/projects.ts`'s own
- * `absolutePath` rule *before* any `stat` or `git -C`, or a relative `foo`
- * gets probed against the server's working directory. And its `checks` are
- * `requireUsableRepo`'s refusals, one per line, each carrying that function's
- * message verbatim.
+ * The order of the checks is fixed by what each one assumes:
+ *
+ *  1. `src/projects.ts`'s `absolutePath`, **before** any `stat` or `git -C`,
+ *     or a relative `foo` is probed against the server's working directory.
+ *  2. `requireUsableRepo`, whose refusals are the `checks`, each carrying that
+ *     function's own message. They are `Error`s with no code on them today,
+ *     which is why `DetectionCheck.code` is optional: a route may compose a
+ *     `says` out of values it already holds, and must never parse the prose to
+ *     find them.
+ *  3. The 409, against the **resolved root** — which is what
+ *     `registerProject` compares — so "already registered" is caught here
+ *     rather than after four sections have been filled in.
+ *  4. `taskFiles`, through `listFeatureFiles` + `featurePath` + `readInside`,
+ *     the same calls `GET /api/projects` makes. That keeps the preview's paths
+ *     equal to the string the tree joins on, and keeps the symlink containment
+ *     for a repository nobody has registered yet.
+ *
+ * It answers "does this path exist" for any path on the machine, so it takes
+ * the same Host check and session token as every other route.
  */
 
 import { useState, useSyncExternalStore, type CSSProperties, type ReactElement, type ReactNode } from "react"
@@ -197,7 +219,14 @@ export type DetectionCode =
 export type DetectionPhrase = ReadonlyArray<string | { mono: string }>
 
 export interface DetectionCheck {
-  code: DetectionCode
+  /**
+   * Optional, because nothing can supply it honestly yet: `requireUsableRepo`
+   * throws plain `Error`s, and deriving a code by matching their prose would
+   * be the guess this whole file refuses. Supply it when git.ts grows typed
+   * errors; until then the glyph comes from `status` and the decision from
+   * `usable`, and neither needs this.
+   */
+  code?: DetectionCode
   /**
    * `pass` is a green tick, `fail` the red cross, `info` a neutral ring: a
    * fact that decides nothing. A detached HEAD and a dirty tree belong here —
@@ -427,6 +456,29 @@ export function repoLabel(root: string): string {
 
 /** The two words `Project.account` accepts, with nothing claimed about either. */
 const DEFAULT_ACCOUNTS: readonly AccountOption[] = [{ kind: "personal" }, { kind: "work" }]
+
+/**
+ * What identifies one account, and it is **not** `kind`.
+ *
+ * `Project.account` has two words, so a second client profile is another
+ * `kind: "work"` — and this panel offers "Add another account", so a list with
+ * two of a kind is something it asks for. Selecting by `kind` would check both
+ * cards and submit the first one's `configDir`, which is a run billed from the
+ * wrong place: the defect the account question exists to prevent, reached
+ * through this file's own prop surface.
+ *
+ * `kind` plus `configDir` is what names a real profile. Not the index: a list
+ * that reorders — or grows when `onAddAccount` returns — would move the
+ * selection to a different client in silence. `\u0000` separates, as
+ * `src/runindex.ts`'s `taskKey` does, because it is the one byte a path cannot
+ * contain.
+ */
+function accountKey(option: AccountOption): string {
+  return `${option.kind}\u0000${option.configDir ?? ""}`
+}
+
+/** "Not sure", which no `AccountOption` can collide with: `kind` is enumerated. */
+const UNKNOWN_KEY = "\u0000not sure"
 
 /**
  * The circumference of the r=25 circle both rings are drawn on.
@@ -661,7 +713,8 @@ export function AddRepo({
   const reduced = usePrefersReducedMotion()
   const anim = (classes: string): string => (reduced ? "" : classes)
 
-  const [chosen, setChosen] = useState<"personal" | "work" | "unknown" | null>(null)
+  /** An `accountKey`, or `UNKNOWN_KEY`. Never a `kind`; see `accountKey`. */
+  const [chosenKey, setChosenKey] = useState<string | null>(null)
   /** `null` until the field is touched, which is what lets detection seed it. */
   const [typedCmd, setTypedCmd] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -689,7 +742,18 @@ export function AddRepo({
 
   /** The probe failing is not the path failing; see the file header. */
   const canProceed = verdict.kind === "usable" || verdict.kind === "unknown"
-  const chosenOption = accounts.find((a) => a.kind === chosen)
+
+  /**
+   * The answer, resolved against the list as it stands now.
+   *
+   * An account that is no longer offered reads as **unanswered** rather than
+   * as its old `kind`: the list can change under this panel — `onAddAccount`
+   * is one of its own controls — and carrying a word forward after the profile
+   * behind it has gone would submit a billing label nothing backs.
+   */
+  const chosenOption = accounts.find((a) => accountKey(a) === chosenKey)
+  const chosen: "personal" | "work" | "unknown" | null =
+    chosenKey === UNKNOWN_KEY ? "unknown" : (chosenOption?.kind ?? null)
 
   /**
    * How far the form has opened. Monotonic: `want` falls as the path goes
@@ -739,7 +803,11 @@ export function AddRepo({
   const hint = !canProceed
     ? verdict.kind === "unusable"
       ? "Fix the path above, then check it again."
-      : "Check the folder first."
+      : verdict.kind === "checking"
+        ? /* Not "Check the folder first." while a check is visibly running:
+             the spinner two sections up is already saying otherwise. */
+          "Checking that folder now."
+        : "Check the folder first."
     : chosen === null
       ? "Say which Claude account runs it."
       : cmd.trim() === ""
@@ -885,7 +953,7 @@ export function AddRepo({
                   >
                     {done.checks.map((check, index) => (
                       <li
-                        key={`${check.code}-${index}`}
+                        key={`${check.code ?? "check"}-${index}`}
                         data-status={check.status}
                         className={anim("pop")}
                         style={{
@@ -935,10 +1003,10 @@ export function AddRepo({
                   >
                     {accounts.map((option) => (
                       <AccountCard
-                        key={option.kind}
+                        key={accountKey(option)}
                         option={option}
-                        selected={chosen === option.kind}
-                        onPick={() => setChosen(option.kind)}
+                        selected={chosenKey === accountKey(option)}
+                        onPick={() => setChosenKey(accountKey(option))}
                         reduced={reduced}
                       />
                     ))}
@@ -948,8 +1016,8 @@ export function AddRepo({
                     <AccountCard
                       option={{ kind: "personal", label: "Not sure" }}
                       unknown
-                      selected={chosen === "unknown"}
-                      onPick={() => setChosen("unknown")}
+                      selected={chosenKey === UNKNOWN_KEY}
+                      onPick={() => setChosenKey(UNKNOWN_KEY)}
                       reduced={reduced}
                     />
                   </div>
@@ -1360,6 +1428,9 @@ function AccountCard({
       role="radio"
       aria-checked={selected}
       data-account={kind}
+      /* The identity, where `data-account` is only the word. Two work accounts
+         for two clients share the latter and must not share the former. */
+      data-account-key={unknown ? UNKNOWN_KEY : accountKey(option)}
       onClick={onPick}
       style={{
         display: "grid",
