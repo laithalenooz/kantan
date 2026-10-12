@@ -720,7 +720,14 @@ export function AddTasks(props: AddTasksProps): ReactElement {
         </div>
 
         {asking ? (
-          <div role="tabpanel" id={panelId} aria-labelledby={askTabId} tabIndex={0} className="outline-none">
+          <div
+            role="tabpanel"
+            id={panelId}
+            aria-labelledby={askTabId}
+            /* No `tabIndex`. The tabs pattern makes a panel focusable only
+             * when it holds nothing focusable, and both of these open with a
+             * text box — so a stop here would be one with nothing to do. */
+          >
             <div className={`${PAD} pt-5`}>
               <label htmlFor={askBoxId} className="mb-2 ml-1 block text-[13px] font-semibold text-[#2A2C33]">
                 What&apos;s missing?
@@ -881,7 +888,12 @@ export function AddTasks(props: AddTasksProps): ReactElement {
                 <button
                   type="button"
                   onClick={runDraft}
-                  className="ghost mt-2.5 inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-full border border-edge-strong bg-white px-3.5 text-[13px] font-[560] text-muted-900 hover:bg-[#F6F6F8]"
+                  /* `box-content`: the artboard declares `border-box` on
+                   * `<main>` and `<aside>` only, so a 36px control with a 1px
+                   * border is drawn 38px tall. Preflight's blanket border-box
+                   * would eat the border and lose 2px. Measured against the
+                   * artboard in a browser; `Empty.tsx` records the same rule. */
+                  className="ghost mt-2.5 box-content inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-full border border-edge-strong bg-white px-3.5 text-[13px] font-[560] text-muted-900 hover:bg-[#F6F6F8]"
                 >
                   <Icon size={13}>{REDRAFT}</Icon>
                   Draft again
@@ -891,7 +903,7 @@ export function AddTasks(props: AddTasksProps): ReactElement {
           </div>
         ) : (
           <WritePanel
-            panelProps={canAsk ? { role: "tabpanel", id: panelId, "aria-labelledby": writeTabId, tabIndex: 0 } : {}}
+            panelProps={canAsk ? { role: "tabpanel", id: panelId, "aria-labelledby": writeTabId } : {}}
             boxId={manualBoxId}
             value={manual}
             onChange={(value) => {
@@ -973,7 +985,8 @@ export function AddTasks(props: AddTasksProps): ReactElement {
                 <button
                   type="button"
                   onClick={onCancel}
-                  className="ghost inline-flex h-12 cursor-pointer items-center rounded-full border border-[#D9D9DF] bg-white px-[18px] text-sm font-[560] text-ink-deep hover:bg-[#F6F6F8]"
+                  /* 48px plus its 1px border, which is 50. See "Draft again". */
+                  className="ghost box-content inline-flex h-12 cursor-pointer items-center rounded-full border border-[#D9D9DF] bg-white px-[18px] text-sm font-[560] text-ink-deep hover:bg-[#F6F6F8]"
                 >
                   Cancel
                 </button>
@@ -1060,7 +1073,7 @@ function WritePanel({
   onChange: (value: string) => void
 }): ReactElement {
   return (
-    <div {...panelProps} className="outline-none">
+    <div {...panelProps}>
       <div className={`${PAD} pt-5`}>
         <label htmlFor={boxId} className="mb-2 ml-1 block text-[13px] font-semibold text-[#2A2C33]">
           One task per line

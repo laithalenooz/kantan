@@ -455,6 +455,17 @@ describe("the two tabs", () => {
     expect(one('[role="tabpanel"]').getAttribute("aria-labelledby")).toBe(write.id)
   })
 
+  /**
+   * The tabs pattern makes a panel focusable only when it holds nothing
+   * focusable. Both panels open with a text box, so a `tabIndex` here would be
+   * a stop in the tab order with nothing to do — and the artboard resets the
+   * outline, so nothing to see either.
+   */
+  test("the panel is not a tab stop of its own", async () => {
+    await render(<api.AddTasks {...props({ onDraft: () => ({ tasks: DRAFTS }) })} />)
+    expect(one('[role="tabpanel"]').hasAttribute("tabindex")).toBe(false)
+  })
+
   /** The canvas note names shadcn Tabs, which is the WAI-ARIA tabs pattern:
    * one stop in the tab order, and the arrows move between tabs. */
   test("roving tabindex and arrow keys, as the tabs pattern requires", async () => {
@@ -918,6 +929,93 @@ describe("the add button", () => {
     expect(calls).toBe(1)
   })
 
+  /**
+   * The `disabled` attribute cannot carry this on its own, and a mutation run
+   * proved it: deleting the latch left the suite green, because a second click
+   * on an already-disabled button never reaches a handler. Two clicks in **one
+   * tick** are the case it misses — React has not re-rendered, so the DOM node
+   * is still enabled when the second one lands.
+   */
+  test("two clicks in one tick still write once", async () => {
+    let calls = 0
+    const gate = deferred<readonly string[]>()
+    await render(
+      <api.AddTasks
+        {...props({
+          onAdd: () => {
+            calls += 1
+            return gate.promise
+          },
+        })}
+      />,
+    )
+    await type(one("textarea"), "first")
+
+    const add = button("Add 1 task to importer.md")
+    await api.act(async () => {
+      add.click()
+      add.click()
+    })
+    expect(calls).toBe(1)
+  })
+
+  /**
+   * The defect this screen's state machine was built wrong for once: "in
+   * flight" and "last outcome" shared one field, and every edit cleared it. So
+   * a keystroke during the write re-armed the button with the same lines still
+   * counted, and the second click appended them again.
+   *
+   * It also pins the other half: a line typed while the write is out is
+   * **kept**, not cleared. Losing what someone typed is invisible; leaving it
+   * offers the written line a second time, in the diff, where it can be seen.
+   */
+  test("typing while the write is in flight neither re-arms the button nor loses the typing", async () => {
+    let calls = 0
+    const gate = deferred<readonly string[]>()
+    await render(
+      <api.AddTasks
+        {...props({
+          onAdd: () => {
+            calls += 1
+            return gate.promise
+          },
+        })}
+      />,
+    )
+    await type(one("textarea"), "first")
+    await click(button("Add 1 task to importer.md"))
+    await type(one("textarea"), "first\nsecond")
+
+    expect(button("Adding…").disabled).toBe(true)
+    expect(calls).toBe(1)
+
+    await api.act(async () => {
+      gate.resolve(["T4"])
+      await gate.promise
+    })
+    expect(one<HTMLTextAreaElement>("textarea").value).toBe("first\nsecond")
+    expect(text('[role="status"]')).toContain("Added T4 to importer.md")
+  })
+
+  /** The same, for a draft edited while its own write is out. */
+  test("a draft edited while the write is in flight is kept", async () => {
+    const gate = deferred<readonly string[]>()
+    await drafted({ onAdd: () => gate.promise })
+    const boxes = all<HTMLInputElement>('input[type="checkbox"]')
+    for (const box of boxes.slice(1)) await toggle(box)
+
+    await click(button("Add 1 task to importer.md"))
+    const first = all<HTMLInputElement>('input[type="text"]')[0]
+    if (!first) throw new Error("expected a text input")
+    await type(first, "edited mid-write")
+
+    await api.act(async () => {
+      gate.resolve(["T4"])
+      await gate.promise
+    })
+    expect(all<HTMLInputElement>('input[type="text"]').map((i) => i.value)).toContain("edited mid-write")
+  })
+
   /** The human may have edited the file since the draft, so the refs the
    * server reports are the only ones that are true. */
   test("the confirmation prints the server's refs, not the preview's", async () => {
@@ -1095,6 +1193,24 @@ describe("the artboard's own values", () => {
   test("the untouched read-only promise the artboard makes about drafting", async () => {
     await render(<api.AddTasks {...props({ onDraft: () => ({ tasks: DRAFTS }) })} />)
     expect(text('[role="tabpanel"]')).toContain("Reads importer.md and the repo, read-only")
+  })
+
+  /**
+   * Measured in a browser against the artboard: Cancel came out 48px against
+   * its 50, and "Draft again" 36 against its 38. The artboard declares
+   * `box-sizing: border-box` on `<main>` and `<aside>` **only**, so a control
+   * with an explicit height *and* a border is drawn height-plus-border; the
+   * preflight Tailwind adds would eat it. The rule is "an explicit height plus
+   * a border", and these two are the only controls here that have both —
+   * every other pill sets `border:0`.
+   */
+  test("a bordered pill is content-box, as the artboard draws it", async () => {
+    await drafted({ onCancel: () => {} })
+    expect((button("Draft again").getAttribute("class") ?? "").split(/\s+/)).toContain("box-content")
+    expect((button("Cancel").getAttribute("class") ?? "").split(/\s+/)).toContain("box-content")
+    /* The borderless pills must not have it, or the padding grows instead. */
+    expect((button("Draft tasks").getAttribute("class") ?? "").split(/\s+/)).not.toContain("box-content")
+    expect((button("Add 3 tasks to importer.md").getAttribute("class") ?? "").split(/\s+/)).not.toContain("box-content")
   })
 
   test("an unticked row is struck through and its ref greys out", async () => {
