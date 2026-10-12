@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>kantan — add tasks</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#F4F4F6}
+.m{font-family:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,monospace}
+.ic{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}
+button,input,textarea{font:inherit}
+button{cursor:pointer}
+textarea::placeholder,input::placeholder{color:#7A7F8C}
+@property --s{syntax:'<angle>';initial-value:0deg;inherits:false}
+@keyframes kshineb{to{--s:360deg}}
+@keyframes kfade{from{opacity:0;transform:translateY(10px);filter:blur(6px)}to{opacity:1;transform:none;filter:blur(0)}}
+@keyframes kspin{to{transform:rotate(360deg)}}
+@keyframes kring{from{stroke-dashoffset:157.08}}
+@keyframes kskel{0%{background-position:150% 0}100%{background-position:-50% 0}}
+@keyframes kpop{from{opacity:0;transform:translateY(6px) scale(.98)}to{opacity:1;transform:none}}
+.bf{animation:kfade .6s cubic-bezier(.2,.7,.2,1) both}
+.d1{animation-delay:.08s}.d2{animation-delay:.16s}.d3{animation-delay:.24s}
+.pop{animation:kpop .45s cubic-bezier(.2,.7,.2,1) both}
+.spin{animation:kspin .9s linear infinite;transform-origin:50% 50%}
+.ring{animation:kring 1.4s cubic-bezier(.2,.7,.2,1) both}
+.shineb{background:conic-gradient(from var(--s),#C7C8F6,#5B5BD6,#38BDF8,#A5B4FC,#C7C8F6);animation:kshineb 6s linear infinite}
+.skel{background:linear-gradient(90deg,#EEEEF2 0%,#EEEEF2 35%,#F8F8FB 50%,#EEEEF2 65%,#EEEEF2 100%);background-size:250% 100%;animation:kskel 1.4s linear infinite}
+.trow:hover{background:#EFEFF2}
+.ghost:hover{background:#F6F6F8}
+.cta:hover{background:#2A2B31}
+.send:hover{background:#3F3FB8}
+.drow:hover{background:#FAFAFB}
+.tin:focus{outline:none;box-shadow:0 0 0 3px rgba(91,91,214,.18);background:#fff}
+.dots{background-image:radial-gradient(#D3D4DB 1px,transparent 1px);background-size:20px 20px;-webkit-mask-image:radial-gradient(ellipse 80% 60% at 50% 0%,#000 20%,transparent 75%);mask-image:radial-gradient(ellipse 80% 60% at 50% 0%,#000 20%,transparent 75%)}
+@media (prefers-reduced-motion:reduce){.kr *{animation:none!important}}
+a{color:#4B4BC8}a:hover{color:#3A3AA8}
+</style>
+</helmet>
+<div class="kr" style="min-height:100vh;display:flex;flex-direction:column;font-family:'Geist',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;color:#111216;background:#F4F4F6;-webkit-font-smoothing:antialiased">
+
+<header style="display:flex;align-items:center;gap:12px;height:56px;padding:0 20px;background:rgba(255,255,255,.86);border-bottom:1px solid #E7E7EB">
+  <span aria-hidden="true" style="width:26px;height:26px;border-radius:8px;background:linear-gradient(145deg,#2A2B31,#0E0F12);display:grid;place-items:center;box-shadow:inset 0 1px 0 rgba(255,255,255,.14),0 2px 6px -2px rgba(17,18,22,.5)"><span style="width:8px;height:8px;border-radius:50%;background:#FF6A1A"></span></span>
+  <span style="font-size:17px;font-weight:700;letter-spacing:-.025em">kantan</span>
+  <span class="m" style="font-size:12px;color:#6B7080;padding:3px 8px;border-radius:999px;background:#F1F1F4">localhost:4317</span>
+  <span style="margin-left:auto;display:inline-flex;align-items:center;gap:8px;font-size:13px;color:#5F6370"><span aria-hidden="true" style="width:7px;height:7px;border-radius:50%;background:#A3A7B1"></span>Idle · nothing running</span>
+</header>
+
+<div style="flex:1;display:flex;flex-wrap:wrap;align-items:stretch">
+
+  <aside aria-label="Projects and tasks" style="flex:1 1 288px;background:#FAFAFB;border-right:1px solid #E7E7EB;padding:16px 10px 28px;box-sizing:border-box">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:0 8px 6px">
+      <span style="font-size:11.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#6B7080">Projects</span>
+      <a href="AddRepo.dc.html" aria-label="Add a repository" class="ghost" style="width:30px;height:30px;box-sizing:border-box;border-radius:9px;border:1px solid #E2E2E7;background:#fff;display:grid;place-items:center;color:#3A3D45"><svg class="ic" viewBox="0 0 24 24" style="width:15px;height:15px"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg></a>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:8px;padding:14px 10px 2px">
+      <svg class="ic" viewBox="0 0 24 24" style="color:#6B7080"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg>
+      <a href="Project.dc.html" style="font-size:14px;font-weight:620;color:#111216;text-decoration:none">your-app</a>
+      <a href="Project.dc.html" style="margin-left:auto;display:inline-flex;align-items:center;gap:4px;padding:2px 7px 2px 5px;border-radius:6px;background:#E0F2FE;color:#075985;font-size:11.5px;font-weight:550;text-decoration:none"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>personal<svg class="ic" viewBox="0 0 24 24" style="width:11px;height:11px"><path d="m6 9 6 6 6-6"></path></svg></a>
+    </div>
+    <div class="m" style="padding:0 10px 6px 34px;font-size:12px;color:#6B7080">$ npm test</div>
+
+    <div class="m" style="display:flex;align-items:center;gap:6px;padding:6px 10px 4px 14px;font-size:12px;color:#111216;font-weight:600"><svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="m6 9 6 6 6-6"></path></svg>docs/features/importer.md</div>
+    <div style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;min-height:40px;padding:6px 10px 6px 14px;font-size:13.5px;line-height:1.35;color:#1E2026">
+      <span aria-hidden="true" style="width:16px;height:16px;border-radius:50%;background:#0F8A5F;display:grid;place-items:center;justify-self:center"><svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:none;stroke:#fff;stroke-width:4;stroke-linecap:round;stroke-linejoin:round"><path d="M20 6 9 17l-5-5"></path></svg></span>
+      <span class="m" style="font-size:11.5px;color:#6B7080">T1</span><span>Parse the manifest</span><span style="font-size:11.5px;font-weight:560;color:#0F7A54">Passed</span>
+    </div>
+    <div style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;min-height:40px;padding:6px 10px 6px 14px;font-size:13.5px;line-height:1.35;color:#1E2026">
+      <span aria-hidden="true" style="width:16px;height:16px;border-radius:50%;background:#0F8A5F;display:grid;place-items:center;justify-self:center"><svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:none;stroke:#fff;stroke-width:4;stroke-linecap:round;stroke-linejoin:round"><path d="M20 6 9 17l-5-5"></path></svg></span>
+      <span class="m" style="font-size:11.5px;color:#6B7080">T2</span><span>Map records to rows</span><span style="font-size:11.5px;font-weight:560;color:#0F7A54">Passed</span>
+    </div>
+    <div style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;min-height:40px;padding:6px 10px 6px 14px;font-size:13.5px;line-height:1.35;color:#1E2026">
+      <span aria-hidden="true" style="width:14px;height:14px;border-radius:50%;border:1.5px solid #A3A7B1;box-sizing:border-box;justify-self:center"></span>
+      <span class="m" style="font-size:11.5px;color:#6B7080">T3</span><span>Runtime shim (v1.2)</span><span></span>
+    </div>
+    <sc-for list="{{pending}}" as="p" hint-placeholder-count="2">
+      <div class="pop" style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;min-height:40px;margin:2px 0;padding:6px 10px 6px 14px;border-radius:10px;border:1.5px dashed #C9CAF5;background:#F8F8FE;font-size:13.5px;line-height:1.35;color:#3A3D45">
+        <span aria-hidden="true" style="width:14px;height:14px;border-radius:50%;border:1.5px dashed #9C9DEB;box-sizing:border-box;justify-self:center"></span>
+        <span class="m" style="font-size:11.5px;color:#4B4BC8">{{p.ref}}</span><span style="overflow:hidden;white-space:nowrap;text-overflow:ellipsis">{{p.text}}</span><span style="font-size:11px;font-weight:600;color:#4B4BC8;text-transform:uppercase;letter-spacing:.05em">{{p.tag}}</span>
+      </div>
+    </sc-for>
+    <div style="display:flex;align-items:center;gap:8px;min-height:40px;margin-top:2px;padding:0 10px 0 16px;border-radius:10px;background:#fff;box-shadow:0 0 0 1px #D2D3DA;color:#111216;font-size:13px;font-weight:560"><svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>Add task</div>
+
+    <div class="m" style="display:flex;align-items:center;gap:6px;padding:12px 10px 4px 14px;font-size:12px;color:#5F6370"><svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="m9 18 6-6-6-6"></path></svg>docs/features/export.md</div>
+    <a href="Project.dc.html" class="trow" style="display:flex;align-items:center;gap:8px;min-height:36px;padding:0 10px 0 16px;border-radius:10px;color:#5F6370;font-size:13px;text-decoration:none"><svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path><path d="M12 12v6"></path><path d="M9 15h6"></path></svg>Add task file</a>
+
+    <div style="margin-top:8px;border-top:1px solid #ECECEF;padding-top:6px;display:flex;flex-direction:column">
+      <button class="trow" style="display:flex;align-items:center;gap:8px;min-height:44px;padding:0 10px;border:0;border-radius:10px;background:transparent;color:#1E2026;text-align:left">
+        <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:14px;height:14px;color:#6B7080"><path d="m9 18 6-6-6-6"></path></svg>
+        <span style="font-size:14px;font-weight:620">other-repo</span>
+        <span style="margin-left:auto;display:inline-flex;align-items:center;gap:4px;padding:2px 7px 2px 5px;border-radius:6px;background:#26272D;color:#F4F4F6;font-size:11.5px;font-weight:550"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M16 20V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path><rect width="20" height="14" x="2" y="6" rx="2"></rect></svg>work</span>
+      </button>
+      <button class="trow" style="display:flex;align-items:center;gap:8px;min-height:44px;padding:0 10px;border:0;border-radius:10px;background:transparent;color:#1E2026;text-align:left">
+        <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:14px;height:14px;color:#6B7080"><path d="m9 18 6-6-6-6"></path></svg>
+        <span style="font-size:14px;font-weight:620">phone-app</span>
+        <span style="margin-left:auto;display:inline-flex;align-items:center;gap:4px;padding:2px 7px 2px 5px;border-radius:6px;background:#E0F2FE;color:#075985;font-size:11.5px;font-weight:550"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>personal</span>
+      </button>
+    </div>
+  </aside>
+
+  <main style="flex:999 1 560px;min-width:0;position:relative;padding:24px clamp(16px,3vw,44px) 48px;box-sizing:border-box">
+    <div class="dots" aria-hidden="true" style="position:absolute;inset:0;pointer-events:none"></div>
+    <div style="position:relative;max-width:860px;margin:0 auto">
+
+      <nav aria-label="Breadcrumb" style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:13.5px;color:#5F6370;margin-bottom:18px">
+        <span>your-app</span>
+        <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:14px;height:14px;color:#A3A7B1"><path d="m9 18 6-6-6-6"></path></svg>
+        <span class="m" style="font-size:12.5px;color:#111216;font-weight:600">importer.md</span>
+      </nav>
+
+      <section aria-labelledby="add-h" class="bf" style="background:#fff;border:1px solid #E7E7EB;border-radius:24px;box-shadow:0 1px 2px rgba(17,18,22,.04),0 18px 50px -22px rgba(17,18,22,.2);overflow:clip">
+        <div style="padding:30px clamp(20px,4vw,44px) 0">
+          <h1 id="add-h" style="margin:0;font-size:clamp(28px,3.4vw,38px);line-height:1.08;font-weight:650;letter-spacing:-.035em">Add tasks to importer.md</h1>
+          <p style="margin:10px 0 0;max-width:62ch;font-size:15px;line-height:1.6;color:#4A4E59">New tasks go at the end of <span class="m" style="font-size:13.5px">docs/features/importer.md</span> in your working tree, numbered after T3. Commit the file whenever you like.</p>
+
+          <div role="tablist" aria-label="How to add tasks" style="display:inline-flex;gap:4px;margin-top:22px;padding:4px;border-radius:999px;background:#EFEFF2">
+            <button role="tab" aria-selected="{{askSel}}" onClick="{{toAsk}}" style="height:38px;padding:0 16px 0 12px;border-radius:999px;border:0;display:inline-flex;align-items:center;gap:8px;font-size:14px;font-weight:600;{{askTab}}"><svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:15px;height:15px"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"></path></svg>Ask Claude</button>
+            <button role="tab" aria-selected="{{writeSel}}" onClick="{{toWrite}}" style="height:38px;padding:0 16px 0 12px;border-radius:999px;border:0;display:inline-flex;align-items:center;gap:8px;font-size:14px;font-weight:600;{{writeTab}}"><svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:15px;height:15px"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"></path><path d="m15 5 4 4"></path></svg>Write them</button>
+          </div>
+        </div>
+
+        <sc-if value="{{isAsk}}" hint-placeholder-val="{{ true }}">
+          <div style="padding:20px clamp(20px,4vw,44px) 0">
+            <label for="ask" style="display:block;margin:0 0 8px 4px;font-size:13px;font-weight:600;color:#2A2C33">What's missing?</label>
+            <div class="shineb" style="padding:1.5px;border-radius:18px">
+              <div style="border-radius:16.5px;background:#fff;padding:4px">
+                <textarea id="ask" rows="3" value="{{prompt}}" onChange="{{onPrompt}}" placeholder="Describe the work. Claude drafts tasks that fit this file and this repo." style="display:block;width:100%;box-sizing:border-box;min-height:92px;resize:vertical;padding:12px 14px;border:0;border-radius:13px;background:#F7F7F9;font-size:15px;line-height:1.55;color:#111216;outline:none"></textarea>
+                <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:10px 8px 6px 10px">
+                  <span style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:#4A4E59"><svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path></svg>Reads importer.md and the repo, read-only</span>
+                  <span style="display:inline-flex;align-items:center;gap:4px;padding:2px 7px 2px 5px;border-radius:6px;background:#E0F2FE;color:#075985;font-size:11.5px;font-weight:550"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>bills to personal</span>
+                  <button onClick="{{draft}}" class="send" style="margin-left:auto;height:44px;padding:0 18px 0 14px;border-radius:999px;border:0;background:#4B4BC8;color:#fff;font-size:14.5px;font-weight:600;display:inline-flex;align-items:center;gap:8px;box-shadow:0 8px 20px -10px rgba(75,75,200,.8)"><svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:15px;height:15px"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"></path></svg>{{draftLabel}}</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <sc-if value="{{drafting}}" hint-placeholder-val="{{ false }}">
+            <div role="status" aria-label="Drafting tasks" style="padding:22px clamp(20px,4vw,44px) 0;display:flex;flex-direction:column;gap:10px">
+              <div class="skel" style="height:48px;border-radius:12px"></div>
+              <div class="skel" style="height:48px;border-radius:12px;width:86%"></div>
+              <div class="skel" style="height:48px;border-radius:12px;width:72%"></div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{drafted}}" hint-placeholder-val="{{ true }}">
+            <div style="padding:22px clamp(20px,4vw,44px) 0">
+              <div style="display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 12px;margin-bottom:10px">
+                <h2 style="margin:0;font-size:16px;font-weight:650">Claude drafted 3 tasks</h2>
+                <span style="font-size:13px;color:#5F6370">Untick what you don't want, edit any line, then add.</span>
+                <span class="m" style="margin-left:auto;font-size:12px;color:#5F6370">$0.03 · personal</span>
+              </div>
+              <ul style="list-style:none;margin:0;padding:0;border:1px solid #EEEEF1;border-radius:16px;overflow:hidden">
+                <sc-for list="{{askItems}}" as="it" hint-placeholder-count="3">
+                  <li class="drow pop" style="display:grid;grid-template-columns:24px 34px minmax(0,1fr);gap:10px;align-items:center;padding:10px 14px;border-top:{{it.border}};{{it.rowStyle}}">
+                    <input type="checkbox" checked="{{it.on}}" onChange="{{it.toggle}}" aria-label="{{it.aria}}" style="width:18px;height:18px;margin:0;accent-color:#111216;cursor:pointer">
+                    <span class="m" style="font-size:12px;font-weight:600;{{it.refStyle}}">{{it.ref}}</span>
+                    <input class="tin" value="{{it.text}}" onChange="{{it.edit}}" aria-label="{{it.editAria}}" style="width:100%;box-sizing:border-box;min-height:38px;padding:0 10px;border:0;border-radius:10px;background:transparent;font-size:14.5px;{{it.textStyle}}">
+                  </li>
+                </sc-for>
+              </ul>
+              <button onClick="{{draft}}" class="ghost" style="margin-top:10px;height:36px;padding:0 14px;border-radius:999px;border:1px solid #DCDCE2;background:#fff;font-size:13px;font-weight:560;color:#3A3D45;display:inline-flex;align-items:center;gap:6px"><svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"></path><path d="M21 3v5h-5"></path></svg>Draft again</button>
+            </div>
+          </sc-if>
+        </sc-if>
+
+        <sc-if value="{{isWrite}}" hint-placeholder-val="{{ false }}">
+          <div style="padding:20px clamp(20px,4vw,44px) 0">
+            <label for="manual" style="display:block;margin:0 0 8px 4px;font-size:13px;font-weight:600;color:#2A2C33">One task per line</label>
+            <textarea id="manual" rows="4" value="{{manual}}" onChange="{{onManual}}" placeholder="Make imports resumable after a crash&#10;Add a --dry-run flag" class="m" style="display:block;width:100%;box-sizing:border-box;min-height:120px;resize:vertical;padding:14px 16px;border:1px solid transparent;border-radius:16px;background:#EFEFF2;font-size:14px;line-height:1.7;color:#111216;outline:none"></textarea>
+            <p style="margin:8px 4px 0;font-size:12.5px;color:#5F6370">Refs are assigned for you. Non-English text is fine.</p>
+          </div>
+        </sc-if>
+
+        <div style="padding:22px clamp(20px,4vw,44px) 0">
+          <h2 style="margin:0 0 8px;font-size:11.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#6B7080">Change to the file</h2>
+          <div style="border:1px solid #EEEEF1;border-radius:14px;overflow:hidden;background:#FCFCFD">
+            <div class="m" style="display:flex;align-items:center;gap:6px;padding:8px 14px;border-bottom:1px solid #EEEEF1;font-size:12px;color:#4A4E59"><svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path></svg>docs/features/importer.md <span style="margin-left:auto;color:#0F7A54;font-weight:600">+{{count}}</span></div>
+            <pre class="m" style="margin:0;padding:8px 0;font-size:12.5px;line-height:1.75;color:#5F6370;overflow-x:auto"><span style="display:block;padding:0 14px">  - [ ] T2 Map records to rows</span><span style="display:block;padding:0 14px">  - [ ] T3 Runtime shim (v1.2)</span><sc-for list="{{diff}}" as="d" hint-placeholder-count="2"><span style="display:block;padding:0 14px;background:#E3F5EC;color:#0B5A3E">+ - [ ] {{d.ref}} {{d.text}}</span></sc-for></pre>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px 14px;margin-top:24px;padding:20px clamp(20px,4vw,44px) 24px;border-top:1px solid #EEEEF1;background:#FBFBFC">
+          <sc-if value="{{notAdded}}" hint-placeholder-val="{{ true }}">
+            <button onClick="{{add}}" disabled="{{none}}" class="cta" style="height:52px;padding:0 22px 0 18px;border-radius:999px;border:0;color:#fff;font-size:15.5px;font-weight:620;display:inline-flex;align-items:center;gap:10px;{{addStyle}}"><svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:17px;height:17px;stroke-width:2.4"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>{{addLabel}}</button>
+            <a href="Start.dc.html" class="ghost" style="height:48px;padding:0 18px;border-radius:999px;border:1px solid #D9D9DF;background:#fff;color:#1E2026;font-size:14px;font-weight:560;display:inline-flex;align-items:center;text-decoration:none">Cancel</a>
+          </sc-if>
+          <sc-if value="{{added}}" hint-placeholder-val="{{ false }}">
+            <div class="pop" role="status" style="display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;min-height:52px">
+              <span aria-hidden="true" style="width:22px;height:22px;border-radius:50%;background:#111216;display:grid;place-items:center"><svg viewBox="0 0 24 24" style="width:12px;height:12px;fill:none;stroke:#fff;stroke-width:3.5;stroke-linecap:round;stroke-linejoin:round"><path d="M20 6 9 17l-5-5"></path></svg></span>
+              <span style="font-size:15.5px;font-weight:600">{{addedMsg}}</span>
+              <a href="Start.dc.html" style="font-size:14px;font-weight:600">Open {{firstRef}}</a>
+            </div>
+          </sc-if>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <aside aria-label="Details" style="flex:1 1 260px;border-left:1px solid #E7E7EB;background:#FAFAFB;padding:20px 16px 28px;box-sizing:border-box;display:flex;flex-direction:column;gap:14px">
+    <section style="background:#fff;border:1px solid #E7E7EB;border-radius:16px;padding:16px;box-shadow:0 1px 2px rgba(17,18,22,.04)">
+      <h2 style="margin:0 0 10px;font-size:11.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#6B7080">Task file</h2>
+      <div class="m" style="font-size:12.5px;overflow-wrap:anywhere">docs/features/importer.md</div>
+      <dl style="margin:12px 0 0;display:flex;flex-direction:column;gap:8px;font-size:13.5px">
+        <div style="display:flex;justify-content:space-between;gap:10px"><dt style="color:#5F6370">Tasks now</dt><dd style="margin:0;font-weight:560">3</dd></div>
+        <div style="display:flex;justify-content:space-between;gap:10px"><dt style="color:#5F6370">After adding</dt><dd style="margin:0;font-weight:560">{{after}}</dd></div>
+        <div style="display:flex;justify-content:space-between;gap:10px"><dt style="color:#5F6370">Next ref</dt><dd class="m" style="margin:0;font-weight:560">T4</dd></div>
+      </dl>
+    </section>
+    <section style="background:#fff;border:1px solid #E7E7EB;border-radius:16px;padding:16px;box-shadow:0 1px 2px rgba(17,18,22,.04)">
+      <h2 style="margin:0 0 12px;font-size:11.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#6B7080">5-hour windows</h2>
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div style="display:grid;grid-template-columns:52px 1fr;gap:12px;align-items:center">
+          <div style="position:relative;width:52px;height:52px">
+            <svg viewBox="0 0 60 60" aria-hidden="true" style="width:52px;height:52px;transform:rotate(-90deg)"><circle cx="30" cy="30" r="25" fill="none" stroke="#E6F3FB" stroke-width="6"></circle><circle class="ring" cx="30" cy="30" r="25" fill="none" stroke="#0284C7" stroke-width="6" stroke-linecap="round" stroke-dasharray="157.08" stroke-dashoffset="92.68"></circle></svg>
+            <span style="position:absolute;inset:0;display:grid;place-items:center;font-size:12.5px;font-weight:650">41%</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:2px">
+            <span style="display:flex;align-items:center;gap:6px;font-size:14px;font-weight:600;color:#075985">personal <span style="padding:1px 6px;border-radius:999px;background:#111216;color:#fff;font-size:10.5px;font-weight:600">drafting</span></span>
+            <span class="m" style="font-size:12px;color:#5F6370">resets 18:40</span>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:52px 1fr;gap:12px;align-items:center">
+          <div style="position:relative;width:52px;height:52px">
+            <svg viewBox="0 0 60 60" aria-hidden="true" style="width:52px;height:52px;transform:rotate(-90deg)"><circle cx="30" cy="30" r="25" fill="none" stroke="#EEEEF1" stroke-width="6"></circle><circle class="ring" cx="30" cy="30" r="25" fill="none" stroke="#26272D" stroke-width="6" stroke-linecap="round" stroke-dasharray="157.08" stroke-dashoffset="138.23"></circle></svg>
+            <span style="position:absolute;inset:0;display:grid;place-items:center;font-size:12.5px;font-weight:650">12%</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:2px">
+            <span style="font-size:14px;font-weight:600;color:#26272D">work</span>
+            <span class="m" style="font-size:12px;color:#5F6370">resets 20:05</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  </aside>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1380}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = {
+      mode: 'ask',
+      phase: 'drafted',
+      prompt: 'Imports should resume after a crash instead of starting over, and I want a dry-run flag that reports what would change without writing anything.',
+      drafts: [
+        { text: 'Record a checkpoint after each committed batch so an interrupted import resumes from the last row', on: true },
+        { text: 'Add --dry-run: map every record and print the summary without writing', on: true },
+        { text: 'List skipped rows with their manifest line numbers in the summary', on: false }
+      ],
+      manual: '',
+      added: false
+    };
+    this._t = 0;
+  }
+  componentWillUnmount() { if (this._t) clearTimeout(this._t); }
+  renderVals() {
+    const s = this.state;
+    const isAsk = s.mode === 'ask';
+    const on = 'background:#fff;color:#111216;box-shadow:0 1px 2px rgba(17,18,22,.08),0 4px 10px -6px rgba(17,18,22,.3)';
+    const off = 'background:transparent;color:#4A4E59';
+    let n = 4;
+    const askItems = s.drafts.map((d, i) => {
+      const ref = d.on ? 'T' + (n++) : '—';
+      return {
+        text: d.text, on: d.on, ref: ref,
+        border: i === 0 ? '0' : '1px solid #F0F0F3',
+        rowStyle: d.on ? 'background:#fff' : 'background:#FAFAFB',
+        refStyle: d.on ? 'color:#4B4BC8' : 'color:#A3A7B1',
+        textStyle: d.on ? 'color:#111216' : 'color:#7A7F8C;text-decoration:line-through',
+        aria: 'Include draft ' + (i + 1),
+        editAria: 'Edit draft ' + (i + 1),
+        toggle: () => { const ds = s.drafts.slice(); ds[i] = Object.assign({}, d, { on: !d.on }); this.setState({ drafts: ds }); },
+        edit: (e) => { const ds = s.drafts.slice(); ds[i] = Object.assign({}, d, { text: e.target.value }); this.setState({ drafts: ds }); }
+      };
+    });
+    const chosen = isAsk
+      ? (s.phase === 'drafted' ? s.drafts.filter((d) => d.on).map((d) => d.text) : [])
+      : s.manual.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
+    const diff = chosen.map((t, i) => ({ ref: 'T' + (4 + i), text: t }));
+    const c = diff.length;
+    return {
+      isAsk: isAsk, isWrite: !isAsk,
+      askSel: isAsk ? 'true' : 'false', writeSel: isAsk ? 'false' : 'true',
+      askTab: isAsk ? on : off, writeTab: isAsk ? off : on,
+      toAsk: () => this.setState({ mode: 'ask', added: false }),
+      toWrite: () => this.setState({ mode: 'write', added: false }),
+      prompt: s.prompt,
+      onPrompt: (e) => this.setState({ prompt: e.target.value }),
+      draft: () => {
+        if (this._t) clearTimeout(this._t);
+        this.setState({ phase: 'drafting', added: false });
+        this._t = setTimeout(() => { this._t = 0; this.setState({ phase: 'drafted' }); }, 1400);
+      },
+      draftLabel: s.phase === 'drafted' ? 'Draft tasks' : (s.phase === 'drafting' ? 'Drafting…' : 'Draft tasks'),
+      drafting: isAsk && s.phase === 'drafting',
+      drafted: isAsk && s.phase === 'drafted',
+      askItems: askItems,
+      manual: s.manual,
+      onManual: (e) => this.setState({ manual: e.target.value, added: false }),
+      diff: diff,
+      pending: s.added ? diff.map((d) => ({ ref: d.ref, text: d.text, tag: 'new' })) : diff.map((d) => ({ ref: d.ref, text: d.text, tag: 'draft' })),
+      count: c,
+      none: c === 0,
+      addStyle: c === 0 ? 'background:#E4E4E9;color:#6B7080;cursor:not-allowed' : 'background:#111216;box-shadow:0 10px 28px -10px rgba(17,18,22,.6)',
+      addLabel: c === 0 ? 'Nothing to add yet' : 'Add ' + c + ' task' + (c === 1 ? '' : 's') + ' to importer.md',
+      add: () => { if (c > 0) this.setState({ added: true }); },
+      added: s.added,
+      notAdded: !s.added,
+      addedMsg: c === 1 ? 'Added ' + diff[0].ref + ' to importer.md' : 'Added ' + (c > 0 ? diff[0].ref + '–' + diff[c - 1].ref : '') + ' to importer.md',
+      firstRef: c > 0 ? diff[0].ref : 'T4',
+      after: String(3 + c)
+    };
+  }
+}
+</script>
+</body>
+</html>

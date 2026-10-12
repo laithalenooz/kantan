@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>kantan — add a repository</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#F4F4F6}
+.m{font-family:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,monospace}
+.ic{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}
+button,input{font:inherit}
+button{cursor:pointer}
+input::placeholder{color:#7A7F8C}
+@keyframes kfade{from{opacity:0;transform:translateY(10px);filter:blur(6px)}to{opacity:1;transform:none;filter:blur(0)}}
+@keyframes kpop{from{opacity:0;transform:translateY(6px) scale(.98)}to{opacity:1;transform:none}}
+@keyframes kspin{to{transform:rotate(360deg)}}
+@keyframes kring{from{stroke-dashoffset:157.08}}
+.bf{animation:kfade .6s cubic-bezier(.2,.7,.2,1) both}
+.d1{animation-delay:.08s}.d2{animation-delay:.16s}.d3{animation-delay:.24s}.d4{animation-delay:.32s}.d5{animation-delay:.4s}
+.pop{animation:kpop .45s cubic-bezier(.2,.7,.2,1) both}
+.spin{animation:kspin .9s linear infinite;transform-origin:50% 50%}
+.ring{animation:kring 1.4s cubic-bezier(.2,.7,.2,1) both}
+.ghost:hover{background:#F6F6F8}
+.opt:hover{background:#F7F7F9}
+.cta:hover{background:#2A2B31}
+.fld:focus-within{box-shadow:0 0 0 3px rgba(91,91,214,.18);border-color:#A9AAF0}
+.dots{background-image:radial-gradient(#D3D4DB 1px,transparent 1px);background-size:20px 20px;-webkit-mask-image:radial-gradient(ellipse 80% 60% at 50% 0%,#000 20%,transparent 75%);mask-image:radial-gradient(ellipse 80% 60% at 50% 0%,#000 20%,transparent 75%)}
+@media (prefers-reduced-motion:reduce){.kr *{animation:none!important}}
+a{color:#4B4BC8}a:hover{color:#3A3AA8}
+</style>
+</helmet>
+<div class="kr" style="min-height:100vh;display:flex;flex-direction:column;font-family:'Geist',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;color:#111216;background:#F4F4F6;-webkit-font-smoothing:antialiased">
+
+<header style="display:flex;align-items:center;gap:12px;height:56px;padding:0 20px;background:rgba(255,255,255,.86);border-bottom:1px solid #E7E7EB">
+  <span aria-hidden="true" style="width:26px;height:26px;border-radius:8px;background:linear-gradient(145deg,#2A2B31,#0E0F12);display:grid;place-items:center;box-shadow:inset 0 1px 0 rgba(255,255,255,.14),0 2px 6px -2px rgba(17,18,22,.5)"><span style="width:8px;height:8px;border-radius:50%;background:#FF6A1A"></span></span>
+  <span style="font-size:17px;font-weight:700;letter-spacing:-.025em">kantan</span>
+  <span class="m" style="font-size:12px;color:#6B7080;padding:3px 8px;border-radius:999px;background:#F1F1F4">localhost:4317</span>
+</header>
+
+<div style="flex:1;display:flex;flex-wrap:wrap;align-items:stretch">
+
+  <aside aria-label="Projects and tasks" style="flex:1 1 288px;background:#FAFAFB;border-right:1px solid #E7E7EB;padding:16px 10px 28px;box-sizing:border-box">
+    <span style="display:block;padding:0 8px 10px;font-size:11.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#6B7080">Projects</span>
+    <div style="display:flex;align-items:center;gap:8px;min-height:48px;padding:0 12px;border-radius:12px;border:1.5px dashed {{ghostBorder}};background:{{ghostBg}};color:#3A3D45">
+      <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="color:#6B7080"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg>
+      <span style="font-size:14px;font-weight:620">{{repoName}}</span>
+      <span style="margin-left:auto;font-size:11.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:{{ghostTagColor}}">{{ghostTag}}</span>
+    </div>
+  </aside>
+
+  <main style="flex:999 1 560px;min-width:0;position:relative;padding:24px clamp(16px,3vw,44px) 48px;box-sizing:border-box">
+    <div class="dots" aria-hidden="true" style="position:absolute;inset:0;pointer-events:none"></div>
+    <div style="position:relative;max-width:780px;margin:0 auto">
+
+      <section aria-labelledby="ar-h" class="bf" style="background:#fff;border:1px solid #E7E7EB;border-radius:24px;box-shadow:0 1px 2px rgba(17,18,22,.04),0 18px 50px -22px rgba(17,18,22,.2);overflow:clip">
+        <div style="padding:30px clamp(20px,4vw,40px) 22px;border-bottom:1px solid #EEEEF1">
+          <h1 id="ar-h" style="margin:0;font-size:clamp(28px,3.4vw,38px);line-height:1.08;font-weight:650;letter-spacing:-.035em">Add a repository</h1>
+          <p style="margin:10px 0 0;max-width:58ch;font-size:15px;line-height:1.6;color:#4A4E59">Four things kantan needs to know. It checks as much as it can itself, so most of this fills in on its own.</p>
+        </div>
+
+        <div class="bf d1" style="display:grid;grid-template-columns:32px minmax(0,1fr);gap:14px;padding:24px clamp(20px,4vw,40px);border-bottom:1px solid #EEEEF1">
+          <span style="width:30px;height:30px;border-radius:9px;background:#111216;color:#fff;display:grid;place-items:center;font-size:13px;font-weight:650">1</span>
+          <div style="min-width:0">
+            <label for="rp" style="display:block;font-size:16px;font-weight:650;padding-top:4px">Where is it?</label>
+            <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:12px">
+              <span class="fld" style="flex:1 1 300px;display:flex;align-items:center;gap:8px;min-height:46px;padding:0 14px;border-radius:12px;border:1px solid #E2E2E7;background:#fff;box-sizing:border-box"><svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:15px;height:15px;color:#6B7080"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg><input id="rp" class="m" value="{{path}}" onChange="{{onPath}}" placeholder="/home/you/code/…" style="border:0;outline:none;background:transparent;width:100%;font-size:13.5px;color:#111216"></span>
+              <button onClick="{{check}}" class="ghost" style="height:46px;padding:0 16px;border-radius:999px;border:1px solid #D9D9DF;background:#fff;font-size:14px;font-weight:560;color:#1E2026">Check</button>
+            </div>
+            <sc-if value="{{checking}}" hint-placeholder-val="{{ false }}">
+              <div role="status" class="pop" style="display:flex;align-items:center;gap:10px;margin-top:12px;font-size:13.5px;color:#20205E"><svg class="spin" aria-hidden="true" viewBox="0 0 24 24" style="width:15px;height:15px"><circle cx="12" cy="12" r="9" fill="none" stroke="#DCDCF6" stroke-width="3"></circle><path d="M21 12a9 9 0 0 0-9-9" fill="none" stroke="#5B5BD6" stroke-width="3" stroke-linecap="round"></path></svg>Looking at the folder…</div>
+            </sc-if>
+            <sc-if value="{{checked}}" hint-placeholder-val="{{ true }}">
+              <ul style="list-style:none;margin:12px 0 0;padding:0;display:flex;flex-direction:column;gap:6px;font-size:13.5px;color:#2A2C33">
+                <li class="pop" style="display:flex;align-items:center;gap:10px"><span aria-hidden="true" style="width:18px;height:18px;border-radius:50%;background:#0F8A5F;display:grid;place-items:center;flex:none"><svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:none;stroke:#fff;stroke-width:4;stroke-linecap:round;stroke-linejoin:round"><path d="M20 6 9 17l-5-5"></path></svg></span>Git repository · on <span class="m" style="font-size:12.5px">main</span>, no uncommitted changes</li>
+                <li class="pop" style="display:flex;align-items:center;gap:10px;animation-delay:.1s"><span aria-hidden="true" style="width:18px;height:18px;border-radius:50%;background:#0F8A5F;display:grid;place-items:center;flex:none"><svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:none;stroke:#fff;stroke-width:4;stroke-linecap:round;stroke-linejoin:round"><path d="M20 6 9 17l-5-5"></path></svg></span><span class="m" style="font-size:12.5px">package.json</span> has a <span class="m" style="font-size:12.5px">test</span> script</li>
+                <li class="pop" style="display:flex;align-items:center;gap:10px;animation-delay:.2s"><span aria-hidden="true" style="width:18px;height:18px;border-radius:50%;background:#0F8A5F;display:grid;place-items:center;flex:none"><svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:none;stroke:#fff;stroke-width:4;stroke-linecap:round;stroke-linejoin:round"><path d="M20 6 9 17l-5-5"></path></svg></span>2 markdown files with tasks under <span class="m" style="font-size:12.5px">docs/</span></li>
+              </ul>
+            </sc-if>
+          </div>
+        </div>
+
+        <div class="bf d2" style="display:grid;grid-template-columns:32px minmax(0,1fr);gap:14px;padding:24px clamp(20px,4vw,40px);border-bottom:1px solid #EEEEF1">
+          <span style="width:30px;height:30px;border-radius:9px;background:#111216;color:#fff;display:grid;place-items:center;font-size:13px;font-weight:650">2</span>
+          <div style="min-width:0">
+            <h2 style="margin:0;font-size:16px;font-weight:650;padding-top:4px">Which Claude account runs it?</h2>
+            <p style="margin:4px 0 12px;font-size:13.5px;line-height:1.5;color:#4A4E59">Billing and the 5-hour limit follow this. You can change it later from the project.</p>
+            <div role="radiogroup" aria-label="Claude account" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(220px,100%),1fr));gap:10px">
+              <button role="radio" aria-checked="{{isPersonal}}" onClick="{{pickPersonal}}" style="display:grid;grid-template-columns:40px minmax(0,1fr) 20px;gap:12px;align-items:center;min-height:72px;padding:12px 14px;border-radius:16px;text-align:left;color:#111216;{{cardPersonal}}">
+                <span style="position:relative;width:40px;height:40px"><svg viewBox="0 0 60 60" aria-hidden="true" style="width:40px;height:40px;transform:rotate(-90deg)"><circle cx="30" cy="30" r="25" fill="none" stroke="#E6F3FB" stroke-width="7"></circle><circle class="ring" cx="30" cy="30" r="25" fill="none" stroke="#0284C7" stroke-width="7" stroke-linecap="round" stroke-dasharray="157.08" stroke-dashoffset="92.68"></circle></svg><span style="position:absolute;inset:0;display:grid;place-items:center;font-size:10.5px;font-weight:650">41%</span></span>
+                <span style="display:flex;flex-direction:column;gap:2px"><span style="display:inline-flex;align-items:center;gap:6px;font-size:15px;font-weight:620;color:#075985"><svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>personal</span><span class="m" style="font-size:12px;color:#5F6370">~/.claude</span></span>
+                <span aria-hidden="true" style="width:20px;height:20px;border-radius:50%;box-sizing:border-box;{{dotPersonal}}"></span>
+              </button>
+              <button role="radio" aria-checked="{{isWork}}" onClick="{{pickWork}}" style="display:grid;grid-template-columns:40px minmax(0,1fr) 20px;gap:12px;align-items:center;min-height:72px;padding:12px 14px;border-radius:16px;text-align:left;color:#111216;{{cardWork}}">
+                <span style="position:relative;width:40px;height:40px"><svg viewBox="0 0 60 60" aria-hidden="true" style="width:40px;height:40px;transform:rotate(-90deg)"><circle cx="30" cy="30" r="25" fill="none" stroke="#EEEEF1" stroke-width="7"></circle><circle class="ring" cx="30" cy="30" r="25" fill="none" stroke="#26272D" stroke-width="7" stroke-linecap="round" stroke-dasharray="157.08" stroke-dashoffset="138.23"></circle></svg><span style="position:absolute;inset:0;display:grid;place-items:center;font-size:10.5px;font-weight:650">12%</span></span>
+                <span style="display:flex;flex-direction:column;gap:2px"><span style="display:inline-flex;align-items:center;gap:6px;font-size:15px;font-weight:620;color:#26272D"><svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M16 20V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path><rect width="20" height="14" x="2" y="6" rx="2"></rect></svg>work</span><span class="m" style="font-size:12px;color:#5F6370">~/.claude-work</span></span>
+                <span aria-hidden="true" style="width:20px;height:20px;border-radius:50%;box-sizing:border-box;{{dotWork}}"></span>
+              </button>
+            </div>
+            <button class="ghost" style="margin-top:10px;height:36px;padding:0 12px;border-radius:999px;border:0;background:transparent;color:#4B4BC8;font-size:13.5px;font-weight:560;display:inline-flex;align-items:center;gap:6px"><svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>Add another account</button>
+          </div>
+        </div>
+
+        <div class="bf d3" style="display:grid;grid-template-columns:32px minmax(0,1fr);gap:14px;padding:24px clamp(20px,4vw,40px);border-bottom:1px solid #EEEEF1">
+          <span style="width:30px;height:30px;border-radius:9px;background:#111216;color:#fff;display:grid;place-items:center;font-size:13px;font-weight:650">3</span>
+          <div style="min-width:0">
+            <label for="tc" style="display:block;font-size:16px;font-weight:650;padding-top:4px">How do you run the tests?</label>
+            <p style="margin:4px 0 12px;font-size:13.5px;line-height:1.5;color:#4A4E59">kantan decides pass or fail from this command's exit code alone.</p>
+            <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center">
+              <span class="fld" style="flex:1 1 260px;display:flex;align-items:center;gap:8px;min-height:46px;padding:0 8px 0 14px;border-radius:12px;border:1px solid #E2E2E7;background:#fff;box-sizing:border-box"><span class="m" style="color:#8A8F9C">$</span><input id="tc" class="m" value="{{cmd}}" onChange="{{onCmd}}" style="border:0;outline:none;background:transparent;width:100%;font-size:14px;color:#111216"><span style="flex:none;padding:3px 8px;border-radius:999px;background:#F1F1F4;font-size:11.5px;color:#4A4E59;white-space:nowrap">from package.json</span></span>
+              <button onClick="{{runTest}}" class="ghost" style="height:46px;padding:0 16px 0 14px;border-radius:999px;border:1px solid #D9D9DF;background:#fff;font-size:14px;font-weight:560;color:#1E2026;display:inline-flex;align-items:center;gap:8px"><svg aria-hidden="true" viewBox="0 0 24 24" style="width:12px;height:12px;fill:#1E2026"><polygon points="6 3 20 12 6 21 6 3"></polygon></svg>Run it once</button>
+            </div>
+            <sc-if value="{{testRunning}}" hint-placeholder-val="{{ false }}">
+              <div role="status" class="pop" style="display:flex;align-items:center;gap:10px;margin-top:10px;font-size:13.5px;color:#20205E"><svg class="spin" aria-hidden="true" viewBox="0 0 24 24" style="width:15px;height:15px"><circle cx="12" cy="12" r="9" fill="none" stroke="#DCDCF6" stroke-width="3"></circle><path d="M21 12a9 9 0 0 0-9-9" fill="none" stroke="#5B5BD6" stroke-width="3" stroke-linecap="round"></path></svg>Running <span class="m">{{cmd}}</span>…</div>
+            </sc-if>
+            <sc-if value="{{testDone}}" hint-placeholder-val="{{ false }}">
+              <div role="status" class="pop" style="display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;margin-top:10px;font-size:13.5px;color:#2A2C33"><span class="m" style="display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;background:#0F8A5F;color:#fff;font-size:12px;font-weight:600">exit 0</span>8 passing · 3.6s. Good starting point.</div>
+            </sc-if>
+          </div>
+        </div>
+
+        <div class="bf d4" style="display:grid;grid-template-columns:32px minmax(0,1fr);gap:14px;padding:24px clamp(20px,4vw,40px)">
+          <span style="width:30px;height:30px;border-radius:9px;background:#FF6A1A;color:#1A0B02;display:grid;place-items:center;font-size:13px;font-weight:700">4</span>
+          <div style="min-width:0">
+            <h2 style="margin:0;font-size:16px;font-weight:650;padding-top:4px">Where are the tasks?</h2>
+            <p style="margin:4px 0 12px;font-size:13.5px;line-height:1.5;color:#4A4E59">Pick the markdown files kantan should read. You can add more later.</p>
+            <ul style="list-style:none;margin:0;padding:0;border:1px solid #EEEEF1;border-radius:14px;overflow:hidden">
+              <li style="border-top:0">
+                <label style="display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:12px;align-items:center;min-height:50px;padding:0 14px;cursor:pointer" class="opt"><input type="checkbox" checked="{{f1}}" onChange="{{t1}}" style="width:18px;height:18px;margin:0;accent-color:#111216"><span class="m" style="font-size:13px;overflow-wrap:anywhere">docs/features/importer.md</span><span style="font-size:12.5px;color:#5F6370">3 tasks</span></label>
+              </li>
+              <li style="border-top:1px solid #F0F0F3">
+                <label style="display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:12px;align-items:center;min-height:50px;padding:0 14px;cursor:pointer" class="opt"><input type="checkbox" checked="{{f2}}" onChange="{{t2}}" style="width:18px;height:18px;margin:0;accent-color:#111216"><span class="m" style="font-size:13px;overflow-wrap:anywhere">docs/features/export.md</span><span style="font-size:12.5px;color:#5F6370">1 task</span></label>
+              </li>
+              <li style="border-top:1px solid #F0F0F3">
+                <label style="display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:12px;align-items:center;min-height:50px;padding:0 14px;color:#6B7080"><input type="checkbox" disabled style="width:18px;height:18px;margin:0"><span class="m" style="font-size:13px;overflow-wrap:anywhere">README.md</span><span style="font-size:12.5px">no tasks found</span></label>
+              </li>
+            </ul>
+            <button class="ghost" style="margin-top:10px;height:36px;padding:0 12px;border-radius:999px;border:0;background:transparent;color:#4B4BC8;font-size:13.5px;font-weight:560;display:inline-flex;align-items:center;gap:6px"><svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path><path d="M12 12v6"></path><path d="M9 15h6"></path></svg>Start a new task file instead</button>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px 14px;padding:20px clamp(20px,4vw,40px) 24px;border-top:1px solid #EEEEF1;background:#FBFBFC">
+          <sc-if value="{{notAdded}}" hint-placeholder-val="{{ true }}">
+            <button onClick="{{add}}" disabled="{{cantAdd}}" class="cta" style="height:54px;padding:0 24px 0 20px;border-radius:999px;border:0;color:#fff;font-size:16px;font-weight:620;display:inline-flex;align-items:center;gap:10px;{{addStyle}}"><svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:18px;height:18px;stroke-width:2.4"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>Add {{repoName}}</button>
+            <a href="Empty.dc.html" class="ghost" style="height:48px;padding:0 18px;border-radius:999px;border:1px solid #D9D9DF;background:#fff;color:#1E2026;font-size:14px;font-weight:560;display:inline-flex;align-items:center;text-decoration:none">Cancel</a>
+            <span style="font-size:13px;color:#4A4E59;flex:1 1 200px">{{addHint}}</span>
+          </sc-if>
+          <sc-if value="{{added}}" hint-placeholder-val="{{ false }}">
+            <div class="pop" role="status" style="display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;min-height:54px">
+              <span aria-hidden="true" style="width:24px;height:24px;border-radius:50%;background:#111216;display:grid;place-items:center"><svg viewBox="0 0 24 24" style="width:12px;height:12px;fill:none;stroke:#fff;stroke-width:3.5;stroke-linecap:round;stroke-linejoin:round"><path d="M20 6 9 17l-5-5"></path></svg></span>
+              <span style="font-size:16px;font-weight:620">{{repoName}} is ready. Pick a task to start.</span>
+              <a href="Start.dc.html" style="font-size:14px;font-weight:600">Open {{repoName}}</a>
+            </div>
+          </sc-if>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <aside aria-label="Preview" style="flex:1 1 260px;border-left:1px solid #E7E7EB;background:#FAFAFB;padding:20px 16px 28px;box-sizing:border-box;display:flex;flex-direction:column;gap:14px">
+    <section style="background:#fff;border:1px solid #E7E7EB;border-radius:16px;padding:14px 10px 12px;box-shadow:0 1px 2px rgba(17,18,22,.04)">
+      <h2 style="margin:0 6px 10px;font-size:11.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#6B7080">How it will look</h2>
+      <div style="display:flex;align-items:center;gap:8px;padding:6px">
+        <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="color:#6B7080"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg>
+        <span style="font-size:14px;font-weight:620">{{repoName}}</span>
+        <span style="margin-left:auto;display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:6px;font-size:11.5px;font-weight:550;{{chipStyle}}">{{account}}</span>
+      </div>
+      <div class="m" style="padding:0 6px 6px 30px;font-size:12px;color:#6B7080">$ {{cmd}}</div>
+      <sc-for list="{{previewFiles}}" as="pf" hint-placeholder-count="2">
+        <div class="pop" style="padding:4px 6px">
+          <div class="m" style="display:flex;align-items:center;gap:6px;font-size:12px;color:#5F6370;padding:4px 0"><svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="m6 9 6 6 6-6"></path></svg>{{pf.path}}</div>
+          <sc-for list="{{pf.tasks}}" as="t" hint-placeholder-count="2">
+            <div style="display:grid;grid-template-columns:16px 20px minmax(0,1fr);gap:6px;align-items:center;padding:4px 0 4px 8px;font-size:13px;color:#2A2C33"><span aria-hidden="true" style="width:12px;height:12px;border-radius:50%;border:1.5px solid #A3A7B1;box-sizing:border-box"></span><span class="m" style="font-size:11px;color:#6B7080">{{t.ref}}</span><span>{{t.text}}</span></div>
+          </sc-for>
+        </div>
+      </sc-for>
+      <sc-if value="{{noFiles}}" hint-placeholder-val="{{ false }}"><p style="margin:6px;font-size:12.5px;color:#5F6370">No task files picked yet.</p></sc-if>
+    </section>
+    <p style="margin:0 4px;font-size:12.5px;line-height:1.5;color:#5F6370">Every task starts as open. Nothing runs until you press start.</p>
+  </aside>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1500}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { path: '/home/you/code/your-app', check: 'done', account: 'personal', cmd: 'npm test', test: 'idle', f1: true, f2: true, added: false };
+    this._t = 0;
+  }
+  componentWillUnmount() { clearTimeout(this._t); }
+  renderVals() {
+    const s = this.state;
+    const isP = s.account === 'personal';
+    const parts = s.path.replace(/\/+$/, '').split('/');
+    const name = parts[parts.length - 1] || 'new project';
+    const selCard = 'border:1.5px solid #111216;background:#fff;box-shadow:0 8px 20px -14px rgba(17,18,22,.5)';
+    const offCard = 'border:1px solid #E2E2E7;background:#FCFCFD';
+    const dotOn = 'border:6px solid #111216;background:#fff';
+    const dotOff = 'border:1.5px solid #C4C7CE;background:#fff';
+    const files = [];
+    if (s.f1) files.push({ path: 'importer.md', tasks: [{ ref: 'T1', text: 'Parse the manifest' }, { ref: 'T2', text: 'Map records to rows' }, { ref: 'T3', text: 'Runtime shim (v1.2)' }] });
+    if (s.f2) files.push({ path: 'export.md', tasks: [{ ref: 'T1', text: 'Stream CSV export' }] });
+    const ok = s.check === 'done' && files.length > 0;
+    const later = (fn, ms) => { clearTimeout(this._t); this._t = setTimeout(fn, ms); };
+    return {
+      path: s.path,
+      onPath: (e) => this.setState({ path: e.target.value, check: 'idle', added: false }),
+      check: () => { this.setState({ check: 'running' }); later(() => this.setState({ check: 'done' }), 1100); },
+      checking: s.check === 'running',
+      checked: s.check === 'done',
+      repoName: name,
+      account: s.account,
+      isPersonal: isP, isWork: !isP,
+      pickPersonal: () => this.setState({ account: 'personal' }),
+      pickWork: () => this.setState({ account: 'work' }),
+      cardPersonal: isP ? selCard : offCard, cardWork: isP ? offCard : selCard,
+      dotPersonal: isP ? dotOn : dotOff, dotWork: isP ? dotOff : dotOn,
+      chipStyle: isP ? 'background:#E0F2FE;color:#075985' : 'background:#26272D;color:#F4F4F6',
+      cmd: s.cmd,
+      onCmd: (e) => this.setState({ cmd: e.target.value, test: 'idle' }),
+      runTest: () => { this.setState({ test: 'running' }); later(() => this.setState({ test: 'done' }), 1400); },
+      testRunning: s.test === 'running', testDone: s.test === 'done',
+      f1: s.f1, f2: s.f2,
+      t1: () => this.setState({ f1: !s.f1 }), t2: () => this.setState({ f2: !s.f2 }),
+      previewFiles: files,
+      noFiles: files.length === 0,
+      cantAdd: !ok,
+      addStyle: ok ? 'background:#111216;box-shadow:0 10px 28px -10px rgba(17,18,22,.6)' : 'background:#E4E4E9;color:#6B7080;cursor:not-allowed',
+      addHint: s.check !== 'done' ? 'Check the folder first.' : (files.length === 0 ? 'Pick at least one task file.' : 'Runs as ' + s.account + '. Tests: ' + s.cmd + '.'),
+      add: () => { if (ok) this.setState({ added: true }); },
+      added: s.added, notAdded: !s.added,
+      ghostTag: s.added ? 'added' : 'new',
+      ghostTagColor: s.added ? '#0F7A54' : '#4B4BC8',
+      ghostBorder: s.added ? '#9FD6BE' : '#C9CAF5',
+      ghostBg: s.added ? '#F2FAF6' : '#F8F8FE'
+    };
+  }
+}
+</script>
+</body>
+</html>

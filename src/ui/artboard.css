@@ -669,3 +669,30 @@
     animation: none !important;
   }
 }
+
+/* ── From the four management artboards (Start, AddTasks, Project, AddRepo) ──
+ *
+ * Added when those landed in the artifact. Verbatim from their `<style>`
+ * blocks, like everything else here.
+ *
+ * `kskel` is the one worth naming: it is a **skeleton shimmer**, and it exists
+ * because drafting tasks calls a model and takes seconds. Nothing else in this
+ * product had a loading state at all - every other wait is a run, which has a
+ * log to watch. This is the only place the UI waits on something with nothing
+ * to show yet.
+ */
+@keyframes kdim { from { opacity: 0 } to { opacity: 1 } }
+@keyframes ktoast { from { opacity: 0; transform: translateY(16px) } to { opacity: 1; transform: none } }
+@keyframes kskel { 0% { background-position: 150% 0 } 100% { background-position: -50% 0 } }
+
+@layer components {
+  /* The scrim behind a confirmation. The only modal in the design. */
+  .dim { animation: kdim 0.2s ease-out both }
+  /* The toast that confirms an account switch. */
+  .toast { animation: ktoast 0.45s cubic-bezier(0.2, 0.7, 0.2, 1) both }
+  .skel {
+    background: linear-gradient(90deg, #EEEEF2 0%, #EEEEF2 35%, #F8F8FB 50%, #EEEEF2 65%, #EEEEF2 100%);
+    background-size: 250% 100%;
+    animation: kskel 1.4s linear infinite;
+  }
+}

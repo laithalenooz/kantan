@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>kantan — start a task</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#F4F4F6}
+.m{font-family:'Geist Mono',ui-monospace,SFMono-Regular,Menlo,monospace}
+.ic{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}
+button,input{font:inherit}
+button{cursor:pointer}
+@keyframes kfade{from{opacity:0;transform:translateY(10px);filter:blur(6px)}to{opacity:1;transform:none;filter:blur(0)}}
+@keyframes kspin{to{transform:rotate(360deg)}}
+@keyframes kring{from{stroke-dashoffset:157.08}}
+@keyframes kshine{from{background-position:150% 0}to{background-position:-50% 0}}
+.bf{animation:kfade .7s cubic-bezier(.2,.7,.2,1) both}
+.d1{animation-delay:.05s}.d2{animation-delay:.1s}.d3{animation-delay:.15s}.d4{animation-delay:.2s}.d5{animation-delay:.25s}
+.spin{animation:kspin .9s linear infinite;transform-origin:50% 50%}
+.ring{animation:kring 1.4s cubic-bezier(.2,.7,.2,1) both}
+.shinyi{background:linear-gradient(90deg,#20205E 0%,#20205E 38%,#8B8BEF 50%,#20205E 62%,#20205E 100%);background-size:250% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:kshine 3s linear infinite}
+.trow:hover{background:#EFEFF2}
+.ghost:hover{background:#F6F6F8}
+.cta:hover{background:#2A2B31}
+.fld:focus-within{box-shadow:0 0 0 3px rgba(91,91,214,.18);border-color:#A9AAF0}
+.dots{background-image:radial-gradient(#D3D4DB 1px,transparent 1px);background-size:20px 20px;-webkit-mask-image:radial-gradient(ellipse 80% 60% at 50% 0%,#000 20%,transparent 75%);mask-image:radial-gradient(ellipse 80% 60% at 50% 0%,#000 20%,transparent 75%)}
+@media (prefers-reduced-motion:reduce){.kr *{animation:none!important}}
+a{color:#4B4BC8}a:hover{color:#3A3AA8}
+</style>
+</helmet>
+<div class="kr" style="min-height:100vh;display:flex;flex-direction:column;font-family:'Geist',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;color:#111216;background:#F4F4F6;-webkit-font-smoothing:antialiased">
+
+<header style="display:flex;align-items:center;gap:12px;height:56px;padding:0 20px;background:rgba(255,255,255,.86);border-bottom:1px solid #E7E7EB">
+  <span aria-hidden="true" style="width:26px;height:26px;border-radius:8px;background:linear-gradient(145deg,#2A2B31,#0E0F12);display:grid;place-items:center;box-shadow:inset 0 1px 0 rgba(255,255,255,.14),0 2px 6px -2px rgba(17,18,22,.5)"><span style="width:8px;height:8px;border-radius:50%;background:#FF6A1A"></span></span>
+  <span style="font-size:17px;font-weight:700;letter-spacing:-.025em">kantan</span>
+  <span class="m" style="font-size:12px;color:#6B7080;padding:3px 8px;border-radius:999px;background:#F1F1F4">localhost:4317</span>
+  <span style="margin-left:auto;display:inline-flex;align-items:center;gap:8px;font-size:13px;color:#5F6370"><span aria-hidden="true" style="width:7px;height:7px;border-radius:50%;background:{{idleDot}}"></span>{{headerStatus}}</span>
+</header>
+
+<div style="flex:1;display:flex;flex-wrap:wrap;align-items:stretch">
+
+  <aside aria-label="Projects and tasks" style="flex:1 1 288px;background:#FAFAFB;border-right:1px solid #E7E7EB;padding:16px 10px 28px;box-sizing:border-box">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:0 8px 6px">
+      <span style="font-size:11.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#6B7080">Projects</span>
+      <a href="AddRepo.dc.html" aria-label="Add a repository" class="ghost" style="width:30px;height:30px;box-sizing:border-box;border-radius:9px;border:1px solid #E2E2E7;background:#fff;display:grid;place-items:center;color:#3A3D45"><svg class="ic" viewBox="0 0 24 24" style="width:15px;height:15px"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg></a>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:8px;padding:14px 10px 2px">
+      <svg class="ic" viewBox="0 0 24 24" style="color:#6B7080"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path></svg>
+      <a href="Project.dc.html" style="font-size:14px;font-weight:620;color:#111216;text-decoration:none">your-app</a>
+      <a href="Project.dc.html" style="margin-left:auto;display:inline-flex;align-items:center;gap:4px;padding:2px 7px 2px 5px;border-radius:6px;background:#E0F2FE;color:#075985;font-size:11.5px;font-weight:550;text-decoration:none"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>personal<svg class="ic" viewBox="0 0 24 24" style="width:11px;height:11px"><path d="m6 9 6 6 6-6"></path></svg></a>
+    </div>
+    <div class="m" style="padding:0 10px 6px 34px;font-size:12px;color:#6B7080">$ npm test</div>
+
+    <div class="m" style="display:flex;align-items:center;gap:6px;padding:6px 10px 4px 14px;font-size:12px;color:#5F6370"><svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="m6 9 6 6 6-6"></path></svg>docs/features/importer.md</div>
+    <button class="trow" style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;min-height:44px;text-align:left;padding:8px 10px 8px 14px;border:0;border-radius:10px;background:transparent;color:#1E2026;font-size:13.5px;line-height:1.35">
+      <span aria-hidden="true" style="width:16px;height:16px;border-radius:50%;background:#0F8A5F;display:grid;place-items:center;justify-self:center"><svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:none;stroke:#fff;stroke-width:4;stroke-linecap:round;stroke-linejoin:round"><path d="M20 6 9 17l-5-5"></path></svg></span>
+      <span class="m" style="font-size:11.5px;color:#6B7080">T1</span><span>Parse the manifest</span><span style="font-size:11.5px;font-weight:560;color:#0F7A54">Passed</span>
+    </button>
+    <button class="trow" style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;min-height:44px;text-align:left;padding:8px 10px 8px 14px;border:0;border-radius:10px;background:transparent;color:#1E2026;font-size:13.5px;line-height:1.35">
+      <span aria-hidden="true" style="width:16px;height:16px;border-radius:50%;background:#0F8A5F;display:grid;place-items:center;justify-self:center"><svg viewBox="0 0 24 24" style="width:10px;height:10px;fill:none;stroke:#fff;stroke-width:4;stroke-linecap:round;stroke-linejoin:round"><path d="M20 6 9 17l-5-5"></path></svg></span>
+      <span class="m" style="font-size:11.5px;color:#6B7080">T2</span><span>Map records to rows</span><span style="font-size:11.5px;font-weight:560;color:#0F7A54">Passed</span>
+    </button>
+    <button aria-current="{{curT3}}" style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;min-height:44px;text-align:left;padding:8px 10px 8px 14px;border:0;border-radius:10px;color:#111216;font-size:13.5px;line-height:1.35;{{selT3}}">
+      <sc-if value="{{t3Running}}" hint-placeholder-val="{{ false }}"><svg class="spin" aria-hidden="true" viewBox="0 0 24 24" style="width:16px;height:16px;justify-self:center"><circle cx="12" cy="12" r="9" fill="none" stroke="#DCDCF6" stroke-width="3"></circle><path d="M21 12a9 9 0 0 0-9-9" fill="none" stroke="#5B5BD6" stroke-width="3" stroke-linecap="round"></path></svg></sc-if>
+      <sc-if value="{{t3Idle}}" hint-placeholder-val="{{ true }}"><span aria-hidden="true" style="width:14px;height:14px;border-radius:50%;border:1.5px solid #A3A7B1;box-sizing:border-box;justify-self:center"></span></sc-if>
+      <span class="m" style="font-size:11.5px;color:#6B7080;font-weight:400">T3</span><span>Runtime shim (v1.2)</span><span style="font-size:11.5px;font-weight:560;color:#4B4BC8">{{t3Label}}</span>
+    </button>
+    <a href="AddTasks.dc.html" class="trow" style="display:flex;align-items:center;gap:8px;min-height:36px;padding:0 10px 0 16px;border-radius:10px;color:#5F6370;font-size:13px;text-decoration:none"><svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>Add task</a>
+
+    <div class="m" style="display:flex;align-items:center;gap:6px;padding:10px 10px 4px 14px;font-size:12px;color:#5F6370"><svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="m6 9 6 6 6-6"></path></svg>docs/features/export.md</div>
+    <button aria-current="{{curExp}}" style="display:grid;grid-template-columns:18px 22px minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;min-height:44px;text-align:left;padding:8px 10px 8px 14px;border:0;border-radius:10px;color:#1E2026;font-size:13.5px;line-height:1.35;{{selExp}}">
+      <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="color:#64748B;justify-self:center"><path d="m19 5 3-3"></path><path d="m2 22 3-3"></path><path d="M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4Z"></path><path d="M7.5 13.5 10 11"></path><path d="M10.5 16.5 13 14"></path><path d="m12 6 6 6 2.3-2.3a2.4 2.4 0 0 0 0-3.4l-2.6-2.6a2.4 2.4 0 0 0-3.4 0Z"></path></svg>
+      <span class="m" style="font-size:11.5px;color:#6B7080">T1</span><span>Stream CSV export</span><span style="font-size:11.5px;font-weight:560;color:#556274">Interrupted</span>
+    </button>
+    <a href="AddTasks.dc.html" class="trow" style="display:flex;align-items:center;gap:8px;min-height:36px;padding:0 10px 0 16px;border-radius:10px;color:#5F6370;font-size:13px;text-decoration:none"><svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M5 12h14"></path><path d="M12 5v14"></path></svg>Add task</a>
+
+    <div style="margin-top:8px;border-top:1px solid #ECECEF;padding-top:6px;display:flex;flex-direction:column">
+      <button class="trow" style="display:flex;align-items:center;gap:8px;min-height:44px;padding:0 10px;border:0;border-radius:10px;background:transparent;color:#1E2026;text-align:left">
+        <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:14px;height:14px;color:#6B7080"><path d="m9 18 6-6-6-6"></path></svg>
+        <span style="font-size:14px;font-weight:620">other-repo</span>
+        <sc-if value="{{busy}}" hint-placeholder-val="{{ false }}"><svg class="spin" aria-label="running" viewBox="0 0 24 24" style="width:14px;height:14px"><circle cx="12" cy="12" r="9" fill="none" stroke="#DCDCF6" stroke-width="3"></circle><path d="M21 12a9 9 0 0 0-9-9" fill="none" stroke="#5B5BD6" stroke-width="3" stroke-linecap="round"></path></svg></sc-if>
+        <span style="margin-left:auto;display:inline-flex;align-items:center;gap:4px;padding:2px 7px 2px 5px;border-radius:6px;background:#26272D;color:#F4F4F6;font-size:11.5px;font-weight:550"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M16 20V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path><rect width="20" height="14" x="2" y="6" rx="2"></rect></svg>work</span>
+      </button>
+      <button class="trow" style="display:flex;align-items:center;gap:8px;min-height:44px;padding:0 10px;border:0;border-radius:10px;background:transparent;color:#1E2026;text-align:left">
+        <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:14px;height:14px;color:#6B7080"><path d="m9 18 6-6-6-6"></path></svg>
+        <span style="font-size:14px;font-weight:620">phone-app</span>
+        <span style="margin-left:auto;display:inline-flex;align-items:center;gap:4px;padding:2px 7px 2px 5px;border-radius:6px;background:#E0F2FE;color:#075985;font-size:11.5px;font-weight:550"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>personal</span>
+      </button>
+    </div>
+  </aside>
+
+  <main style="flex:999 1 560px;min-width:0;position:relative;padding:24px clamp(16px,3vw,44px) 48px;box-sizing:border-box">
+    <div class="dots" aria-hidden="true" style="position:absolute;inset:0;pointer-events:none"></div>
+    <div style="position:relative;max-width:860px;margin:0 auto">
+
+      <nav aria-label="Breadcrumb" style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:13.5px;color:#5F6370;margin-bottom:18px">
+        <span>your-app</span>
+        <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:14px;height:14px;color:#A3A7B1"><path d="m9 18 6-6-6-6"></path></svg>
+        <span class="m" style="font-size:12.5px">{{crumbFile}}</span>
+        <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:14px;height:14px;color:#A3A7B1"><path d="m9 18 6-6-6-6"></path></svg>
+        <span style="color:#111216;font-weight:600">{{crumbTask}}</span>
+      </nav>
+
+      <sc-if value="{{showOpen}}" hint-placeholder-val="{{ true }}">
+      <section aria-labelledby="task-h" class="bf" style="background:#fff;border:1px solid #E7E7EB;border-radius:24px;box-shadow:0 1px 2px rgba(17,18,22,.04),0 18px 50px -22px rgba(17,18,22,.2);overflow:clip">
+        <div style="padding:30px clamp(20px,4vw,44px) 26px">
+          <div style="display:flex;align-items:center;gap:10px;font-size:13px;font-weight:600;color:#5F6370">
+            <span aria-hidden="true" style="width:12px;height:12px;border-radius:50%;border:1.5px solid #A3A7B1;box-sizing:border-box"></span>Open · not started
+          </div>
+          <h1 id="task-h" style="margin:12px 0 0;font-size:clamp(30px,3.8vw,44px);line-height:1.06;font-weight:650;letter-spacing:-.035em">Runtime shim (v1.2)</h1>
+          <div class="m" style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:14px;font-size:12.5px;color:#4A4E59">
+            <span style="display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;background:#F4F4F6"><svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path><path d="M14 2v4a2 2 0 0 0 2 2h4"></path></svg>docs/features/importer.md · line 7</span>
+            <span style="padding:5px 10px;border-radius:999px;background:#F4F4F6">- [ ] T3 Runtime shim (v1.2)</span>
+          </div>
+        </div>
+
+        <div style="padding:0 clamp(20px,4vw,44px)">
+          <h2 style="margin:0 0 12px;font-size:11.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#6B7080">What happens when you start</h2>
+          <ol style="list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(200px,100%),1fr));gap:10px">
+            <li class="bf d1" style="padding:16px;border-radius:16px;background:#FAFAFB;border:1px solid #EEEEF1">
+              <div style="display:flex;align-items:center;gap:8px;font-size:14.5px;font-weight:620"><span style="width:24px;height:24px;border-radius:8px;background:#111216;color:#fff;display:grid;place-items:center;font-size:12px">1</span>Plan</div>
+              <p style="margin:8px 0 0;font-size:13.5px;line-height:1.5;color:#4A4E59">An agent reads the repo and writes a plan to <span class="m" style="font-size:12.5px">docs/plans/</span>. Then it stops.</p>
+            </li>
+            <li class="bf d2" style="padding:16px;border-radius:16px;background:#FFF6F0;border:1px solid #FFD9C2">
+              <div style="display:flex;align-items:center;gap:8px;font-size:14.5px;font-weight:620"><span style="width:24px;height:24px;border-radius:8px;background:#FF6A1A;color:#1A0B02;display:grid;place-items:center;font-size:12px">2</span>You decide</div>
+              <p style="margin:8px 0 0;font-size:13.5px;line-height:1.5;color:#4A4E59">Approve the plan, or send it back with a note. Nothing else moves until you do.</p>
+            </li>
+            <li class="bf d3" style="padding:16px;border-radius:16px;background:#FAFAFB;border:1px solid #EEEEF1">
+              <div style="display:flex;align-items:center;gap:8px;font-size:14.5px;font-weight:620"><span style="width:24px;height:24px;border-radius:8px;background:#111216;color:#fff;display:grid;place-items:center;font-size:12px">3</span>Build and test</div>
+              <p style="margin:8px 0 0;font-size:13.5px;line-height:1.5;color:#4A4E59">A fresh agent implements it. kantan runs <span class="m" style="font-size:12.5px">npm test</span> until it exits 0.</p>
+            </li>
+          </ol>
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(200px,100%),1fr));gap:12px;padding:22px clamp(20px,4vw,44px) 4px">
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <span style="font-size:12.5px;font-weight:600;color:#4A4E59">Runs as</span>
+            <a href="Project.dc.html" style="display:flex;align-items:center;gap:8px;min-height:44px;padding:0 12px;border-radius:12px;border:1px solid #E7E7EB;background:#fff;color:#111216;text-decoration:none;font-size:14px">
+              <span style="display:inline-flex;align-items:center;gap:4px;padding:2px 7px 2px 5px;border-radius:6px;background:#E0F2FE;color:#075985;font-size:12px;font-weight:550"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>personal</span>
+              <span class="m" style="font-size:12px;color:#5F6370">41% used</span>
+              <span style="margin-left:auto;font-size:12.5px;color:#4B4BC8;font-weight:550">Change</span>
+            </a>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <span style="font-size:12.5px;font-weight:600;color:#4A4E59">Tests</span>
+            <span class="m" style="display:flex;align-items:center;min-height:44px;padding:0 12px;border-radius:12px;background:#F4F4F6;font-size:13.5px;box-sizing:border-box">npm test</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <label for="ceil" style="font-size:12.5px;font-weight:600;color:#4A4E59">Cost ceiling for this run</label>
+            <span class="fld" style="display:flex;align-items:center;gap:4px;min-height:44px;padding:0 12px;border-radius:12px;border:1px solid #E7E7EB;background:#fff;box-sizing:border-box"><span style="color:#5F6370">$</span><input id="ceil" value="50.00" inputmode="decimal" style="border:0;outline:none;background:transparent;width:100%;font-size:14px;font-variant-numeric:tabular-nums;color:#111216"></span>
+          </div>
+        </div>
+
+        <sc-if value="{{busy}}" hint-placeholder-val="{{ false }}">
+          <div role="status" style="display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;margin:20px clamp(20px,4vw,44px) 0;padding:14px 16px;border-radius:14px;background:#F3F3FE;border:1px solid #D6D7FA;color:#20205E;font-size:14px;line-height:1.5">
+            <svg class="spin" aria-hidden="true" viewBox="0 0 24 24" style="width:16px;height:16px;flex:none"><circle cx="12" cy="12" r="9" fill="none" stroke="#C9CAF5" stroke-width="3"></circle><path d="M21 12a9 9 0 0 0-9-9" fill="none" stroke="#4B4BC8" stroke-width="3" stroke-linecap="round"></path></svg>
+            <span style="flex:1 1 300px"><strong style="font-weight:620">other-repo · T2 Refund path is running.</strong> kantan runs one task at a time, so this one can start once that run finishes or you stop it.</span>
+            <a href="Return.dc.html" style="font-weight:600;font-size:13.5px">Go to that run</a>
+          </div>
+        </sc-if>
+
+        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:14px 20px;margin-top:24px;padding:20px clamp(20px,4vw,44px) 24px;border-top:1px solid #EEEEF1;background:#FBFBFC">
+          <sc-if value="{{canStart}}" hint-placeholder-val="{{ true }}">
+            <button onClick="{{start}}" class="cta" style="height:56px;padding:0 24px 0 20px;border-radius:999px;border:0;background:#111216;color:#fff;font-size:16px;font-weight:620;display:inline-flex;align-items:center;gap:10px;box-shadow:0 10px 28px -10px rgba(17,18,22,.6),inset 0 1px 0 rgba(255,255,255,.16)"><svg aria-hidden="true" viewBox="0 0 24 24" style="width:14px;height:14px;fill:#fff"><polygon points="6 3 20 12 6 21 6 3"></polygon></svg>Start planning</button>
+            <span style="font-size:13.5px;color:#4A4E59">No code changes until you approve the plan.</span>
+          </sc-if>
+          <sc-if value="{{blocked}}" hint-placeholder-val="{{ false }}">
+            <button disabled aria-disabled="true" style="height:56px;padding:0 24px 0 20px;border-radius:999px;border:0;background:#E4E4E9;color:#6B7080;font-size:16px;font-weight:620;display:inline-flex;align-items:center;gap:10px;cursor:not-allowed"><svg aria-hidden="true" viewBox="0 0 24 24" style="width:14px;height:14px;fill:#8A8F9C"><polygon points="6 3 20 12 6 21 6 3"></polygon></svg>Start planning</button>
+            <span style="font-size:13.5px;color:#4A4E59">Available when the current run ends.</span>
+          </sc-if>
+          <sc-if value="{{started}}" hint-placeholder-val="{{ false }}">
+            <div class="bf" role="status" style="display:flex;align-items:center;gap:12px;min-height:56px">
+              <svg class="spin" aria-hidden="true" viewBox="0 0 24 24" style="width:20px;height:20px"><circle cx="12" cy="12" r="9" fill="none" stroke="#DCDCF6" stroke-width="3"></circle><path d="M21 12a9 9 0 0 0-9-9" fill="none" stroke="#5B5BD6" stroke-width="3" stroke-linecap="round"></path></svg>
+              <span class="shinyi" style="font-size:16px;font-weight:620">Planning. The agent is reading your repo.</span>
+            </div>
+            <span style="font-size:13.5px;color:#4A4E59">You can leave. kantan calls you back when the plan is ready.</span>
+          </sc-if>
+        </div>
+      </section>
+      </sc-if>
+
+      <sc-if value="{{isInt}}" hint-placeholder-val="{{ false }}">
+      <section aria-labelledby="int-h" class="bf" style="background:#fff;border:1px solid #E7E7EB;border-radius:24px;box-shadow:0 1px 2px rgba(17,18,22,.04),0 18px 50px -22px rgba(17,18,22,.2);overflow:clip">
+        <div style="padding:30px clamp(20px,4vw,44px) 22px;background:linear-gradient(180deg,#F3F5F8 0%,rgba(255,255,255,0) 100%)">
+          <div style="display:flex;align-items:center;gap:10px;font-size:13px;font-weight:600;color:#475569">
+            <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:15px;height:15px"><path d="m19 5 3-3"></path><path d="m2 22 3-3"></path><path d="M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4Z"></path><path d="M7.5 13.5 10 11"></path><path d="M10.5 16.5 13 14"></path><path d="m12 6 6 6 2.3-2.3a2.4 2.4 0 0 0 0-3.4l-2.6-2.6a2.4 2.4 0 0 0-3.4 0Z"></path></svg>Interrupted · today at 14:02
+          </div>
+          <h1 id="int-h" style="margin:12px 0 0;font-size:clamp(30px,3.8vw,44px);line-height:1.06;font-weight:650;letter-spacing:-.035em">Stream CSV export</h1>
+          <p style="margin:12px 0 0;max-width:60ch;font-size:15.5px;line-height:1.6;color:#4A4E59">The kantan server stopped during implement, attempt 2. That is normal in development and nothing was lost. Resuming continues the same run from its last recorded event.</p>
+        </div>
+        <dl style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(170px,100%),1fr));gap:10px;margin:0;padding:0 clamp(20px,4vw,44px)">
+          <div style="padding:14px 16px;border-radius:14px;background:#FAFAFB;border:1px solid #EEEEF1"><dt style="font-size:12px;color:#5F6370">Stopped in</dt><dd style="margin:4px 0 0;font-size:15px;font-weight:620">Implement · attempt 2</dd></div>
+          <div style="padding:14px 16px;border-radius:14px;background:#FAFAFB;border:1px solid #EEEEF1"><dt style="font-size:12px;color:#5F6370">Spent so far</dt><dd style="margin:4px 0 0;font-size:15px;font-weight:620;font-variant-numeric:tabular-nums">$1.12 <span style="font-weight:450;color:#5F6370">of $50.00</span></dd></div>
+          <div style="padding:14px 16px;border-radius:14px;background:#FAFAFB;border:1px solid #EEEEF1"><dt style="font-size:12px;color:#5F6370">Runs as</dt><dd style="margin:4px 0 0"><span style="display:inline-flex;align-items:center;gap:4px;padding:2px 7px 2px 5px;border-radius:6px;background:#E0F2FE;color:#075985;font-size:12px;font-weight:550"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>personal</span></dd></div>
+        </dl>
+        <div style="margin:18px clamp(20px,4vw,44px) 0;border:1px solid #EEEEF1;border-radius:14px;overflow:hidden">
+          <div style="display:grid;grid-template-columns:22px 58px minmax(0,1fr) auto;gap:10px;align-items:start;padding:9px 14px;font-size:13px">
+            <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:15px;height:15px;color:#4B4BC8;margin-top:2px"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"></path><path d="m15 5 4 4"></path></svg>
+            <span class="m" style="font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:#6B7080;padding-top:2px">edit</span>
+            <span class="m" style="font-size:12.5px">src/export/stream.ts <span style="color:#0F7A54;font-weight:600">+34</span> <span style="color:#C4232F;font-weight:600">−5</span></span>
+            <span class="m" style="font-size:11.5px;color:#6B7080">14:01:48</span>
+          </div>
+          <div style="display:grid;grid-template-columns:22px 58px minmax(0,1fr) auto;gap:10px;align-items:start;padding:9px 14px;font-size:13px;border-top:1px solid #F0F0F3">
+            <svg class="ic" aria-hidden="true" viewBox="0 0 24 24" style="width:15px;height:15px;color:#111216;margin-top:2px"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" x2="20" y1="19" y2="19"></line></svg>
+            <span class="m" style="font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:#6B7080;padding-top:2px">shell</span>
+            <span class="m" style="font-size:12.5px">npm test</span>
+            <span class="m" style="font-size:11.5px;color:#6B7080">14:01:55</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;padding:12px 14px;border-top:1px solid #F0F0F3;background:#F7F8FA">
+            <span style="flex:1;height:0;border-top:1.5px dashed #B8C0CC"></span>
+            <span style="font-size:12.5px;font-weight:600;color:#475569">Server stopped · last event kept</span>
+            <span style="flex:1;height:0;border-top:1.5px dashed #B8C0CC"></span>
+          </div>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px 14px;margin-top:24px;padding:20px clamp(20px,4vw,44px) 24px;border-top:1px solid #EEEEF1;background:#FBFBFC">
+          <button class="cta" style="height:56px;padding:0 24px 0 20px;border-radius:999px;border:0;background:#111216;color:#fff;font-size:16px;font-weight:620;display:inline-flex;align-items:center;gap:10px;box-shadow:0 10px 28px -10px rgba(17,18,22,.6),inset 0 1px 0 rgba(255,255,255,.16)"><svg aria-hidden="true" viewBox="0 0 24 24" style="width:14px;height:14px;fill:#fff"><polygon points="6 3 20 12 6 21 6 3"></polygon></svg>Resume run</button>
+          <button class="ghost" style="height:48px;padding:0 18px;border-radius:999px;border:1px solid #D9D9DF;background:#fff;color:#1E2026;font-size:14px;font-weight:560">Start over from planning</button>
+          <span style="font-size:13px;color:#4A4E59;flex:1 1 220px">Starting over keeps this run in the history.</span>
+        </div>
+      </section>
+      </sc-if>
+    </div>
+  </main>
+
+  <aside aria-label="Details" style="flex:1 1 260px;border-left:1px solid #E7E7EB;background:#FAFAFB;padding:20px 16px 28px;box-sizing:border-box;display:flex;flex-direction:column;gap:14px">
+    <section style="background:#fff;border:1px solid #E7E7EB;border-radius:16px;padding:16px;box-shadow:0 1px 2px rgba(17,18,22,.04)">
+      <h2 style="margin:0 0 10px;font-size:11.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#6B7080">This task</h2>
+      <dl style="margin:0;display:flex;flex-direction:column;gap:8px;font-size:13.5px">
+        <div style="display:flex;justify-content:space-between;gap:10px"><dt style="color:#5F6370">Runs so far</dt><dd style="margin:0;font-weight:560">{{runsSoFar}}</dd></div>
+        <div style="display:flex;justify-content:space-between;gap:10px"><dt style="color:#5F6370">Spent</dt><dd style="margin:0;font-weight:560;font-variant-numeric:tabular-nums">{{spent}}</dd></div>
+        <div style="display:flex;justify-content:space-between;gap:10px"><dt style="color:#5F6370">Plan file</dt><dd class="m" style="margin:0;font-size:12px;text-align:right;overflow-wrap:anywhere">{{planFile}}</dd></div>
+      </dl>
+    </section>
+
+    <section style="background:#fff;border:1px solid #E7E7EB;border-radius:16px;padding:16px;box-shadow:0 1px 2px rgba(17,18,22,.04)">
+      <h2 style="margin:0 0 12px;font-size:11.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#6B7080">5-hour windows</h2>
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div style="display:grid;grid-template-columns:52px 1fr;gap:12px;align-items:center">
+          <div style="position:relative;width:52px;height:52px">
+            <svg viewBox="0 0 60 60" aria-hidden="true" style="width:52px;height:52px;transform:rotate(-90deg)"><circle cx="30" cy="30" r="25" fill="none" stroke="#E6F3FB" stroke-width="6"></circle><circle class="ring" cx="30" cy="30" r="25" fill="none" stroke="#0284C7" stroke-width="6" stroke-linecap="round" stroke-dasharray="157.08" stroke-dashoffset="92.68"></circle></svg>
+            <span style="position:absolute;inset:0;display:grid;place-items:center;font-size:12.5px;font-weight:650">41%</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:2px">
+            <span style="display:flex;align-items:center;gap:6px;font-size:14px;font-weight:600;color:#075985">personal <span style="padding:1px 6px;border-radius:999px;background:#111216;color:#fff;font-size:10.5px;font-weight:600">this task</span></span>
+            <span class="m" style="font-size:12px;color:#5F6370">resets 18:40</span>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:52px 1fr;gap:12px;align-items:center">
+          <div style="position:relative;width:52px;height:52px">
+            <svg viewBox="0 0 60 60" aria-hidden="true" style="width:52px;height:52px;transform:rotate(-90deg)"><circle cx="30" cy="30" r="25" fill="none" stroke="#EEEEF1" stroke-width="6"></circle><circle class="ring" cx="30" cy="30" r="25" fill="none" stroke="#26272D" stroke-width="6" stroke-linecap="round" stroke-dasharray="157.08" stroke-dashoffset="138.23"></circle></svg>
+            <span style="position:absolute;inset:0;display:grid;place-items:center;font-size:12.5px;font-weight:650">12%</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:2px">
+            <span style="font-size:14px;font-weight:600;color:#26272D">work</span>
+            <span class="m" style="font-size:12px;color:#5F6370">resets 20:05</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section style="border:1.5px dashed #DCDCE2;border-radius:16px;padding:16px">
+      <h2 style="margin:0 0 10px;font-size:11.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:#6B7080">Phases</h2>
+      <div style="display:flex;flex-wrap:wrap;gap:6px">
+        <span style="padding:4px 10px;border-radius:999px;background:#F1F1F4;font-size:12.5px;color:#4A4E59">plan</span><span style="padding:4px 10px;border-radius:999px;background:#F1F1F4;font-size:12.5px;color:#4A4E59">gate</span><span style="padding:4px 10px;border-radius:999px;background:#F1F1F4;font-size:12.5px;color:#4A4E59">implement</span><span style="padding:4px 10px;border-radius:999px;background:#F1F1F4;font-size:12.5px;color:#4A4E59">test</span><span style="padding:4px 10px;border-radius:999px;background:#F1F1F4;font-size:12.5px;color:#4A4E59">refine</span>
+      </div>
+      <p style="margin:10px 0 0;font-size:12.5px;line-height:1.5;color:#5F6370">Durations and cost show here once a run starts.</p>
+    </section>
+  </aside>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"variant":{"editor":"enum","options":["open","interrupted","busy"],"default":"open"},"$preview":{"width":1440,"height":1140}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { started: false };
+  }
+  renderVals() {
+    const v = this.props.variant ?? 'open';
+    const isInt = v === 'interrupted';
+    const busy = v === 'busy';
+    const started = this.state.started && !isInt && !busy;
+    const sel = 'background:#fff;box-shadow:0 0 0 1px #D2D3DA,0 4px 14px -8px rgba(17,18,22,.35);font-weight:560';
+    const plain = 'background:transparent';
+    return {
+      isInt: isInt,
+      showOpen: !isInt,
+      busy: busy,
+      canStart: !isInt && !busy && !started,
+      blocked: busy,
+      started: started,
+      start: () => this.setState({ started: true }),
+      t3Running: started,
+      t3Idle: !started,
+      t3Label: started ? 'Planning' : '',
+      selT3: isInt ? plain : sel,
+      selExp: isInt ? sel : plain,
+      curT3: isInt ? 'false' : 'true',
+      curExp: isInt ? 'true' : 'false',
+      crumbFile: isInt ? 'export.md' : 'importer.md',
+      crumbTask: isInt ? 'T1 · Stream CSV export' : 'T3 · Runtime shim (v1.2)',
+      headerStatus: busy ? 'Running · other-repo T2' : (started ? 'Planning · your-app T3' : 'Idle · nothing running'),
+      idleDot: (busy || started) ? '#5B5BD6' : '#A3A7B1',
+      runsSoFar: isInt ? '1 (interrupted)' : 'None yet',
+      spent: isInt ? '$1.12' : '$0.00',
+      planFile: isInt ? 'docs/plans/2026-10-12-t1-stream-csv.md' : 'written on start'
+    };
+  }
+}
+</script>
+</body>
+</html>
