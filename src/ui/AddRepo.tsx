@@ -890,7 +890,13 @@ export function AddRepo({
                         className={anim("pop")}
                         style={{
                           display: "flex",
-                          alignItems: "center",
+                          /* `flex-start`, where the artboard writes `center`.
+                             Every row it draws is one line, so the two agree
+                             there to within a pixel — and the row that matters
+                             most here is the refusal, which runs to three
+                             lines and floated its cross into the middle of the
+                             paragraph. Caught in a screenshot. */
+                          alignItems: "flex-start",
                           gap: 10,
                           /* The artboard's own .1s-per-row stagger, inline
                              because `artboard.css`'s delay ladder is a fixed
@@ -1238,9 +1244,22 @@ export function AddRepo({
             How it will look
           </h2>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: 6 }}>
-            <Folder color="#6B7080" />
-            <span style={{ fontSize: 14, fontWeight: 620, minWidth: 0, overflowWrap: "anywhere" }}>{label}</span>
+          {/* Wrapping, and `break-word` rather than `anywhere`. Caught in a
+              screenshot: this rail is 260px, "account unknown" is a wide chip,
+              and with neither of those the name shrank and broke mid-word —
+              "your-" / "app", and "this / reposit / ory". `break-word` breaks
+              inside a word only when the word cannot fit a line of its own,
+              so a repository called something long still cannot overflow. */}
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, padding: 6 }}>
+            {/* The icon and the name are one flex item, so the only place the
+                row may break is before the chip. Wrapping is decided on
+                max-content widths before anything shrinks, so a long name
+                would otherwise go to its own line and leave the folder icon
+                stranded above it. */}
+            <span style={{ display: "flex", alignItems: "center", gap: 8, flex: "1 1 auto", minWidth: 0 }}>
+              <Folder color="#6B7080" />
+              <span style={{ fontSize: 14, fontWeight: 620, minWidth: 0, overflowWrap: "break-word" }}>{label}</span>
+            </span>
             <AccountChip chosen={chosen} option={chosenOption} />
           </div>
 
