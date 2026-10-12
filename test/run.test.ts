@@ -2185,6 +2185,13 @@ test("the tick commit for a self-checked run does not claim a command was run", 
   // what this tick rests on.
   expect(body).toMatch(/agent/i)
   expect(body).toContain(out.runId)
+
+  // And the **subject** carries it, which `%B` above cannot prove: the body
+  // holds the same words, so reverting `tickSubject` alone would leave every
+  // assertion so far passing. `git log --oneline` shows the subject and
+  // nothing else, and that is the line someone actually scans.
+  const subject = await git(ws.repo, ["log", "-1", "--format=%s", branch])
+  expect(subject).toContain("self-checked")
 }, 240_000)
 
 test("a self-check that cannot confirm parks the run for a human instead of finishing", async () => {
@@ -2240,4 +2247,120 @@ test("a project WITH a test command still records that the command verified it",
   const branch = String(out.results[0]?.["branch"])
   const body = await git(ws.repo, ["log", "-1", "--format=%B", branch])
   expect(body).toContain("exited 0")
+}, 240_000)
+
+test("a self-check interrupted mid-turn resumes into the implement conversation", async () => {
+  // The path `continueFrom`'s `test` case now reaches for a no-command project,
+  // and the only one that puts `agentTurn`'s loud guard - `!implementStarted &&
+  // spawn !== "fresh"` - on a **rehydrated** run. If rehydration gets
+  // `implementStarted` wrong, the resume throws instead of resuming, and
+  // nothing else in this file can see that.
+  const ws = await workspace("selfcheck-resume")
+  const implement = await fixture(ws, "implement-done", "ORCH: done")
+  const selfCheck = await fixture(ws, "selfcheck-done", "I checked it\n\nORCH: done")
+  await script(ws, [
+    { fixture: PLAN_FIXTURE },
+    { fixture: implement },
+    { fixture: selfCheck },
+    { fixture: selfCheck },
+  ])
+
+  const first = await drive(ws, {
+    project: project(ws, { testCmd: null }),
+    steps: [{ action: "start" }],
+  })
+  const runId = first.runId
+
+  await driveAndKill(
+    ws,
+    {
+      runId,
+      project: project(ws, { testCmd: null }),
+      steps: [{ action: "approve" }],
+      // **The kill window, made deterministic.** With a test command the window
+      // is the suite's own runtime, which the sibling case buys with `sleep 3`.
+      // A self-check has no suite: the `test` phase record is written and the
+      // turn is served by a double that replays instantly, so a 25ms poll
+      // regularly arrives to find the run already finished and `end` written -
+      // which failed this test about one run in five, looking exactly like a
+      // rehydration bug. Chunking the double's output stretches the turn into a
+      // window a poll can land in. Only on **this** job, so the plan phase in
+      // the driver before it stays fast.
+      env: { ORCH_FAKE_CHUNK: "40", ORCH_FAKE_CHUNK_DELAY_MS: "20" },
+    },
+    async () => {
+      const log = await runLog(ws, runId)
+      const session = phases(log).find((r) => r["phase"] === "implement")?.["sessionId"]
+      if (typeof session !== "string") return false
+      const inTest = log.some(
+        (r) => r["kind"] === "phase" && r["phase"] === "test" && r["state"] === "running",
+      )
+      return inTest && (await resumable(ws, session))
+    },
+  )
+
+  const killed = await runLog(ws, runId)
+  expect(killed.some((r) => r["kind"] === "end")).toBe(false)
+  const implementSession = String(
+    phases(killed).find((r) => r["phase"] === "implement")?.["sessionId"],
+  )
+  expect(implementSession).toMatch(UUID)
+
+  const spawnsBefore = (await spawns(ws)).length
+  const resumed = await drive(ws, {
+    runId,
+    project: project(ws, { testCmd: null }),
+    steps: [{ action: "resume" }],
+  })
+  expect(resumed.results[0]).toMatchObject({ state: { kind: "done" } })
+
+  // It resumed the IMPLEMENT conversation, so the agent still has its own
+  // implementation in context when it is asked to check it.
+  const argv = await spawnAt(ws, spawnsBefore)
+  expect(flag(argv, "--resume")).toBe(implementSession)
+  expect(argv).not.toContain("--session-id")
+
+  const records = await runLog(ws, runId)
+  // Still no `test` record, and still recorded as a self-check: an interrupted
+  // run must not finish by a different standard than an uninterrupted one.
+  expect(records.filter((r) => r["kind"] === "test")).toEqual([])
+  expect(records.at(-1)).toMatchObject({ kind: "end", state: "done", verifiedBy: "self-check" })
+}, 240_000)
+
+test("a blocked self-check is answered, and the check then runs again", async () => {
+  // `answerQuestion` maps any phase that is not `plan` to the implement
+  // session, so a run parked at `phase: "test"` has to land there too. The
+  // answer does not itself finish the run: the self-check happens again, which
+  // is the point - a human's reply is not a verification either.
+  const ws = await workspace("selfcheck-answer")
+  const implement = await fixture(ws, "implement-done", "ORCH: done")
+  const blocked = await fixture(ws, "sc-blocked", "ORCH: blocked I cannot tell if the CSV parses")
+  const done = await fixture(ws, "sc-done", "Checked with your fixture\n\nORCH: done")
+  await script(ws, [
+    { fixture: PLAN_FIXTURE },
+    { fixture: implement },
+    { fixture: blocked },
+    { fixture: done },
+    { fixture: done },
+  ])
+
+  const first = await drive(ws, {
+    project: project(ws, { testCmd: null }),
+    steps: [{ action: "start" }, { action: "approve" }],
+  })
+  expect(first.results[1]).toMatchObject({ state: { kind: "waiting", reason: "blocked" } })
+
+  const answered = await drive(ws, {
+    runId: first.runId,
+    project: project(ws, { testCmd: null }),
+    steps: [{ action: "answer", text: "there is a fixture at test/fixtures/sample.csv" }],
+  })
+  expect(answered.results[0]).toMatchObject({ state: { kind: "done" } })
+
+  // The human's words reached the agent verbatim, in the implement session.
+  const prompts = (await turns(ws)).map((t) => promptOf(t))
+  expect(prompts.some((p) => p.includes("test/fixtures/sample.csv"))).toBe(true)
+
+  const records = await runLog(ws, first.runId)
+  expect(records.at(-1)).toMatchObject({ kind: "end", state: "done", verifiedBy: "self-check" })
 }, 240_000)

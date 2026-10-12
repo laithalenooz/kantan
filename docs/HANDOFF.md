@@ -1178,53 +1178,63 @@ existed cannot have recorded one. That is why `verifiedBy` is written on
 command runs too: if it were recorded only for self-checks, one silence would
 have to carry both "an older log" and "a run whose tests passed".
 
-**What the UI must render differently.** Nothing here is cosmetic; each one is
-a surface that currently says a suite passed when none ran.
+**What the UI must render differently.** A snapshot of `grep -rn
+"testCmd\|testCommand" src/ui` taken 2026-10-12 after this landed, because five
+agents are editing those files and some have already adapted. Nothing here is
+cosmetic: each one is a surface that says a suite passed when none ran.
+
+`bun run check` is **green**, which is the trap - nothing is a type error,
+because `App.tsx` converts at the boundary. The UI is *lossy*, not broken, and
+no assertion can see a lossy label.
+
+Already adapted, do not redo:
+
+- `src/ui/StartPanel.tsx:149` is `testCmd: string | null` with `commandOf()` at
+  `:287`.
+- `src/ui/Digest.tsx:1290` already branches on `undefined` / `""`.
+- `src/ui/App.tsx:477` converts `"" -> null` for the start panel.
+
+Still wrong, by file and symbol:
 
 - **`src/ui/Tree.tsx:114` - `TreeProject.testCmd` must widen to `string | null`.**
   `GET /api/projects` already sends `null`; `src/server.ts` carries it through a
-  local `WireProject` because that field is still `string`. Line ~1089 prints
-  `$ {project.testCmd}`, which renders a bare `$` with nothing after it. It
-  needs its own phrase - "no test command, the agent verifies" - not an empty
-  string. **Do not "fix" this with `?? ""`**: that is the reading the whole
-  change exists to prevent.
+  local `WireProject` because that field is still `string`. **`:1108` prints
+  `$ {project.testCmd}`**, which renders a bare `$` with nothing after it. It
+  needs its own phrase - "no test command, the agent verifies" - not `""`.
 - **`src/ui/Tree.tsx:166` - `taskStateOf` reads a ticked box with no run as
-  `passed`.** `DESCRIPTIONS.passed` says "Tests passed, judged by exit code 0.
-  What the agent says about its own work never counts" - which is now false for
-  a self-checked task, and the state is *unreachable to correct* once the run
-  log is pruned or the repo re-cloned. At minimum the `done` arm at line ~174
-  must split on `verificationOf(state)`: a `self-check` run is not `passed`.
-  The ninth state the design never needed is now needed.
-- **`src/ui/Tree.tsx:203` - `canStart`** returns `taskStateOf(task) === "open"`.
-  If a self-checked run gets its own `TaskState`, `canStart` must treat it as
-  finished (like `passed` and `done-unmerged`), **not** fall through. An
-  unhandled state that reads as `open` is a silent re-run of finished work.
-- **`src/ui/Tree.tsx:534` - `StateLabel`'s `exitCode`** prints ` · exit <n>`.
-  A self-checked run has none and must never be given one. The design's rule is
-  "always print the exit code, never 'looks good'", and the honest extension is
-  that a run with no command **says so**: "Self-checked by the agent - no test
-  command" is true, a green tick is not.
-- **`src/ui/Row.tsx:855` and `src/ui/live.ts:349`** build a test row from a
-  `test` record. A self-checked run writes **none**, deliberately: `exitCode` is
-  a required number meaning "a command ran and exited N", and a `0` there would
-  draw a green pass for a command that never ran. The stream shows the
-  self-check as the agent's own `cli` records under a `test` phase record. If a
-  row is wanted for it, it must come from the phase record, not an invented
-  exit code.
-- **`src/ui/Digest.tsx:157`** already has `exitCode?: number` "because it is
-  sometimes genuinely unknown" - that path is now also reached by a self-checked
-  run, and its chip must distinguish the two: unknown-because-nothing-ran-yet is
-  not unknown-because-nothing-will.
-- **`src/ui/live.ts:627` and `:708`** type `testCmd` as `string`. Both need
-  `string | null`.
-- **`src/ui/App.tsx:339/356`** calls `useState(project.testCmd)` then
-  `.trim()`, which **throws on `null`** - the settings dialog crashes for a
-  no-command project. Lines 210 and 356 send `""` from an empty field, which is
-  a 400: the dialog needs an explicit "this repo has no test suite" control that
-  sends `null`.
-- **`src/ui/AddRepo.tsx`** (`testCmd?: string`, the `required` input) cannot
-  express the opt-out at all, so no repo without a suite can be registered from
-  the UI even though the route accepts it.
+  `passed`**, whose `DESCRIPTIONS.passed` says "Tests passed, judged by exit
+  code 0. What the agent says about its own work never counts." Now false for a
+  self-checked task, and *unreachable to correct* once the run log is pruned or
+  the repo re-cloned. The `done` arm at `:174` must split on
+  `verificationOf(state)`.
+- **`src/ui/Tree.tsx:203` - `canStart`** is `taskStateOf(task) === "open"`. If a
+  self-checked run gets its own `TaskState`, `canStart` must treat it as
+  finished like `passed` and `done-unmerged`. An unhandled state that falls
+  through to `open` is a silent re-run of finished work.
+- **`src/ui/Tree.tsx:534` - `StateLabel`'s `exitCode`** prints ` · exit <n>`. A
+  self-checked run has none and must never be given one.
+- **`src/ui/Gate.tsx:118` + `:1356`** - `testCommand: string`, and the lede
+  reads *"kantan runs `<cmd>` until the exit code says it passed"*. That is a
+  **false promise made to the human at the approval gate**, which is the worst
+  place in the product to make one: they are deciding whether to spend an
+  implementation run. With no command it must say the agent will verify its own
+  work and that nothing outside it will check.
+- **`src/ui/ProjectPanel.tsx:1550`** - `testCmd: string`, and `:1556-1568` call
+  `useState(testCmd)` / `setDraft(testCmd)`. Same `.trim()` crash class as
+  `App.tsx` had. Its **"Run it now"** button (`onRunTest`, documented at `:37`)
+  must not offer to run a command that does not exist - `runTests` rejects a
+  `null` command by design.
+- **`src/ui/App.tsx:266`** - `testCommand: project?.testCmd ?? ""`. This is the
+  `?? ""` the change exists to prevent, feeding `Digest`'s footnote.
+  `:655` passes `testCommand={project?.testCmd}` into `Gate`.
+  **`:708`'s `$ {panelProject.testCmd}`** prints a bare `$`.
+- **`src/ui/App.tsx:392`** - `updateProject(path, { testCmd })` takes a
+  `string`, so the settings form cannot send `null` and a repo cannot be
+  switched to self-checking from the UI.
+- **`src/ui/live.ts:627` and `:716`** type `testCmd` as `string`.
+- **`src/ui/AddRepo.tsx:338`** - `testCmd: string` on the draft, with a
+  `required` input, so **no repo without a suite can be registered from the UI**
+  even though the route accepts it. `:738`'s `?? ""` is the same collapse.
 
 **The commit message**, because it is durable in the user's history:
 `chore: tick T1 in docs/features/x.md (self-checked, untested)`, with a body

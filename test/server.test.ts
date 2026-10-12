@@ -3361,13 +3361,73 @@ async function taskLog(
   dir: string,
   id: string,
   over: { projectPath: string; featureFile: string; taskRef: string; startedAt?: string },
-  end: { state: "done" | "failed"; costUsd: number } | null = { state: "done", costUsd: 1.25 },
+  end: { state: "done" | "failed"; costUsd: number; verifiedBy?: "test-command" | "self-check" } | null = { state: "done", costUsd: 1.25 },
 ): Promise<void> {
   const log = await createRunLog(runLogPath(id, dir), header({ runId: id, ...over }))
   await log.append({ kind: "phase", phase: "implement", state: "running", sessionId: "33333333-3333-4333-8333-333333333333" })
-  if (end !== null) await log.append({ kind: "end", state: end.state, costUsd: end.costUsd })
+  if (end !== null) {
+    await log.append({
+      kind: "end",
+      state: end.state,
+      costUsd: end.costUsd,
+      ...(end.verifiedBy === undefined ? {} : { verifiedBy: end.verifiedBy }),
+    })
+  }
   await log.close()
 }
+
+test("a self-checked run reaches the tree saying so, instead of looking like a pass", async () => {
+  // The last layer, and the one the UI actually reads. `verifiedBy` survives
+  // the fold and `indexRuns`, both covered in test/runindex.test.ts - but
+  // `treeTask` builds `TreeTask.run` itself, and a reconstruction there would
+  // drop the field exactly as `indexRuns` did. It passes `state` whole; this is
+  // what keeps it doing so.
+  //
+  // Absence is covered too: a log that never said must arrive with no
+  // `verifiedBy` rather than a guessed `test-command`, because the tree's
+  // `passed` label reads "judged by exit code 0".
+  const repo = await cleanRepo()
+  await withFeature(repo, "x.md", "- [ ] T1 Only task\n")
+  const store = await storeOf(repo)
+  const dir = await runsDir()
+  const l = serve({ runsDir: dir, projectsFile: store })
+
+  const task = { projectPath: repo, featureFile: "docs/features/x.md", taskRef: "T1" }
+  await taskLog(dir, "cccccccc-3333-4333-8333-333333333333", task, {
+    state: "done",
+    costUsd: 1,
+    verifiedBy: "self-check",
+  })
+
+  const { body } = await getTree(l)
+  expect(body.projects?.[0]?.features?.[0]?.tasks?.[0]?.run).toEqual({
+    state: { kind: "done", merged: false, verifiedBy: "self-check" },
+    branch: taskBranchName({ feature: "docs/features/x.md", ref: "T1" }),
+  })
+})
+
+test("a run whose log never said how it was verified reaches the tree saying nothing", async () => {
+  const repo = await cleanRepo()
+  await withFeature(repo, "x.md", "- [ ] T1 Only task\n")
+  const store = await storeOf(repo)
+  const dir = await runsDir()
+  const l = serve({ runsDir: dir, projectsFile: store })
+
+  await taskLog(dir, "dddddddd-4444-4444-8444-444444444444", {
+    projectPath: repo,
+    featureFile: "docs/features/x.md",
+    taskRef: "T1",
+  })
+
+  const { body, raw } = await getTree(l)
+  // No `verifiedBy` key at all - not `"test-command"`, which would be the
+  // silent escalation: every log on disk before the field existed is this case.
+  expect(body.projects?.[0]?.features?.[0]?.tasks?.[0]?.run?.state).toEqual({
+    kind: "done",
+    merged: false,
+  })
+  expect(raw).not.toContain("test-command")
+})
 
 test("the tree route is a GET registered in ROUTES, behind the guards, and not token-exempt", () => {
   // A GET, and it must stay side-effect-free: `SameSite=Strict` ignores ports,

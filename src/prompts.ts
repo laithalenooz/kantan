@@ -238,7 +238,7 @@ that it was checked by you and by nothing else.
   nothing, and your sentence is the only evidence this run will carry.
 - If you cannot confirm it, end the turn blocked, naming the one thing you could not
   establish. Nothing is checking behind you, so a done you are not sure of is worse than a
-  blocked line a human can act on - and a human reads that line within minutes.
+  blocked line a human can act on.
 - Leave ${task.featurePath} exactly as it is. kantan records the task itself, on the answer
   you give here.
 
