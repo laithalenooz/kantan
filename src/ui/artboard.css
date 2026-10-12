@@ -1,0 +1,671 @@
+/**
+ * The artboards' own stylesheet, extracted.
+ *
+ * Source: the `<style>` block of all five artboards in `docs/design/` —
+ * `Main`, `Return`, `Question`, `Empty`, `States`. This file is their **union**,
+ * transcribed rule for rule. Every number here came from one of those files; none
+ * was invented, rounded or "improved".
+ *
+ * WHY THIS FILE EXISTS. `DESIGN.md` describes the gate in Magic UI's vocabulary
+ * — `Border Beam`, `Blur Fade`, `Animated Shiny Text`, `Dot Pattern`. The
+ * artboards are not Magic UI. They are plain HTML with inline styles plus these
+ * forty-odd lines of hand-written CSS, and the effects `DESIGN.md` names are
+ * these keyframes:
+ *
+ *   Border Beam          -> `@property --a` + `@keyframes kbeam` + `.beam`
+ *   Blur Fade            -> `@keyframes kfade` + `.bf` + `.d1`…`.d10`
+ *   Animated Shiny Text  -> `@keyframes kshine` + `.shiny`
+ *   Shine Border         -> `@property --s` + `@keyframes kshineb` + `.shineb`
+ *   Dot Pattern          -> `.dots`
+ *   Circular Progress    -> `@keyframes kring` + `.ring`
+ *   Animated List        -> `@keyframes kslide` + `.slide`
+ *   Number Ticker        -> `@keyframes ktick` + `.tick`
+ *
+ * So installing Magic UI would have moved the build *away* from the design the
+ * user approved. Keeping the artboard's class names is what lets a component be
+ * ported from the artboard markup with its `class` attributes intact.
+ *
+ * LOAD ORDER. Import this **after** `tokens.css`, which owns `@import
+ * "tailwindcss"`, the `@font-face` rules and `body`. This file declares no
+ * font and no `body` rule on purpose — see "Not carried across" below.
+ *
+ * CASCADE LAYERS — the one structural change, and it is load-bearing.
+ * Unlayered CSS beats *all* layered CSS whatever the specificity, and Tailwind
+ * v4 puts preflight in `@layer base` and every utility in `@layer utilities`.
+ * Left unlayered, `button{font:inherit}` here would silently outrank
+ * `font-mono` and `text-sm` on every button in the app, and `.ic{width:16px}`
+ * would outrank `size-3`. The artboard had no Tailwind, so it could not see
+ * this. Element rules therefore sit in `@layer base` and class rules in
+ * `@layer components`; within a layer they cascade against each other exactly
+ * as they did in the artboard. The layer statement below is repeated from
+ * Tailwind's own so this file cannot reorder the layers if it is ever imported
+ * first.
+ *
+ * `@property`, `@keyframes` and the two `!important` motion rules stay
+ * unlayered: at-rules are not layered, and an `!important` declaration beats
+ * every normal declaration in any layer, so the motion kill-switches keep
+ * working against Tailwind's `animate-*` utilities from outside the layers.
+ *
+ * WHERE THE ARTBOARDS DISAGREED. Four rules differ between artboards. None is
+ * silently resolved:
+ *
+ *  - `kfade` / `.bf`: `Empty` fades from 12px and `blur(8px)` over .8s; the
+ *    other four from 10px and `blur(6px)` over .7s. Empty's is carried as
+ *    `kfade-empty` under the `.kr-empty` scope.
+ *  - `kpulse` ring size: 9px (`Main`, `Question`), 8px (`Empty`), 11px
+ *    (`States`). 9px is the default; Empty's is `kpulse-empty`. States' 11px is
+ *    **not carried** — see below.
+ *  - the `.d*` ladder: .05s steps (`Main`, `Return`, `Question`), .08s steps
+ *    with an irregular tail (`Empty`: .4s, .5s, .6s for d5-d7), .04s steps
+ *    (`States`). .05s is the default; Empty's is scoped.
+ *  - `.dots`: `Main`/`Return`/`Question` use `#D3D4DB` with an `ellipse 80% 60%
+ *    at 50% 0%` mask; `Empty` uses `#CFD0D8` with `ellipse 70% 70% at 70% 40%`.
+ *    Empty's is scoped — on that screen the difference is plainly visible.
+ *
+ * THE `.kr-empty` SCOPE. `Empty.dc.html`'s root is `class="kr"`; the empty
+ * screen's component adds `kr-empty` beside it and every other class in that
+ * artboard ports unchanged. There is deliberately no `.kr-states` scope:
+ * `States.dc.html` is a specimen sheet, not a screen anyone ports, and a scope
+ * nobody applies is over-building.
+ *
+ * NOT CARRIED ACROSS, each for a reason:
+ *  - `body{margin:0;background:#F4F4F6}` — `tokens.css` already sets the
+ *    background from `--color-ground` (the same #f4f4f6) and Tailwind's
+ *    preflight zeroes the margin. Two owners for `body` is how a theme gets
+ *    wiped by accident, which has already happened once in this file's
+ *    neighbour.
+ *  - the `<link>` to Google Fonts — `tokens.css` declares `Geist` and
+ *    `Geist Mono` from `src/ui/fonts/*.woff2` as variable faces at
+ *    `font-weight: 100 900`, which covers every weight the artboards ask for
+ *    (400/500/600/700, mono 400/500/600) plus `.plan`'s 650 and 620. A tool
+ *    that binds to loopback so it talks to nothing must not fetch a font.
+ *  - `States`' `.ic` with no `width`/`height` — all nine `.ic` elements in that
+ *    artboard set their size with an inline style, which outranks the class, so
+ *    the 16px default the other four artboards declare changes nothing there.
+ *  - `States`' 11px `kpulse` and .04s `.d*` ladder — specimen-sheet only.
+ *  - `body{margin:0}` with no background, in `States` — same reason as above.
+ *
+ * KNOWN FRICTION FOR THE ADOPTION PASS — both verified, neither fixable here:
+ *  - `.plan ol li` is a two-column grid, and the artboard wraps each item's
+ *    content in a single `<span>`: `<li><span>…</span></li>`. `react-markdown`
+ *    emits bare text, `<code>` and `<strong>` as *siblings*, so each becomes
+ *    its own grid item and flows into the 28px counter column — that is the
+ *    "one character per line" defect `CLAUDE.md` records. The rule is correct;
+ *    the adoption pass needs an `li` renderer that wraps children in a `<span>`.
+ *  - `.ring` collides by name with Tailwind's `ring` utility. They set
+ *    different properties, so both apply: harmless on the SVG `<circle>` the
+ *    artboard uses it on, a stray box-shadow on any HTML element.
+ *
+ * REDUCED MOTION. The artboards' guard is `.kr *`, so it does nothing until a
+ * root carries `kr`. Until then `tokens.css`'s global `*` guard is the real
+ * one. The selector here is widened to `.kr, .kr *` — the artboards never
+ * animate the root itself, so this changes nothing about them, and it stops a
+ * root-level `.bf` in a ported component from animating for someone who asked
+ * it not to. Both of these are CSS-only: Motion's JS animations are not
+ * covered, which is why `CLAUDE.md` insists on a live `matchMedia` read.
+ */
+
+@layer theme, base, components, utilities;
+
+/* ── Element rules ────────────────────────────────────────────────────────────
+ * `font:inherit` duplicates Tailwind's preflight; `cursor:pointer` does not —
+ * v4 dropped it from buttons — and the placeholder colour is the artboard's own
+ * rather than preflight's `color-mix` of `currentcolor`. All three are kept so
+ * this file reads as the artboard wrote it. */
+@layer base {
+  button {
+    font: inherit;
+    cursor: pointer;
+  }
+  textarea {
+    font: inherit;
+  }
+  textarea::placeholder {
+    color: #7a7f8c;
+  }
+  a {
+    color: #4b4bc8;
+  }
+  a:hover {
+    color: #3a3aa8;
+  }
+}
+
+/* ── Registered custom properties ────────────────────────────────────────────
+ * These are what make the two conic gradients animate. An unregistered angle
+ * cannot be interpolated, so a stripped or unsupported `@property` leaves a
+ * static gradient and throws nothing. All three descriptors are required: a
+ * `@property` missing `syntax` or `inherits` is invalid and dropped in silence.
+ * `--a` drives `.beam` (Main), `--s` drives `.shineb` (Question). */
+@property --a {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+@property --s {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+/* ── Keyframes ───────────────────────────────────────────────────────────────
+ * Fifteen names from the artboards, plus two `-empty` variants for the rules
+ * `Empty.dc.html` defines differently. `DESIGN.md`'s keyframe list omits
+ * `kpulsed`, `kpulsei` and `kshineb`; the artboards are authoritative. */
+
+/* Main */
+@keyframes kbeam {
+  to {
+    --a: 360deg;
+  }
+}
+@keyframes kfade {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+    filter: blur(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: blur(0);
+  }
+}
+@keyframes kpulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 106, 26, 0.55);
+  }
+  70% {
+    box-shadow: 0 0 0 9px rgba(255, 106, 26, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 106, 26, 0);
+  }
+}
+@keyframes kpulsed {
+  0% {
+    box-shadow: 0 0 0 0 rgba(26, 11, 2, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 12px rgba(26, 11, 2, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(26, 11, 2, 0);
+  }
+}
+@keyframes kspin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes kshine {
+  from {
+    background-position: 150% 0;
+  }
+  to {
+    background-position: -50% 0;
+  }
+}
+@keyframes kring {
+  from {
+    stroke-dashoffset: 157.08;
+  }
+}
+@keyframes kband {
+  from {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+/* Return */
+@keyframes kpulsei {
+  0% {
+    box-shadow: 0 0 0 0 rgba(91, 91, 214, 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 8px rgba(91, 91, 214, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(91, 91, 214, 0);
+  }
+}
+@keyframes kslide {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes ktick {
+  from {
+    opacity: 0.35;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Question */
+@keyframes kshineb {
+  to {
+    --s: 360deg;
+  }
+}
+@keyframes kpop {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Empty */
+@keyframes kfloat {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  50% {
+    translate: 0 -7px;
+  }
+}
+@keyframes kdash {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+/* Empty's own fade and pulse, renamed so both can coexist with the gate's. */
+@keyframes kfade-empty {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+    filter: blur(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: blur(0);
+  }
+}
+@keyframes kpulse-empty {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 106, 26, 0.55);
+  }
+  70% {
+    box-shadow: 0 0 0 8px rgba(255, 106, 26, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 106, 26, 0);
+  }
+}
+
+/* ── Class rules ─────────────────────────────────────────────────────────────
+ * Order matches the artboards: `.bf` first, then the `.d*` delay ladder, then
+ * everything else. That order is load-bearing, not cosmetic — the `animation`
+ * shorthand resets `animation-delay`, so `.d2` only survives on `class="bf d2"`
+ * because it comes after `.bf`. Every artboard declares them in this order and
+ * relies on a later shorthand (`.band`, `.beam`, `.slide`) discarding the
+ * delay. Do not regroup. */
+@layer components {
+  /* Mono for every machine value: paths, commands, costs, refs, exit codes. */
+  .m {
+    font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  /* The icon default. Overridden inline wherever an artboard wants another
+   * size, which is every `.ic` in States. */
+  .ic {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    flex: none;
+  }
+
+  /* Blur Fade, and its stagger. d10 comes from Return, which is the only
+   * artboard that needs a tenth step. */
+  .bf {
+    animation: kfade 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+  .d1 {
+    animation-delay: 0.05s;
+  }
+  .d2 {
+    animation-delay: 0.1s;
+  }
+  .d3 {
+    animation-delay: 0.15s;
+  }
+  .d4 {
+    animation-delay: 0.2s;
+  }
+  .d5 {
+    animation-delay: 0.25s;
+  }
+  .d6 {
+    animation-delay: 0.3s;
+  }
+  .d7 {
+    animation-delay: 0.35s;
+  }
+  .d8 {
+    animation-delay: 0.4s;
+  }
+  .d9 {
+    animation-delay: 0.45s;
+  }
+  .d10 {
+    animation-delay: 0.5s;
+  }
+
+  /* The top band that slides down when a run needs you. */
+  .band {
+    animation: kband 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+
+  /* Border Beam. The conic gradient is layered over a flat `#E8E3DE` so the
+   * three-quarters of the ring that is `transparent` still reads as a border. */
+  .beam {
+    background:
+      conic-gradient(
+        from var(--a),
+        transparent 0deg 200deg,
+        #ffd2b3 270deg,
+        #ff6a1a 330deg,
+        transparent 360deg
+      ),
+      linear-gradient(#e8e3de, #e8e3de);
+    animation:
+      kbeam 5s linear infinite,
+      kfade 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+
+  /* The calm green band: "Nothing needs you". */
+  .calm {
+    background: #dcefe6;
+    animation: kfade 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+
+  /* Animated List (Return) and the question bubble (Question). */
+  .slide {
+    animation: kslide 0.6s 0.3s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+  .pop {
+    animation: kpop 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+
+  /* Only "needs you" pulses. Orange on a light surface, dark on the orange
+   * band itself, indigo for the calm "still running" dot. */
+  .pulse {
+    animation: kpulse 1.8s ease-out infinite;
+  }
+  .pulsed {
+    animation: kpulsed 1.8s ease-out infinite;
+  }
+  .pulsei {
+    animation: kpulsei 1.8s ease-out infinite;
+  }
+
+  /* Only "running" spins. */
+  .spin {
+    animation: kspin 0.9s linear infinite;
+    transform-origin: 50% 50%;
+  }
+
+  /* Animated Shiny Text, and the focused composer's Shine Border. */
+  .shiny {
+    background: linear-gradient(
+      90deg,
+      #9a3b06 0%,
+      #9a3b06 38%,
+      #ff9a5e 50%,
+      #9a3b06 62%,
+      #9a3b06 100%
+    );
+    background-size: 250% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: kshine 3.2s linear infinite;
+  }
+  .shineb {
+    background: conic-gradient(from var(--s), #c7c8f6, #5b5bd6, #38bdf8, #a5b4fc, #c7c8f6);
+    animation: kshineb 6s linear infinite;
+  }
+
+  /* The two rate-limit rings. 157.08 is the circumference of an r=25 circle,
+   * and `src/ui/Sidebar.tsx` exports the same figure as RING_CIRCUMFERENCE. */
+  .ring {
+    animation: kring 1.4s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+
+  /* Number Ticker: one flick per figure change, not a count-up. */
+  .tick {
+    animation: ktick 0.35s ease-out;
+  }
+
+  /* Empty's three floating cards, each a second behind the last. */
+  .fl {
+    animation: kfloat 6s ease-in-out infinite;
+  }
+  .fl2 {
+    animation: kfloat 6s 1s ease-in-out infinite;
+  }
+  .fl3 {
+    animation: kfloat 6s 2s ease-in-out infinite;
+  }
+
+  /* The marching dashes on Empty's connector lines. */
+  .flow {
+    animation: kdash 1.6s linear infinite;
+  }
+
+  /* Hovers. `.trow` is a tree row, `.lr` a list row, `.ghost` a ghost button,
+   * `.send` the indigo "Send answer", `.cta` Empty's near-black primary,
+   * `.card` a States specimen card. */
+  .trow:hover {
+    background: #efeff2;
+  }
+  .lr:hover {
+    background: #fafafb;
+  }
+  .ghost:hover {
+    background: #f6f6f8;
+  }
+  .send:hover {
+    background: #3f3fb8;
+  }
+  .cta:hover {
+    background: #2a2b31;
+  }
+  .card:hover {
+    box-shadow:
+      0 1px 2px rgba(17, 18, 22, 0.04),
+      0 18px 40px -20px rgba(17, 18, 22, 0.25);
+  }
+
+  /* Dot Pattern with a radial mask. */
+  .dots {
+    background-image: radial-gradient(#d3d4db 1px, transparent 1px);
+    background-size: 20px 20px;
+    -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 20%, transparent 75%);
+    mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 20%, transparent 75%);
+  }
+
+  /* ── Rendered plan prose ───────────────────────────────────────────────────
+   * 68ch, per DESIGN.md. `font-weight: 650` and `620` are real axis values on
+   * the variable face tokens.css declares, not synthesized bold.
+   *
+   * `.plan ol li` is a grid: the counter in column one, the item's content in
+   * column two. It needs the content in a *single* child, exactly as the
+   * artboard writes it — `<li><span>…</span></li>`. See the header. */
+  .plan {
+    font-size: 15.5px;
+    line-height: 1.7;
+    color: #272930;
+    max-width: 68ch;
+  }
+  .plan h2 {
+    font-size: 19px;
+    line-height: 1.3;
+    font-weight: 650;
+    letter-spacing: -0.015em;
+    color: #111216;
+    margin: 32px 0 10px;
+  }
+  .plan h2:first-child {
+    margin-top: 0;
+  }
+  .plan p {
+    margin: 0 0 14px;
+    text-wrap: pretty;
+  }
+  .plan code {
+    font-family: "Geist Mono", ui-monospace, monospace;
+    font-size: 13.5px;
+    background: #f1f1f4;
+    border: 1px solid #e7e7eb;
+    border-radius: 6px;
+    padding: 1px 5px;
+  }
+  .plan pre {
+    margin: 16px 0 18px;
+    padding: 16px 18px;
+    background: #fafafb;
+    border: 1px solid #e7e7eb;
+    border-radius: 14px;
+    overflow-x: auto;
+    font-family: "Geist Mono", ui-monospace, monospace;
+    font-size: 13px;
+    line-height: 1.65;
+    color: #272930;
+  }
+  .plan pre code {
+    background: none;
+    border: 0;
+    padding: 0;
+    font-size: inherit;
+  }
+  .plan ol {
+    list-style: none;
+    counter-reset: s;
+    margin: 0 0 14px;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .plan ol li {
+    counter-increment: s;
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr);
+    gap: 12px;
+    align-items: baseline;
+  }
+  .plan ol li::before {
+    content: counter(s);
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 999px;
+    background: #111216;
+    color: #fff;
+    font-size: 12.5px;
+    font-weight: 600;
+    transform: translateY(-1px);
+  }
+  .plan strong {
+    font-weight: 620;
+    color: #111216;
+  }
+
+  /* Syntax colours for the inline code specimens: keyword, type, string. */
+  .kw {
+    color: #4b4bc8;
+  }
+  .ty {
+    color: #0b6c75;
+  }
+  .st {
+    color: #a2421b;
+  }
+
+  /* ── The Empty screen ──────────────────────────────────────────────────────
+   * `Empty.dc.html` fades further and slower, staggers wider with an irregular
+   * tail, pulses one pixel tighter and masks its dots to a different ellipse.
+   * Its root adds `kr-empty` beside `kr`; everything else ports unchanged.
+   * `.bf` stays ahead of the `.d*` ladder here for the same reason as above. */
+  .kr-empty .bf {
+    animation: kfade-empty 0.8s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+  .kr-empty .d1 {
+    animation-delay: 0.08s;
+  }
+  .kr-empty .d2 {
+    animation-delay: 0.16s;
+  }
+  .kr-empty .d3 {
+    animation-delay: 0.24s;
+  }
+  .kr-empty .d4 {
+    animation-delay: 0.32s;
+  }
+  .kr-empty .d5 {
+    animation-delay: 0.4s;
+  }
+  .kr-empty .d6 {
+    animation-delay: 0.5s;
+  }
+  .kr-empty .d7 {
+    animation-delay: 0.6s;
+  }
+  .kr-empty .pulse {
+    animation-name: kpulse-empty;
+  }
+  .kr-empty .dots {
+    background-image: radial-gradient(#cfd0d8 1px, transparent 1px);
+    background-size: 20px 20px;
+    -webkit-mask-image: radial-gradient(ellipse 70% 70% at 70% 40%, #000 15%, transparent 70%);
+    mask-image: radial-gradient(ellipse 70% 70% at 70% 40%, #000 15%, transparent 70%);
+  }
+}
+
+/* ── The two motion kill-switches ────────────────────────────────────────────
+ * Unlayered and `!important`, so they beat every normal declaration in every
+ * layer, Tailwind's `animate-*` utilities included.
+ *
+ * `.still` is the artboard's static mode, used for screenshots.
+ * `.kr` is its reduced-motion scope. Both are widened from the artboard's
+ * `X *` to `X, X *` so an animation on the root element itself is covered too;
+ * no artboard animates its root, so nothing about them changes.
+ *
+ * CSS only. A Motion (JS) animation ignores both, which is why `CLAUDE.md`
+ * requires a live `matchMedia` read rather than `useReducedMotion()` alone. */
+.still,
+.still * {
+  animation: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kr,
+  .kr * {
+    animation: none !important;
+  }
+}
