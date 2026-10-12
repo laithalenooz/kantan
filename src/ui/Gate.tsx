@@ -636,7 +636,18 @@ const GATE_CSS = `
 
 /* --- plan prose, per Main.dc.html .plan ---------------------------------- */
 
+/* content-box, against the app's preflight, because the measure is the point.
+ *
+ * Tailwind's preflight sets box-sizing:border-box on everything, and this
+ * rule is one of three here that pair a max-width with padding. Under
+ * border-box the padding comes out of the 68ch instead of sitting beside it, so
+ * the prose measured 610.8px against the artboard's 698.8px and every line of
+ * the plan rewrapped - 88px narrower than the document a human is being asked
+ * to approve was drawn to be. DESIGN.md names 68ch for this text specifically.
+ * The artboard has no preflight and so is already content-box; this restores
+ * the same sizing model rather than re-tuning the number to hide the symptom. */
 .kg-prose {
+  box-sizing: content-box;
   padding: 30px clamp(20px,4vw,44px) 8px;
   font-size: 15.5px; line-height: 1.7; color: #272930;
   max-width: 68ch;
@@ -850,7 +861,10 @@ const GATE_CSS = `
   font-size: 12.5px; font-weight: 600;
 }
 .kg-ask-pill svg { width: 14px; height: 14px; flex: none; }
+/* content-box for the same reason as .kg-prose: 640px is the speech bubble's
+   measure in the artboard, with the padding outside it. */
 .kg-bubble {
+  box-sizing: content-box;
   margin: 16px 0 0; max-width: 640px;
   padding: 22px 26px 20px;
   border-radius: 6px 22px 22px 22px;
@@ -939,7 +953,9 @@ const GATE_CSS = `
 .kg-send svg { width: 15px; height: 15px; flex: none; }
 .kg-send:hover:not(:disabled) { background-color: #3f3fb8; }
 .kg-send:disabled { background-color: var(--kg-indigo-tint); color: #4a4e59; box-shadow: none; cursor: not-allowed; }
+/* And the human's own reply bubble, the third max-width-plus-padding rule. */
 .kg-mine {
+  box-sizing: content-box;
   margin: 18px 0 0 auto; max-width: 560px;
   padding: 16px 20px; border-radius: 22px 6px 22px 22px;
   background-color: var(--kg-ink); color: var(--kg-ground);
