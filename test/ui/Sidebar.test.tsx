@@ -481,9 +481,19 @@ describe("the limit notice", () => {
   test("an allowed event carrying overageStatus 'rejected' shows nothing", async () => {
     const event = rateLimitEvent({ status: "allowed", utilization: 0.41, overageStatus: "rejected" })
 
-    /* The field cannot even reach the rail: the parser drops it. If that ever
-     * changes, this is the line that says so. */
-    expect(Object.keys(event).sort()).toEqual(["kind", "status", "utilization"])
+    /* `overageStatus` cannot even reach the rail: the parser drops it. If that
+     * ever changes, this is the line that says so.
+     *
+     * Asserted as an exclusion rather than an exact key list. The list was
+     * exact until `resetsAt` was added to the event, and an exact list fails
+     * on *any* new field - including the harmless ones - which trains whoever
+     * sees it to widen the list without re-reading what it is for. What this
+     * test protects is narrower and permanent: every normal event carries
+     * `overageStatus: "rejected"` when overage is disabled for an org, so a
+     * rail that keyed on it would warn constantly. The exact-shape check lives
+     * in `test/stream.test.ts`, which is where the parser's output belongs. */
+    expect(Object.keys(event)).not.toContain("overageStatus")
+    expect(Object.keys(event).sort()).toEqual(["kind", "resetsAt", "status", "utilization"])
     expect(event.status).toBe("allowed")
     expect(limitNotice([windowFor(PERSONAL, "personal", event)])).toBeNull()
 

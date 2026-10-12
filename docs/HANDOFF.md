@@ -967,6 +967,27 @@ and different dot geometry. Carried as `kfade-empty`/`kpulse-empty` under a
 not carried** - it is a specimen sheet, and a scope nobody applies is
 over-building.
 
+### The two exit-code chips are different on purpose
+
+`src/ui/Digest.tsx` draws a **tinted** chip with a shield; `src/ui/Row.tsx`
+draws a **solid** one with no glyph. Both are correct, and both cite
+`Return.dc.html`, because that artboard draws both:
+
+| where | markup |
+|---|---|
+| digest timeline | `background:#FDECEE; color:#A61B27; padding:3px 8px` + 12px shield |
+| run-record tests row | `background:#D92D3A; color:#fff; padding:2px 8px`, no glyph |
+
+So a screen showing a digest above a run record shows two treatments, and that
+is the design. Do not "reconcile" them.
+
+Note also that `Main.dc.html` draws **no** exit chip anywhere - the run record
+in that artboard has no tests row - and `States.dc.html` renders the tree's
+reading as plain text, `Passed · exit 0`. An agent reading Main alone concluded
+"the design does not draw a shield", which was right about the run record and
+right by luck: Main does not draw the chip at all. When an artboard is silent,
+check the others before reading the silence as a decision.
+
 ## Settled: decisions with non-obvious reasons
 
 | Decision | Why it is not the obvious thing |
