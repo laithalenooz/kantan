@@ -1277,6 +1277,82 @@ record, so a client can see `configDir` did not move.
 account switcher must send both keys together, and must not report success for a
 relabel that moved no profile.
 
+### A run may start on a dirty tree, and `allowDirty` is how — the UI wires it
+
+Built 2026-10-12 from the user's words: *"I might want the agent to pick from
+where I've left in a dirty repo and proceed."*
+
+`POST /api/runs` takes a fourth key, `allowDirty`, **boolean only** — `"true"`,
+`"false"`, `1`, `0`, `"yes"`, `null` and `{}` are each a 400 naming the key. A
+truthiness check is the one thing it must not be: `"false"` is what a form
+serialises readily, and under `Boolean(...)` it would waive the guard while
+reading like it did not. `false` is accepted and simply not forwarded, so the
+machine cannot tell it from absent.
+
+**What each refusal now says:**
+
+| Tree state | Default start | With `allowDirty` |
+|---|---|---|
+| clean | starts | starts |
+| tracked edits, untracked files | `dirty` — *"N files have uncommitted changes… could commit over work nobody asked kantan to touch"*, plus the stash advice | **starts** |
+| unresolved conflict | `dirty`, conflict-specific message | **still refused** — *"Conflict markers are not work in progress - an agent building on them would commit them."* |
+| mid-merge / rebase / cherry-pick / bisect | `dirty` — *"…the agent's next commit would silently inherit it"* + `git merge --abort` | **still refused**, same message |
+
+The last two are the enumeration's point: over-permitting is the harm the guard
+was written for, and neither a conflict nor a half-finished merge is work in
+progress. A per-run checkbox cannot read as consent to a silently inherited
+merge parent.
+
+**What the log records:** `RunHeader.dirtyAtStart`, the repo-relative paths,
+written **only** when a run was allowed to start dirty. **Presence is a positive
+claim; absence is not the opposite one** — every log written before the field,
+and every ordinary run, is absent, so render "started on a dirty tree, with
+these files" when it is there and never "started clean" when it is not.
+
+**What the UI owes** (`StartPanel`, per the coordinator): show which files are
+dirty and offer the opt-in on that run. The files are in the refusal message
+already — `src/git.ts`'s `listing()` caps at 10 and then says "… and N more" —
+and the refusal arrives as `dirty` with the prose in `error`, which is meant to
+be rendered as written. Nothing remembers the choice, so the control must be
+per start and unticked every time.
+
+**What the agent is told:** `inheritedWork` in `src/prompts.ts` lists the files
+by name in the plan and implement prompts and forbids revert, discard, stash,
+`git checkout --`, `git restore`, `git reset`, and sweeping them into a commit
+of its own. The prompt is the only channel that can say whose work it is — git
+shows the agent a diff with no author.
+
+### `POST /api/features` commits what it wrote — consumed, with one caveat
+
+The closed loop is fixed: drafting a task file left kantan's own output
+untracked, and `requireCleanTreeForNewRun` then refused to start that very task.
+The route now commits it via `commitPaths` (`src/git.ts`).
+
+Three things worth not relearning:
+
+- **`git commit -- <path>` fails on a file git has never seen** — *"pathspec did
+  not match any file(s) known to git"*. `tickCheckbox` gets away without
+  `git add` because it commits an existing tracked file. Anything writing a
+  **new** file must stage it first.
+- `commitPaths` passes `--literal-pathspecs`, because `--` stops a path being
+  read as an *option* and not as a *pathspec*: `a[1].md` globs and a path
+  beginning `:` is pathspec magic.
+- It **unstages on failure**, so a rejecting pre-commit hook leaves an untracked
+  file rather than a staged one the user's next bare `git commit` sweeps up.
+
+**The caveat, and it is a deliberate gap:** the route does **not** commit while
+a run is in flight in that repo. The checkout is on the run's `orch/<task>`
+branch then, so the commit would land there and `returnToBase` would take the
+drafted file back out of the working tree — the user watching a file they just
+made disappear. The file is still written and still answered 201, with a
+`warning` key explaining why it is untracked. `POST /api/features` itself has no
+test, because the double refuses the Haiku invocation shape; all the git
+subtlety is tested directly against `commitPaths`.
+
+The 201 body is now `{ok, path, tasks, warning?}`. `warning` is present only
+when there is something to say, so a client can treat its presence as "tell the
+human" rather than comparing against `""`.
+
 ## Settled: decisions with non-obvious reasons
 
 | Decision | Why it is not the obvious thing |
