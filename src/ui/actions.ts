@@ -26,7 +26,9 @@
 
 import { useCallback, useState } from "react"
 
-import { draftFeature, removeTask } from "./live.ts"
+import { draftFeature, removeTask, startRun, updateProject } from "./live.ts"
+import type { AccountOption } from "./ProjectPanel.tsx"
+import type { AdvancedSettings } from "./Tree.tsx"
 import type { TaskId } from "./Tree.tsx"
 
 /** A message for the human, or `null` while it is going well. */
@@ -171,4 +173,148 @@ export function useNewTaskFile(reload: () => void): NewTaskFile {
   )
 
   return { text, setText, error, busy, create, reset }
+}
+
+
+export interface ProjectSettings {
+  /** The last refusal, for the alert the page shows. */
+  error: Failure
+  clearError: () => void
+  switchAccount: (path: string, account: AccountOption) => Promise<void>
+  addAccount: (path: string, account: { kind: "personal" | "work"; label: string; configDir: string }) => Promise<void>
+  saveTestCmd: (path: string, testCmd: string | null) => Promise<void>
+  saveAdvanced: (path: string, change: Partial<AdvancedSettings>) => Promise<void>
+  saveBudget: (path: string, budgetUsd: number) => Promise<void>
+  /** For the two callers that write the store themselves: registering a
+   *  repository and removing one. Same refetch, same error surface. */
+  guard: (work: () => Promise<void>) => Promise<void>
+}
+
+/**
+ * Every edit to a project's stored settings, behind one refusal surface.
+ *
+ * Six operations that differ only in which keys they PATCH, so they shared a
+ * `guard` even before this hook existed - which is what marked them as one
+ * cluster. The guard is the whole point: **refetch on success, keep the
+ * server's own sentence on failure.** `PATCH /api/projects` names the field it
+ * refused, and rewording that here would lose the one detail the human needs.
+ *
+ * `switchAccount` sends the folder as well as the word, and the comment it
+ * carries is the defect it was written to fix: `account` is only a label.
+ * `src/spawn.ts` sets `CLAUDE_CONFIG_DIR` from `configDir`, so a PATCH with the
+ * word alone moved the chip and kept billing the same profile.
+ */
+export function useProjectSettings(reload: () => void): ProjectSettings {
+  const [error, setError] = useState<Failure>(null)
+
+  const guard = useCallback(
+    async (work: () => Promise<void>): Promise<void> => {
+      setError(null)
+      try {
+        await work()
+        reload()
+      } catch (cause) {
+        setError(reason(cause))
+      }
+    },
+    [reload],
+  )
+
+  return {
+    error,
+    clearError: useCallback(() => setError(null), []),
+    guard,
+    switchAccount: useCallback(
+      async (path, account) =>
+        /* The folder as well as the word. `account` is only a label; nothing
+           reads it to decide what gets billed. `null` is how an option with no
+           folder sends the project back to the default profile. */
+        await guard(() => updateProject(path, { account: account.kind, configDir: account.configDir ?? null })),
+      [guard],
+    ),
+    addAccount: useCallback(
+      async (path, account) =>
+        /* An add *and* a switch, because kantan keeps no account registry: the
+           options are derived from the pairs in use, so the way to make a new
+           one exist is to put a project on it. The label is not stored -
+           `accountOf` on the server derives what the chip prints. */
+        await guard(() => updateProject(path, { account: account.kind, configDir: account.configDir })),
+      [guard],
+    ),
+    saveTestCmd: useCallback(
+      async (path, testCmd) => await guard(() => updateProject(path, { testCmd })),
+      [guard],
+    ),
+    saveAdvanced: useCallback(
+      async (path, change) =>
+        /* Straight through: the route is a partial update and the store
+           validates every field by name, so the one thing this must not do is
+           fill in keys the human did not touch. */
+        await guard(() => updateProject(path, change)),
+      [guard],
+    ),
+    saveBudget: useCallback(
+      async (path, budgetUsd) => await guard(() => updateProject(path, { budgetUsd })),
+      [guard],
+    ),
+  }
+}
+
+export interface RunStart {
+  /** Run ids started in this session, by task key: addressable before the
+   *  tree has been re-read, so the fresh id wins over its older answer. */
+  started: Readonly<Record<string, string>>
+  /** A refusal with nothing else to offer. */
+  error: Failure
+  /**
+   * The prose of a dirty-tree refusal, held apart from `error`.
+   *
+   * It is the one refusal with a **second thing to offer** - start anyway - so
+   * it drives a card rather than an alert. `src/git.ts` writes it, naming the
+   * files and explaining why `git stash` without `-u` leaves you hitting it
+   * again, and it is reproduced rather than summarised because which files are
+   * dirty is the one thing the human needs exact.
+   */
+  dirtyRefusal: string | null
+  dismissDirty: () => void
+  /** Rethrows after recording, which `StartPanel` needs: it shows "the agent is
+   *  reading your repo" until its promise settles. */
+  start: (task: { projectPath: string; featureFile: string; taskRef: string; key: string }, allowDirty?: boolean) => Promise<void>
+}
+
+/** Starting a run, and the two refusals that read differently. */
+export function useRunStart(): RunStart {
+  const [started, setStarted] = useState<Record<string, string>>({})
+  const [error, setError] = useState<Failure>(null)
+  const [dirtyRefusal, setDirtyRefusal] = useState<string | null>(null)
+
+  const start = useCallback(
+    async (task: { projectPath: string; featureFile: string; taskRef: string; key: string }, allowDirty = false): Promise<void> => {
+      setError(null)
+      if (!allowDirty) setDirtyRefusal(null)
+      try {
+        const id = await startRun({
+          projectPath: task.projectPath,
+          featureFile: task.featureFile,
+          taskRef: task.taskRef,
+          ...(allowDirty ? { allowDirty: true } : {}),
+        })
+        setDirtyRefusal(null)
+        setStarted((prior) => ({ ...prior, [task.key]: id }))
+      } catch (cause) {
+        const message = reason(cause)
+        // A dirty tree is the one refusal with a second thing to offer, so it
+        // is held apart from the generic alert rather than only shouted.
+        if (message.includes("uncommitted changes")) setDirtyRefusal(message)
+        else setError(message)
+        // Rethrown, not swallowed: `StartPanel` shows "Planning. The agent is
+        // reading your repo." until its promise settles, and resolving on a
+        // refusal leaves that sentence on screen forever.
+        throw cause
+      }
+    },
+    [],
+  )
+
+  return { started, error, dirtyRefusal, start, dismissDirty: useCallback(() => setDirtyRefusal(null), []) }
 }

@@ -12,7 +12,7 @@ import { ProjectPanel, accountOptionsFor, type AccountOption } from "./ProjectPa
 import { StartPanel } from "./StartPanel.tsx"
 import { act, addTasks, detectPath, draftFeature, proposeTasks, registerProject, removeProject, removeTask, runTestCommand, startRun, summaryOf, taskKeyOf, updateProject, type RunView } from "./live.ts"
 import { useAction, usePlan, useRun, useTree } from "./useRun.ts"
-import { useNewTaskFile, useTaskRemoval } from "./actions.ts"
+import { useNewTaskFile, useProjectSettings, useRunStart, useTaskRemoval } from "./actions.ts"
 import type { RunPhase } from "../runlog.ts"
 import type { AskingPhase } from "./Gate.tsx"
 
@@ -223,19 +223,28 @@ type Panel =
 export function App() {
   const { tree, origin, error: treeError, reload } = useTree()
   const [panel, setPanel] = useState<Panel>(null)
-  const [projectError, setProjectError] = useState<string | null>(null)
   const [repoPath, setRepoPath] = useState("")
   const [detection, setDetection] = useState<Detection>({ phase: "idle" })
   const nowMs = useNow()
   const [selected, setSelected] = useState<TaskId | null>(null)
-  const [started, setStarted] = useState<Record<string, string>>({})
-  const [startError, setStartError] = useState<string | null>(null)
+
+  /* Four write clusters, each a hook that owns its own state, in
+     `src/ui/actions.ts`. They were fourteen `useState` and ten handlers inline
+     here, and none of the four touches another's state - which is what marked
+     them as clusters rather than as this component's business. A custom hook is
+     what "a service" means in React: state plus the operations on it, behind an
+     interface the component consumes. */
+  const settings = useProjectSettings(reload)
+  const runStart = useRunStart()
+  const removal = useTaskRemoval(reload, selected, setSelected)
+  const newFile = useNewTaskFile(reload)
+
 
   const projects = tree?.projects ?? []
   const selectedKey = selected === null ? null : taskKeyOf(selected)
   // A run started in this session is addressable before the tree has been
   // re-read, so the freshly minted id wins over the tree's older answer.
-  const fresh = selectedKey === null ? undefined : started[selectedKey]
+  const fresh = selectedKey === null ? undefined : runStart.started[selectedKey]
   const runId = fresh ?? runIdFor(tree?.runs, selected)
 
   const { view } = useRun(runId)
@@ -243,47 +252,26 @@ export function App() {
   const plan = usePlan(runId, atGate)
   const { send, error: actionError } = useAction(runId)
 
-  const task = findTask(projects, selected)
-  const project = projectFor(projects, selected)
-
-  /**
-   * The uncommitted files a dirty refusal named, so the retry can be offered.
-   *
-   * `null` means no refusal is outstanding. The prose comes from `src/git.ts`
-   * and already lists the files and says why `git stash` without `-u` leaves
-   * you hitting it again - it is reproduced rather than summarised, because a
-   * summary of which files are dirty is the one thing the human needs exact.
-   */
-  const [dirtyRefusal, setDirtyRefusal] = useState<string | null>(null)
-
+  /** Starting the selected task, which is the only caller that knows the key. */
   const onStart = useCallback(
     async (allowDirty = false): Promise<void> => {
       if (selected === null || selected.taskRef === null || selectedKey === null) return
-      setStartError(null)
-      if (!allowDirty) setDirtyRefusal(null)
-      try {
-        const id = await startRun({
+      await runStart.start(
+        {
           projectPath: selected.projectPath,
           featureFile: selected.featureFile,
           taskRef: selected.taskRef,
-          ...(allowDirty ? { allowDirty: true } : {}),
-        })
-        setDirtyRefusal(null)
-        setStarted((prior) => ({ ...prior, [selectedKey]: id }))
-      } catch (cause) {
-        const message = cause instanceof Error ? cause.message : String(cause)
-        // A dirty tree is the one refusal with a second thing to offer, so it
-        // is held apart from the generic alert rather than only shouted.
-        if (message.includes("uncommitted changes")) setDirtyRefusal(message)
-        else setStartError(message)
-        // Rethrown, not swallowed. `StartPanel` shows "Planning. The agent is
-        // reading your repo." until its promise settles, and resolving on a
-        // refusal leaves that sentence on screen forever.
-        throw cause
-      }
+          key: selectedKey,
+        },
+        allowDirty,
+      )
     },
-    [selected, selectedKey],
+    [runStart, selected, selectedKey],
   )
+
+  const task = findTask(projects, selected)
+  const project = projectFor(projects, selected)
+
 
   const gate: GateProps | null = useMemo(() => {
     if (view === null || view.waitId === null || view.waiting === null) return null
@@ -389,79 +377,17 @@ export function App() {
      profile an unambiguous project used. */
   const accountOptions: AccountOption[] = useMemo(() => accountOptionsFor(projects), [projects])
 
-  const guard = useCallback(async (work: () => Promise<void>): Promise<void> => {
-    setProjectError(null)
-    try {
-      await work()
-      reload()
-    } catch (cause) {
-      setProjectError(cause instanceof Error ? cause.message : String(cause))
-    }
-  }, [reload])
 
-  const onSwitchAccount = useCallback(
-    async (path: string, account: AccountOption): Promise<void> => {
-      /* The profile as well as the word, and the comment that used to sit here
-         claiming so was the whole defect: `account` is only a label.
-         `src/spawn.ts` sets `CLAUDE_CONFIG_DIR` from `configDir` and `src/run.ts`
-         keys the rate-limit window on it, so a PATCH carrying the word alone
-         moved the chip and kept billing the same profile - the one thing the
-         confirmation exists to prevent. `null` is how an option with no folder
-         sends the project back to the default one. */
-      await guard(() =>
-        updateProject(path, { account: account.kind, configDir: account.configDir ?? null }),
-      )
-    },
-    [guard],
-  )
-
-  const onSaveTestCmd = useCallback(
-    async (path: string, testCmd: string | null): Promise<void> => await guard(() => updateProject(path, { testCmd })),
-    [guard],
-  )
-
-  const onAddAccount = useCallback(
-    async (path: string, account: { kind: "personal" | "work"; label: string; configDir: string }): Promise<void> =>
-      /* An add *and* a switch, because kantan keeps no account registry: the
-         options are derived from the `(kind, configDir)` pairs in use, so the
-         way to make a new one exist is to put a project on it. The label is
-         not stored - `accountOf` in `src/server.ts` derives what the chip
-         prints - so only the two fields that change anything are sent. */
-      await guard(() => updateProject(path, { account: account.kind, configDir: account.configDir })),
-    [guard],
-  )
-
-  const onSaveAdvanced = useCallback(
-    async (path: string, change: Partial<AdvancedSettings>): Promise<void> =>
-      /* Straight through: `PATCH /api/projects` is a partial update and the
-         store validates every field by name, so the one thing this layer must
-         not do is fill in the keys the human did not touch. */
-      await guard(() => updateProject(path, change)),
-    [guard],
-  )
-
-  const onSaveBudget = useCallback(
-    async (path: string, budgetUsd: number): Promise<void> => await guard(() => updateProject(path, { budgetUsd })),
-    [guard],
-  )
-
-  /* Two write operations that own their own state, in `src/ui/actions.ts`.
-     They were fourteen `useState` and ten handlers inline here; these two
-     clusters never touched the rest, and a custom hook is what "a service"
-     means in React - state plus the operations on it, behind an interface the
-     component consumes. */
-  const removal = useTaskRemoval(reload, selected, setSelected)
-  const newFile = useNewTaskFile(reload)
 
   const onRemoveProject = useCallback(
     async (project: TreeProject): Promise<void> => {
-      await guard(async () => {
+      await settings.guard(async () => {
         await removeProject(project.path)
         setPanel(null)
         if (selected?.projectPath === project.path) setSelected(null)
       })
     },
-    [guard, selected],
+    [settings.guard, selected],
   )
 
   /**
@@ -583,7 +509,7 @@ export function App() {
     return null
   }, [task, selected, project, runId, view, onStart, blockedBy])
 
-  const failure = treeError ?? startError ?? actionError ?? projectError
+  const failure = treeError ?? runStart.error ?? actionError ?? settings.error
 
   return (
     /* `kr` is the artboards' own root class, and `artboard.css`'s reduced-motion
@@ -604,9 +530,9 @@ export function App() {
         onHome={() => {
           setSelected(null)
           setPanel(null)
-          setProjectError(null)
-          setStartError(null)
-          setDirtyRefusal(null)
+          settings.clearError()
+          
+          runStart.dismissDirty()
         }}
       />
 
@@ -684,12 +610,12 @@ export function App() {
              separate runs map. */
           summary={projectSummary(panelProject, tree?.runs ?? {})}
           accounts={accountOptions}
-          onSwitchAccount={(account) => onSwitchAccount(panelProject.path, account)}
-          onAddAccount={(account) => onAddAccount(panelProject.path, account)}
-          onSaveTestCmd={(cmd) => onSaveTestCmd(panelProject.path, cmd)}
+          onSwitchAccount={(account) => settings.switchAccount(panelProject.path, account)}
+          onAddAccount={(account) => settings.addAccount(panelProject.path, account)}
+          onSaveTestCmd={(cmd) => settings.saveTestCmd(panelProject.path, cmd)}
           /* `null`, which is the only spelling the store accepts for "no
              suite" - it refuses `""`, because `sh -c ""` exits 0. */
-          onClearTestCmd={() => onSaveTestCmd(panelProject.path, null)}
+          onClearTestCmd={() => settings.saveTestCmd(panelProject.path, null)}
           /* Both or neither: `ProjectPanel` hides the ceiling section without a
              figure, and a figure with nothing to save it is a control that
              silently does nothing. A project from a store written before the
@@ -710,10 +636,10 @@ export function App() {
           }}
           {...(panelProject.advanced === undefined
             ? {}
-            : { onSaveAdvanced: (change: Partial<AdvancedSettings>) => onSaveAdvanced(panelProject.path, change) })}
+            : { onSaveAdvanced: (change: Partial<AdvancedSettings>) => settings.saveAdvanced(panelProject.path, change) })}
           {...(panelProject.budgetUsd === undefined
             ? {}
-            : { budgetUsd: panelProject.budgetUsd, onSaveBudget: (usd: number) => onSaveBudget(panelProject.path, usd) })}
+            : { budgetUsd: panelProject.budgetUsd, onSaveBudget: (usd: number) => settings.saveBudget(panelProject.path, usd) })}
           /* The artboard's placement for this: the last option in the task-file
              combobox. The tree's own "New task file" row is the other way in,
              and both open the same card. */
@@ -734,7 +660,7 @@ export function App() {
           detection={detection}
           onCheck={() => setRepoPath((p) => p)}
           onSubmit={async (draft) => {
-            await guard(async () => {
+            await settings.guard(async () => {
               await registerProject(draft)
               setPanel(null)
               setRepoPath("")
@@ -898,14 +824,14 @@ export function App() {
           />
         )}
 
-        {dirtyRefusal !== null && (
+        {runStart.dirtyRefusal !== null && (
           <section className="m-4 max-w-[620px] rounded-[14px] border border-[#F3D9C6] bg-[#FFF8F2] px-5 py-[18px]">
             <h2 className="text-[14px] font-[650] text-[#9A3B06]">This repository has uncommitted work</h2>
             {/* The server's own prose, reproduced rather than summarised: it
                 names the files and explains why `git stash` without `-u`
                 leaves you hitting this again. Which files are dirty is the one
                 thing the human needs exact. */}
-            <p className="m mt-2 whitespace-pre-wrap text-[12.5px] leading-[1.6] text-muted-500">{dirtyRefusal}</p>
+            <p className="m mt-2 whitespace-pre-wrap text-[12.5px] leading-[1.6] text-muted-500">{runStart.dirtyRefusal}</p>
             <p className="mt-3 text-[13.5px] leading-[1.55] text-muted-500">
               If that work is what you want the agent to carry on from, start anyway. kantan records that the tree
               was not clean, and the agent is told those files are yours to build on rather than revert.
@@ -920,7 +846,7 @@ export function App() {
               </button>
               <button
                 type="button"
-                onClick={() => setDirtyRefusal(null)}
+                onClick={() => runStart.dismissDirty()}
                 className="ghost rounded-full px-4 py-2 text-[13px] font-semibold text-muted-500"
               >
                 Cancel
