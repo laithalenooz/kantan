@@ -493,3 +493,137 @@ describe("the copy, as the artboard writes it", () => {
     expect(said).toContain(ARTBOARD.kept)
   })
 })
+
+// --- The ceiling ------------------------------------------------------------
+
+/**
+ * The enumeration, as a table, with the figure each string may fund.
+ *
+ * `null` means the card must refuse to start. The first group is
+ * `src/server.ts`'s own list for the raise route, mapped onto the strings a
+ * text field can hold; the second is what the parsing primitives get wrong if
+ * reached directly; the third is what must be accepted, because a guard that
+ * refuses everything is not a guard.
+ */
+const CEILING_CASES: readonly (readonly [string, number | null])[] = [
+  /* The route's list: absent, non-numeric, NaN, both infinities, zero,
+     negative zero, negative. */
+  ["", null],
+  ["   ", null],
+  ["abc", null],
+  ["NaN", null],
+  ["Infinity", null],
+  ["-Infinity", null],
+  ["0", null],
+  ["0.00", null],
+  ["-0", null],
+  ["-5", null],
+  /* The primitives' traps. `parseFloat("50abc")` is 50 and `Number("0x32")` is
+     50, so either one reached directly funds a run off a string that was
+     never a dollar figure. A 400-digit run of digits is valid *syntax* and
+     overflows to Infinity, which is why the finite check runs after the
+     pattern rather than instead of it. */
+  ["50abc", null],
+  ["0x32", null],
+  ["1e2", null],
+  ["1,000", null],
+  ["$50", null],
+  [".5", null],
+  ["5.", null],
+  /* Fullwidth digits: `\d` is ASCII-only, and the figure a human means by
+     these is not one this field should guess at. */
+  ["５０", null],
+  ["9".repeat(400), null],
+  /* Funded. */
+  ["50", 50],
+  ["50.00", 50],
+  ["12.50", 12.5],
+  ["0.01", 0.01],
+  /* The one normalisation this field performs, asserted rather than assumed. */
+  [" 50 ", 50],
+]
+
+describe("the ceiling, which is money", () => {
+  test.each(CEILING_CASES)("%p funds %p", async (typed: string, funded: number | null) => {
+    const calls: unknown[] = []
+    await render(panel(startProps({ defaultCeilingUsd: 50, onStart: (c) => calls.push(c) })))
+    await type(ceiling(), typed)
+
+    const start = button(ARTBOARD.start)
+    expect(start.disabled).toBe(funded === null)
+
+    await click(start)
+    expect(calls).toEqual(funded === null ? [] : [funded])
+  })
+
+  test("what reaches onStart is a number, never the string that was typed", async () => {
+    const calls: unknown[] = []
+    await render(panel(startProps({ defaultCeilingUsd: 50, onStart: (c) => calls.push(c) })))
+    await type(ceiling(), "12.50")
+    await click(button(ARTBOARD.start))
+    expect(calls.map((c) => typeof c)).toEqual(["number"])
+    expect(calls).toEqual([12.5])
+  })
+
+  test("the field is seeded with the project's own default, in dollars and cents", async () => {
+    await render(panel(startProps({ defaultCeilingUsd: 50 })))
+    expect(ceiling().value).toBe("50.00")
+    expect(prose()).toContain(ARTBOARD.ceilingLabel)
+  })
+
+  test("a refused figure is announced on the field, and names what is wanted", async () => {
+    await render(panel(startProps({ defaultCeilingUsd: 50 })))
+    await type(ceiling(), "-5")
+
+    const field = ceiling()
+    expect(field.getAttribute("aria-invalid")).toBe("true")
+    const note = one('[data-testid="ceiling-note"]')
+    expect(field.getAttribute("aria-describedby")).toBe(note.getAttribute("id"))
+    expect(note.textContent).toContain("above zero")
+  })
+
+  test("a figure that funds a run is not flagged", async () => {
+    await render(panel(startProps({ defaultCeilingUsd: 50 })))
+    await type(ceiling(), "20")
+    expect(ceiling().getAttribute("aria-invalid")).toBe("false")
+    expect(maybe('[data-testid="ceiling-note"]')).toBeNull()
+  })
+
+  test("the label is tied to the field, so clicking it focuses the field", async () => {
+    await render(panel(startProps({ defaultCeilingUsd: 50 })))
+    const label = byText<HTMLLabelElement>("label", ARTBOARD.ceilingLabel)
+    expect(label).not.toBeNull()
+    expect(label?.getAttribute("for")).toBe(ceiling().getAttribute("id"))
+  })
+
+  /**
+   * `START_KEYS` in `src/server.ts` is `["projectPath", "featureFile",
+   * "taskRef"]` and `parseBody` refuses unknown keys, so a per-run ceiling is a
+   * 400 today; `TreeProject` has no `budgetUsd` for the shell to seed the field
+   * with either. Until both land the control is not drawn, because a field that
+   * cannot change what it claims to change is worse than an absent one.
+   */
+  test("no ceiling control at all when the shell has no figure to offer", async () => {
+    const calls: unknown[] = []
+    await render(panel(startProps({ onStart: (c) => calls.push(c) })))
+    expect(maybe('input[data-testid="ceiling"]')).toBeNull()
+    expect(prose()).not.toContain(ARTBOARD.ceilingLabel)
+
+    await click(button(ARTBOARD.start))
+    expect(calls).toEqual([undefined])
+  })
+
+  test("a ceiling typed for one task does not follow the card to the next", async () => {
+    const calls: unknown[] = []
+    const onStart = (c?: number): void => void calls.push(c)
+    await render(panel(startProps({ defaultCeilingUsd: 50, onStart })))
+    await type(ceiling(), "7")
+
+    const next: TreeTask = { ref: "T4", text: "Something else", done: false }
+    await render(panel(startProps({ task: next, defaultCeilingUsd: 50, onStart })))
+    expect(ceiling().value).toBe("50.00")
+
+    await click(button(ARTBOARD.start))
+    expect(calls).toEqual([50])
+  })
+})
