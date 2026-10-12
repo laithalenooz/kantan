@@ -10,7 +10,7 @@ import { AddRepo, type Detection } from "./AddRepo.tsx"
 import { AddTasks } from "./AddTasks.tsx"
 import { ProjectPanel, type AccountOption } from "./ProjectPanel.tsx"
 import { StartPanel } from "./StartPanel.tsx"
-import { act, detectPath, registerProject, removeProject, removeTask, startRun, taskKeyOf, updateProject, type RunView } from "./live.ts"
+import { act, addTasks, detectPath, registerProject, removeProject, removeTask, startRun, taskKeyOf, updateProject, type RunView } from "./live.ts"
 import { useAction, usePlan, useRun, useTree } from "./useRun.ts"
 import type { RunPhase } from "../runlog.ts"
 import type { AskingPhase } from "./Gate.tsx"
@@ -762,10 +762,27 @@ export function App() {
             featureFile={addTasksFor.feature.path}
             tasks={addTasksFor.feature.tasks}
             account={addTasksFor.project.account}
-            onAdd={() => {
-              // No write endpoint yet: the component reports a refusal rather
-              // than claiming an append that did not happen.
-              throw new Error("adding tasks to an existing file is not wired to the server yet")
+            onAdd={async (texts) => {
+              const refs = await addTasks({
+                projectPath: addTasksFor.project.path,
+                featureFile: addTasksFor.feature.path,
+                texts,
+              })
+              /* The tree is the point of adding: without this the new tasks
+                 exist on disk and nowhere on screen until something else
+                 happens to refetch. Not inside `guard`, because `AddTasks`
+                 reports its own refusals on its own screen and `guard` would
+                 also put them on the page behind it. */
+              reload()
+              return refs
+            }}
+            onOpen={(ref) => {
+              setPanel(null)
+              setSelected({
+                projectPath: addTasksFor.project.path,
+                featureFile: addTasksFor.feature.path,
+                taskRef: ref,
+              })
             }}
             onCancel={() => setPanel(null)}
           />

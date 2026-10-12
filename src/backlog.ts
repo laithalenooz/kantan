@@ -197,6 +197,104 @@ export function tickTask(src: string, ref: string): string {
 }
 
 /**
+ * `src` with `texts` added as new tasks, numbered and placed.
+ *
+ * Two guesses here, each enumerated because each has an expensive direction.
+ *
+ * **Which refs they get: the highest `T<n>` already in the file, plus one, and
+ * gaps are never filled.** A file holding `T1` and `T5` yields `T6`, not `T2`.
+ * Reusing a number costs more than skipping one: two tasks sharing a ref make
+ * `only` refuse, so that ref can then be neither ticked nor removed, and
+ * `src/run.ts` will not run it either - one bad guess wedges two tasks. A gap
+ * in the numbering costs nothing but the appearance of one. Refless lines are
+ * counted for none of this, because they carry no number to clash with.
+ *
+ * **Where they go: after the last task's whole block.** Not the end of the
+ * file, and not the last task's `- [ ]` line either - both were tried and both
+ * are wrong in a way a real backlog shows immediately.
+ *
+ * The end of the file puts new tasks under a trailing `## Notes` heading, where
+ * they read as belonging to the notes. Straight after the last `- [ ]` line
+ * puts them *above that task's own detail lines*, so its indented explanation
+ * silently becomes the new task's - caught by appending to this project's own
+ * `docs/features/kantan.md`, where T3's four lines of detail instantly read as
+ * T4's. No assertion saw it, because the test that should have was written to
+ * match the behaviour and then labelled "keeping its continuation line with
+ * it", which was the opposite of what it pinned.
+ *
+ * So the insertion point walks forward from the last task line over everything
+ * that still belongs to that item - an indented continuation, or a lazy
+ * unindented one - and stops at the first thing that does not: a blank line, a
+ * heading, another bullet, a thematic break, or the end of the file. Stopping
+ * early orphans detail onto the wrong task; stopping late files tasks under
+ * someone else's heading. Neither is cheap, so this reads the block rather
+ * than guessing its extent.
+ *
+ * A file with no tasks at all has no block to sit after, so there the end of
+ * the file is the only answer, and a missing trailing newline is added rather
+ * than joining the new task onto whatever the last line was.
+ *
+ * Everything already in the file is preserved byte for byte, CRLF included: a
+ * new line takes the terminator its neighbour uses, so a CRLF file does not
+ * acquire a lone LF in the middle of it.
+ */
+export function appendTasks(src: string, texts: readonly string[]): { src: string; refs: string[] } {
+  const clean = texts.map((t) => t.trim()).filter((t) => t !== "")
+  if (clean.length === 0) return { src, refs: [] }
+
+  const { tasks } = parseFeature(src)
+  const highest = tasks.reduce((best, task) => {
+    const digits = task.ref === null ? null : /^T(\d+)$/.exec(task.ref)?.[1]
+    if (digits === undefined || digits === null) return best
+    const n = Number(digits)
+    return Number.isSafeInteger(n) && n > best ? n : best
+  }, 0)
+
+  const refs = clean.map((_, i) => `T${highest + i + 1}`)
+  const lines = src.split("\n")
+
+  // The terminator its neighbour uses, so a CRLF file stays a CRLF file.
+  const lastTask = tasks.reduce<number | null>((last, t) => (last === null || t.line > last ? t.line : last), null)
+  const crlf = lastTask === null
+    ? lines.some((l) => l.endsWith("\r"))
+    : (lines[lastTask] ?? "").endsWith("\r")
+  const added = refs.map((ref, i) => `- [ ] ${ref} ${clean[i] ?? ""}${crlf ? "\r" : ""}`)
+
+  if (lastTask !== null) {
+    const at = blockEnd(lines, lastTask)
+    return { src: [...lines.slice(0, at + 1), ...added, ...lines.slice(at + 1)].join("\n"), refs }
+  }
+
+  // No task to sit after. The end of the file, with a terminator if the last
+  // line lacks one - otherwise the first new task joins onto it.
+  const trailing = lines.at(-1) === "" || lines.at(-1) === "\r"
+  const body = trailing ? lines.slice(0, -1) : lines
+  return { src: [...body, ...added, crlf ? "\r" : ""].join("\n"), refs }
+}
+
+/**
+ * The index of the last line still belonging to the task that starts at
+ * `start`: its own line, plus any continuation under it.
+ *
+ * A list item's paragraph continues through indented lines and through lazy
+ * unindented ones - which is why `parseFeature` has a test for a thematic
+ * break under an unindented continuation line *not* being a setext heading.
+ * It ends at the first line that opens a new block instead: blank, a heading,
+ * another bullet, or a rule.
+ */
+function blockEnd(lines: readonly string[], start: number): number {
+  let at = start
+  for (let i = start + 1; i < lines.length; i++) {
+    const line = (lines[i] ?? "").replace(/\r$/, "")
+    if (line.trim() === "") break
+    if (HEADING_RE.test(line) || RULE_LINE_RE.test(line)) break
+    if (BULLET_RE.test(line.replace(/^[ \t]+/, "")) && !/^[ \t]/.test(line)) break
+    at = i
+  }
+  return at
+}
+
+/**
  * The one task `ref` names, or a refusal saying why there isn't one.
  *
  * Shared by `tickTask` and `removeTask` rather than written twice, and that is

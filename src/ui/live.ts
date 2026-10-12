@@ -761,6 +761,30 @@ export async function removeTask(
 }
 
 /**
+ * Adds tasks to a task file that already exists.
+ *
+ * The texts carry **no refs**: the server numbers them against the bytes on
+ * disk, because the human may have edited the file since these were drafted.
+ * It answers with the refs it wrote, which is what the confirmation prints.
+ */
+export async function addTasks(
+  task: { projectPath: string; featureFile: string; texts: readonly string[] },
+  fetcher: typeof fetch = fetch,
+): Promise<string[]> {
+  const res = await withSession(fetcher, (f) =>
+    f(`${API}/features/task`, { method: "POST", cache: "no-store", body: JSON.stringify(task) }),
+  )
+  if (!res.ok) throw new Error(`those tasks could not be added: ${res.status} ${await text(res)}`)
+  const body = (await res.json()) as { refs?: unknown }
+  /* Read, not cast - the lesson `fetchPlan` paid for. `AddTasks` takes
+     `undefined` for "the server could not say" and prints a count instead, so
+     an answer this cannot read becomes that rather than a false list. */
+  const refs = body.refs
+  if (!Array.isArray(refs) || !refs.every((r): r is string => typeof r === "string")) return []
+  return refs
+}
+
+/**
  * Changes some of a project's settings, leaving the rest alone.
  *
  * A **partial** update on purpose. Registering again is refused with a 409

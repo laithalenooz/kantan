@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { parseFeature, removeTask, tickTask } from "../src/backlog"
+import { appendTasks, parseFeature, removeTask, tickTask } from "../src/backlog"
 
 const SAMPLE = `---
 status: active
@@ -501,5 +501,153 @@ describe("removeTask", () => {
   test("a task with no ref cannot be addressed at all", () => {
     const src = "# F\n\n- [ ] no ref here\n- [ ] T1 a\n"
     expect(removeTask(src, "T1")).toBe("# F\n\n- [ ] no ref here\n")
+  })
+})
+
+/* ========================================================================== */
+/* Appending tasks                                                            */
+/* ========================================================================== */
+
+/**
+ * Two dimensions, each with an expensive direction, so each is a matrix.
+ *
+ * **The ref.** Reusing a number is the costly mistake: two tasks sharing a ref
+ * make `only` refuse, so that ref can then be neither ticked nor removed and
+ * `src/run.ts` will not run it - one bad guess wedges two tasks. A gap in the
+ * numbering costs only the appearance of one. So: highest plus one, gaps never
+ * filled.
+ *
+ * **The position.** After the last *task* line, not the end of the file. A
+ * backlog ending in a `## Notes` section would otherwise get its new tasks
+ * under that heading, where they read as belonging to the notes.
+ */
+describe("appendTasks", () => {
+  const REFS: ReadonlyArray<{ why: string; src: string; expect: string[] }> = [
+    { why: "an empty file starts at T1", src: "", expect: ["T1"] },
+    { why: "a file with no tasks starts at T1", src: "# F\n\nSome prose.\n", expect: ["T1"] },
+    { why: "T1 and T2 continue at T3", src: "- [ ] T1 a\n- [ ] T2 b\n", expect: ["T3"] },
+    { why: "a gap is not filled", src: "- [ ] T1 a\n- [ ] T5 b\n", expect: ["T6"] },
+    { why: "out-of-order refs read the highest", src: "- [ ] T7 a\n- [ ] T2 b\n", expect: ["T8"] },
+    { why: "a done task still holds its number", src: "- [x] T9 a\n", expect: ["T10"] },
+    { why: "refless lines carry no number to clash with", src: "- [ ] no ref\n", expect: ["T1"] },
+    { why: "two digits are compared as numbers, not strings", src: "- [ ] T9 a\n- [ ] T10 b\n", expect: ["T11"] },
+  ]
+
+  for (const { why, src, expect: refs } of REFS) {
+    test(`numbering: ${why}`, () => {
+      expect(appendTasks(src, ["new work"]).refs).toEqual(refs)
+    })
+  }
+
+  test("numbers several in the order they were given", () => {
+    const { src, refs } = appendTasks("- [ ] T1 a\n", ["one", "two", "three"])
+    expect(refs).toEqual(["T2", "T3", "T4"])
+    expect(src).toBe("- [ ] T1 a\n- [ ] T2 one\n- [ ] T3 two\n- [ ] T4 three\n")
+  })
+
+  test("never reuses a ref, which is the expensive direction", () => {
+    const { src } = appendTasks("- [ ] T1 a\n- [ ] T5 b\n", ["c"])
+    const refs = parseFeature(src).tasks.map((t) => t.ref)
+    expect(new Set(refs).size).toBe(refs.length)
+  })
+
+  const PLACES: ReadonlyArray<{ why: string; src: string; out: string }> = [
+    {
+      why: "directly after the last task, not at the end of the file",
+      src: "# F\n\n- [ ] T1 a\n\n## Notes\n\nSomething to remember.\n",
+      out: "# F\n\n- [ ] T1 a\n- [ ] T2 new work\n\n## Notes\n\nSomething to remember.\n",
+    },
+    {
+      // Found by appending to this project's own backlog, where T3's four
+      // lines of detail instantly read as T4's. The row that was here before
+      // asserted exactly that and called it "keeping its continuation line
+      // with it", which was the opposite of what it pinned.
+      why: "after the last task's indented detail, not above it",
+      src: "# F\n\n- [ ] T1 a\n- [ ] T2 b\n      run: passed\n",
+      out: "# F\n\n- [ ] T1 a\n- [ ] T2 b\n      run: passed\n- [ ] T3 new work\n",
+    },
+    {
+      why: "after a lazy unindented continuation, which belongs to the item too",
+      src: "# F\n\n- [ ] T1 a\nmore about a\n",
+      out: "# F\n\n- [ ] T1 a\nmore about a\n- [ ] T2 new work\n",
+    },
+    {
+      why: "before a heading that follows the last task without a blank line",
+      src: "# F\n\n- [ ] T1 a\n## Notes\n\nSomething.\n",
+      out: "# F\n\n- [ ] T1 a\n- [ ] T2 new work\n## Notes\n\nSomething.\n",
+    },
+    {
+      why: "after the detail of a multi-line last task, with CRLF",
+      src: "# F\r\n\r\n- [ ] T1 a\r\n      detail\r\n",
+      out: "# F\r\n\r\n- [ ] T1 a\r\n      detail\r\n- [ ] T2 new work\r\n",
+    },
+    {
+      why: "at the end when there is no task to sit after",
+      src: "# F\n\nSome prose.\n",
+      out: "# F\n\nSome prose.\n- [ ] T1 new work\n",
+    },
+    {
+      why: "adding the terminator a file without one lacks",
+      src: "# F\n\nSome prose.",
+      out: "# F\n\nSome prose.\n- [ ] T1 new work\n",
+    },
+    {
+      why: "CRLF, which the new line must use too",
+      src: "# F\r\n\r\n- [ ] T1 a\r\n",
+      out: "# F\r\n\r\n- [ ] T1 a\r\n- [ ] T2 new work\r\n",
+    },
+    {
+      why: "a BOM, which belongs to the file",
+      src: "﻿# F\n\n- [ ] T1 a\n",
+      out: "﻿# F\n\n- [ ] T1 a\n- [ ] T2 new work\n",
+    },
+  ]
+
+  for (const { why, src, out } of PLACES) {
+    test(`places it ${why}`, () => {
+      expect(appendTasks(src, ["new work"]).src).toBe(out)
+    })
+  }
+
+  /**
+   * The property the matrix above is really about: whatever the file looks
+   * like, each existing task keeps the detail lines it had. Asserted as a
+   * property because the defect it guards was invisible in an exact-output
+   * row that had been written from the wrong behaviour.
+   */
+  test("no existing task loses its detail to a new one", () => {
+    const src = `# F
+
+- [ ] T1 first
+      detail of first
+- [ ] T2 second
+      detail of second
+      more detail of second
+`
+    const after = appendTasks(src, ["third"]).src
+    expect(after).toContain("- [ ] T2 second\n      detail of second\n      more detail of second\n")
+    // The new task is last, and carries nothing under it.
+    expect(after.endsWith("- [ ] T3 third\n")).toBe(true)
+  })
+
+  test("the result parses back to the tasks that went in, in order", () => {
+    const { src, refs } = appendTasks("# F\n\n- [ ] T1 first\n", ["second", "third"])
+    const after = parseFeature(src)
+    expect(after.tasks.map((t) => t.ref)).toEqual(["T1", ...refs])
+    expect(after.tasks.map((t) => t.text)).toEqual(["first", "second", "third"])
+    expect(after.tasks.every((t) => t.done === false)).toBe(true)
+    expect(after.title).toBe("F")
+  })
+
+  test("trims each text and drops the ones that are only whitespace", () => {
+    const { src, refs } = appendTasks("- [ ] T1 a\n", ["  padded  ", "   ", "", "also"])
+    expect(refs).toEqual(["T2", "T3"])
+    expect(parseFeature(src).tasks.map((t) => t.text)).toEqual(["a", "padded", "also"])
+  })
+
+  test("adding nothing writes nothing, rather than a blank task", () => {
+    const src = "- [ ] T1 a\n"
+    expect(appendTasks(src, [])).toEqual({ src, refs: [] })
+    expect(appendTasks(src, ["  ", ""])).toEqual({ src, refs: [] })
   })
 })

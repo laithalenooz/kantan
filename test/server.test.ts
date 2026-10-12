@@ -4395,3 +4395,201 @@ test("a duplicated ref is refused rather than guessed at", async () => {
   expect(res.body).toContain("lines 3, 4")
   expect(await readFile(join(repo, "docs", "features", "dupe.md"), "utf8")).toContain("T1 two")
 })
+
+/* ========================================================================== */
+/* POST /api/features/task                                                    */
+/* ========================================================================== */
+
+const APPEND_TASK = "POST /api/features/task"
+
+function addTasksTo(
+  l: Launch,
+  body: unknown,
+): Promise<{ status: number; headers: Headers; body: string }> {
+  return call(l, { path: "/api/features/task", method: "POST", body: JSON.stringify(body) })
+}
+
+test("adding tasks is a POST in ROUTES, behind the guards, and not token-exempt", () => {
+  expect(Object.keys(ROUTES)).toContain(APPEND_TASK)
+  expect(TOKEN_EXEMPT.has(APPEND_TASK)).toBe(false)
+})
+
+test("it appends after the last task, numbers from the file, and answers the refs", async () => {
+  const repo = await cleanRepo()
+  await withFeature(repo, "importer.md", FEATURE)
+  const l = await withTree(await storeOf(repo))
+
+  const res = await addTasksTo(l, {
+    projectPath: repo,
+    featureFile: "docs/features/importer.md",
+    texts: ["Handle a missing column", "Report the row number"],
+  })
+
+  expect(res.status).toBe(200)
+  expect((JSON.parse(res.body) as { refs: string[] }).refs).toEqual(["T3", "T4"])
+  // The refless line is read two ways here, and both are right for the
+  // question they answer. For **numbering** it carries nothing to clash with,
+  // so `T2` is still the highest and the new refs are `T3` and `T4`. For
+  // **position** it is a task like any other, so it is the last task line and
+  // the new ones go after it - putting them before it instead would mean
+  // "after the last *ref'd* task", which splits the list around a line the
+  // human wrote in the middle of it.
+  expect(await readFile(join(repo, "docs", "features", "importer.md"), "utf8")).toBe(
+    `# Importer
+
+- [ ] T1 Read the CSV
+- [x] T2 Write the rows
+- [ ] A line with no ref
+- [ ] T3 Handle a missing column
+- [ ] T4 Report the row number
+`,
+  )
+})
+
+test("the tree lists them straight away, which is the point", async () => {
+  const repo = await cleanRepo()
+  await withFeature(repo, "importer.md", FEATURE)
+  const l = await withTree(await storeOf(repo))
+
+  await addTasksTo(l, {
+    projectPath: repo,
+    featureFile: "docs/features/importer.md",
+    texts: ["Handle a missing column"],
+  })
+
+  const { body } = await getTree(l)
+  const tasks = body.projects?.[0]?.features[0]?.tasks ?? []
+  expect(tasks.map((t) => t.ref)).toEqual(["T1", "T2", null, "T3"])
+  expect(tasks.find((t) => t.ref === "T3")?.text).toBe("Handle a missing column")
+  expect(tasks.find((t) => t.ref === "T3")?.done).toBe(false)
+})
+
+test("it commits the file it wrote into", async () => {
+  const repo = await cleanRepo()
+  await withFeature(repo, "importer.md", FEATURE)
+  await gitIn(repo, "add", "docs/features/importer.md")
+  await gitIn(repo, "commit", "-m", "add the backlog", "--", "docs/features/importer.md")
+  const l = await withTree(await storeOf(repo))
+
+  const res = await addTasksTo(l, {
+    projectPath: repo,
+    featureFile: "docs/features/importer.md",
+    texts: ["one", "two"],
+  })
+  expect(res.status).toBe(200)
+
+  expect(await gitSays(repo, "log", "-1", "--pretty=%s")).toBe("chore: add T3, T4 to docs/features/importer.md")
+  expect(await gitSays(repo, "status", "--porcelain")).toBe("")
+})
+
+test("a run in flight refuses, and nothing is added", async () => {
+  const repo = await cleanRepo()
+  const path = await withFeature(repo, "importer.md", FEATURE)
+  const before = await readFile(path, "utf8")
+  const dir = await runsDir()
+  const store = await storeFile()
+  const live = "55555555-5555-4555-8555-555555555555"
+  const l = serve({ runsDir: dir, projectsFile: store, liveRunIds: () => [live] })
+  await logNamingProject(dir, live, (await requireUsableRepo(repo)).root)
+  await register(l, { path: repo, testCmd: "npm test" })
+
+  const res = await addTasksTo(l, {
+    projectPath: repo,
+    featureFile: "docs/features/importer.md",
+    texts: ["one"],
+  })
+
+  expect(res.status).toBe(409)
+  expect(res.body).toContain(live)
+  expect(await readFile(path, "utf8")).toBe(before)
+})
+
+/**
+ * `texts` is an array from a page, and every element becomes a line in a file
+ * inside someone's repository. The matrix is the enumeration: each row is a
+ * shape that would otherwise write something the caller did not mean.
+ */
+test("a texts array that is not a list of one-line strings is refused", async () => {
+  const repo = await cleanRepo()
+  const path = await withFeature(repo, "importer.md", FEATURE)
+  const before = await readFile(path, "utf8")
+  const l = await withTree(await storeOf(repo))
+
+  const ROWS: ReadonlyArray<{ why: string; texts: unknown; says: string }> = [
+    { why: "not an array at all", texts: "one task", says: "texts" },
+    { why: "a number among the strings", texts: ["fine", 7], says: "texts[1]" },
+    { why: "an object, which would stringify to [object Object]", texts: [{ text: "x" }], says: "texts[0]" },
+    { why: "null", texts: [null], says: "texts[0]" },
+    { why: "a nested array", texts: [["x"]], says: "texts[0]" },
+    { why: "a newline, which is two lines and not one task", texts: ["a\nb"], says: "line break" },
+    { why: "a carriage return", texts: ["a\rb"], says: "line break" },
+    { why: "all blank, so there is nothing to add", texts: ["  ", ""], says: "blank" },
+    { why: "over the per-call limit", texts: Array.from({ length: 51 }, (_, i) => `t${i}`), says: "50" },
+    { why: "one task over the character limit", texts: ["x".repeat(2001)], says: "2000" },
+  ]
+
+  for (const { why, texts, says } of ROWS) {
+    const res = await addTasksTo(l, {
+      projectPath: repo,
+      featureFile: "docs/features/importer.md",
+      texts,
+    })
+    expect(res.status, `for ${why}`).toBe(400)
+    expect(res.body, `for ${why}`).toContain(says)
+    expect(await readFile(path, "utf8"), `for ${why}`).toBe(before)
+  }
+})
+
+test("a task file outside the project is refused here too", async () => {
+  const repo = await cleanRepo()
+  await withFeature(repo, "importer.md", FEATURE)
+  const l = await withTree(await storeOf(repo))
+
+  for (const featureFile of ["../outside.md", "docs/../../outside.md", "/etc/passwd", ""]) {
+    const res = await addTasksTo(l, { projectPath: repo, featureFile, texts: ["x"] })
+    expect([400, 404], `for ${JSON.stringify(featureFile)}`).toContain(res.status)
+  }
+})
+
+test("a file that is not there is a 404, and an unregistered project is too", async () => {
+  const repo = await cleanRepo()
+  await withFeature(repo, "importer.md", FEATURE)
+
+  const registeredL = await withTree(await storeOf(repo))
+  const noFile = await addTasksTo(registeredL, {
+    projectPath: repo,
+    featureFile: "docs/features/nope.md",
+    texts: ["x"],
+  })
+  expect(noFile.status).toBe(404)
+
+  const emptyL = await withTree(await storeFile())
+  const noProject = await addTasksTo(emptyL, {
+    projectPath: repo,
+    featureFile: "docs/features/importer.md",
+    texts: ["x"],
+  })
+  expect(noProject.status).toBe(404)
+})
+
+/** The refs are numbered against the bytes on disk, so a ref can never collide
+ *  with one a human added since the texts were drafted. */
+test("a file edited since the draft is numbered against what is on disk now", async () => {
+  const repo = await cleanRepo()
+  const path = await withFeature(repo, "importer.md", FEATURE)
+  const l = await withTree(await storeOf(repo))
+
+  // The human adds T7 by hand while the add screen is open.
+  await writeFile(path, "# Importer\n\n- [ ] T1 Read the CSV\n- [ ] T7 Typed by hand\n")
+
+  const res = await addTasksTo(l, {
+    projectPath: repo,
+    featureFile: "docs/features/importer.md",
+    texts: ["Drafted earlier"],
+  })
+
+  expect((JSON.parse(res.body) as { refs: string[] }).refs).toEqual(["T8"])
+  const after = await readFile(path, "utf8")
+  expect(after).toContain("- [ ] T8 Drafted earlier")
+  expect(after).toContain("- [ ] T7 Typed by hand")
+})

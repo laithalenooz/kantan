@@ -1,7 +1,7 @@
 import { open, readFile, readdir, realpath, rename, stat, unlink } from "node:fs/promises"
 import { basename, dirname, join, resolve } from "node:path"
 import { randomUUID } from "node:crypto"
-import { parseFeature, removeTask, tickTask } from "./backlog"
+import { appendTasks, parseFeature, removeTask, tickTask } from "./backlog"
 import type { Feature } from "./backlog"
 
 /** The backlog lives in the user's own repo, in a flat directory. */
@@ -226,6 +226,45 @@ export async function removeTaskFromFile(file: FeatureFile, ref: string): Promis
 
   await writeExact(file.path, out)
   return { src: out, removed: going?.text ?? ref, warning }
+}
+
+/** What appending tasks did. */
+export interface AppendResult {
+  /** The bytes now on disk. */
+  src: string
+  /** The refs the new tasks were given, in the order the texts came in. */
+  refs: string[]
+  /** Set when the file had changed since it was parsed; see `TickResult`. */
+  warning: string | null
+}
+
+/**
+ * Appends `texts` to `file` on disk as new tasks.
+ *
+ * Numbered against the bytes **now on disk**, which is the whole reason this
+ * re-reads rather than trusting what it was handed. The texts were drafted or
+ * typed against a file the human may have edited since - and a ref chosen from
+ * a stale read is a ref that may already exist, which is the one mistake
+ * `appendTasks` is written to avoid. A tick re-reads to find the right line; so
+ * does this, to find the right number.
+ *
+ * No idempotent case: appending the same text twice is two tasks, because that
+ * is what it means. Nothing here tries to recognise a repeat - two tasks
+ * reading the same sentence are a thing a human may legitimately want, and
+ * guessing otherwise would silently drop work.
+ */
+export async function appendTasksToFile(file: FeatureFile, texts: readonly string[]): Promise<AppendResult> {
+  const fresh = decode(await readFile(file.path), file.path)
+  const changed = fresh !== file.src
+  const warning = changed
+    ? `${file.path} changed on disk since it was parsed; the new tasks were numbered against the bytes now on disk`
+    : null
+
+  const { src, refs } = appendTasks(fresh, texts)
+  if (refs.length === 0) return { src: fresh, refs: [], warning }
+
+  await writeExact(file.path, src)
+  return { src, refs, warning }
 }
 
 function describe(e: unknown): string {

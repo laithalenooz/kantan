@@ -6,8 +6,8 @@ import type { Server } from "bun"
 import { parseFeature } from "./backlog"
 import type { Task } from "./backlog"
 import { draftFeature, type Draft } from "./draft"
-import { listFeatureFiles, readFeature, removeTaskFromFile } from "./featurefile"
-import type { RemoveResult } from "./featurefile"
+import { appendTasksToFile, listFeatureFiles, readFeature, removeTaskFromFile } from "./featurefile"
+import type { AppendResult, RemoveResult } from "./featurefile"
 import { commitPaths, requireUsableRepo, taskBranchName } from "./git"
 import type { Repo } from "./git"
 import {
@@ -525,6 +525,12 @@ export const ROUTES: Record<string, RouteHandler> = {
    * in a body rather than the path, because the file is a path of the user's
    * and a path in a URL segment is the one shape this route must not invite. */
   "DELETE /api/features/task": (req, ctx) => removeFeatureTask(req, ctx),
+
+  /** Adding tasks to a task file that already exists, which `AddTasks` has
+   * needed since it was written: its `onAdd` had nothing to call, so the one
+   * entry point the design gives for adding work - the "+ Add task" row under
+   * each file - opened a screen whose only action threw. */
+  "POST /api/features/task": (req, ctx) => appendFeatureTasks(req, ctx),
 }
 
 /**
@@ -1866,6 +1872,14 @@ const FEATURE_KEYS = ["projectPath", "text"] as const
 
 const REMOVE_TASK_KEYS = ["projectPath", "featureFile", "taskRef"] as const
 
+const APPEND_TASK_KEYS = ["projectPath", "featureFile", "texts"] as const
+
+/** How many tasks one call may add, and how long each may be. A bound rather
+ * than a guess at intent: the body is JSON from a page, and `appendTasks`
+ * writes a line per text into a file in someone's repository. */
+const MAX_NEW_TASKS = 50
+const MAX_TASK_CHARS = 2000
+
 async function startRun(req: Request, ctx: RouteContext): Promise<Response> {
   const runner = ctx.runner
   if (runner === null) return noRunner()
@@ -2587,6 +2601,124 @@ async function removeFeatureTask(req: Request, ctx: RouteContext): Promise<Respo
     },
     { headers: { "Cache-Control": "no-store" } },
   )
+}
+
+/**
+ * Adds tasks to a task file that already exists.
+ *
+ * The guards are `removeFeatureTask`'s, in the same order and for the same
+ * reasons, with one difference worth naming: **this is also refused while a run
+ * is in flight**, even though adding a task takes nothing away. The reason is
+ * the commit, not the edit. A run holds the checkout on its own `orch/<task>`
+ * branch, so the commit would land there and `returnToBase` would take the new
+ * tasks out of the working tree when the run finished - the user would watch
+ * tasks they just added disappear. `POST /api/features` answers a warning
+ * instead of refusing because a *drafted file* survives uncommitted; tasks
+ * appended into a file the run may also be rewriting do not survive as
+ * cleanly, and a conflict in someone's repo has no surface here to explain it.
+ *
+ * `texts` carry no refs. The server numbers them against the bytes on disk,
+ * because the human may have edited the file since they were drafted - see
+ * `appendTasksToFile`.
+ */
+async function appendFeatureTasks(req: Request, ctx: RouteContext): Promise<Response> {
+  const projectsFile = ctx.projectsFile
+  if (projectsFile === null) return noStore("add tasks")
+
+  const body = await readBody(req)
+  if ("refused" in body) return body.refused
+  const parsed = parseBody(body.text, APPEND_TASK_KEYS)
+  if ("refused" in parsed) return parsed.refused
+
+  const projectPath = nonEmptyString(parsed.fields["projectPath"])
+  const featureFile = nonEmptyString(parsed.fields["featureFile"])
+  const raw = parsed.fields["texts"]
+  if (projectPath === null || featureFile === null || !Array.isArray(raw)) {
+    return badBody(
+      APPEND_TASK_KEYS,
+      "adding tasks needs the project, the task file to add to, and `texts`: an array of what each task says",
+    )
+  }
+  if (raw.length > MAX_NEW_TASKS) {
+    return refuse(400, `refused: ${raw.length} tasks in one call is more than the ${MAX_NEW_TASKS} this route takes`)
+  }
+  // Every element, by its own type, before anything is trimmed: a number or a
+  // nested object in this array is a caller bug, and silently stringifying it
+  // would write `[object Object]` into someone's backlog.
+  const texts: string[] = []
+  for (const [at, one] of raw.entries()) {
+    if (typeof one !== "string") {
+      return refuse(400, `refused: texts[${at}] is ${describeValue(one)}; every task must be a string`)
+    }
+    if (one.length > MAX_TASK_CHARS) {
+      return refuse(400, `refused: texts[${at}] is ${one.length} characters, over the ${MAX_TASK_CHARS} limit for one task`)
+    }
+    // A task is a line. A newline in one would split it into a task and some
+    // prose, and the prose would read as a continuation of it.
+    if (/[\r\n]/.test(one)) {
+      return refuse(400, `refused: texts[${at}] contains a line break, and a task is one line`)
+    }
+    texts.push(one)
+  }
+  if (texts.every((t) => t.trim() === "")) {
+    return refuse(400, "refused: every task was blank, so there was nothing to add")
+  }
+
+  const registered = await loadProjects(projectsFile)
+  const project = registered.find((p) => p.path === projectPath)
+  if (project === undefined) return refuse(404, "refused: that project is not registered")
+
+  const relative = plannedPath(featureFile)
+  if (relative === null) return refuse(400, TASK_FILE_OUTSIDE_REPO)
+  const target = resolve(project.path, relative)
+  if (!inside(target, project.path)) return refuse(400, TASK_FILE_OUTSIDE_REPO)
+
+  const live = await liveRunIdFor(ctx, project.path)
+  if (live !== null) {
+    return refuse(
+      409,
+      `refused: run ${live} is in flight in this repository, so nothing was added. The checkout is on that run's own branch, and tasks committed there would come back out of your working tree when the run returns to your base branch. Stop the run, or wait for it, then add the tasks.`,
+    )
+  }
+
+  let result: AppendResult
+  try {
+    result = await appendTasksToFile(await readFeature(target), texts)
+  } catch (cause) {
+    const code = (cause as NodeJS.ErrnoException).code
+    return refuse(
+      code === "ENOENT" ? 404 : 409,
+      code === "ENOENT" ? `refused: ${relative} is not a file in this project` : `refused: ${(cause as Error).message}`,
+    )
+  }
+
+  let repo: Repo
+  try {
+    repo = await requireUsableRepo(project.path)
+  } catch (cause) {
+    return refuse(400, (cause as Error).message)
+  }
+  const commitWarning = await commitPaths(repo, {
+    subject: `chore: add ${result.refs.join(", ")} to ${relative}`,
+    body: `${result.refs.length} task${result.refs.length === 1 ? "" : "s"} added through kantan at a human's request. None has been run or verified.`,
+    paths: [relative],
+  })
+
+  const warnings = [result.warning, commitWarning].filter((w): w is string => w !== null)
+  return Response.json(
+    {
+      ok: true,
+      featureFile: relative,
+      refs: result.refs,
+      ...(warnings.length === 0 ? {} : { warnings }),
+    },
+    { headers: { "Cache-Control": "no-store" } },
+  )
+}
+
+/** What a value is, for a refusal that names it without echoing it back. */
+function describeValue(value: unknown): string {
+  return value === null ? "null" : Array.isArray(value) ? "an array" : typeof value
 }
 
 const TASK_FILE_OUTSIDE_REPO = "refused: that task file does not sit inside the project"
