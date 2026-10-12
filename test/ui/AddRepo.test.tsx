@@ -12,7 +12,11 @@
  *
  * The machine's home is `/home/lalenooz`. The real fault was four characters in
  * the home directory, the sentence named git, and it arrived only *after*
- * submitting. So the assertions below are mostly about **when a green tick is
+ * submitting. (That one path is the real one, because the four-character
+ * difference between it and the typo above is the whole finding. Every
+ * *fixture* below uses a neutral `/home/dev`: they are stub strings, nothing
+ * here touches a filesystem, and no assertion should read as if it needed a
+ * particular developer's machine.) So the assertions below are mostly about **when a green tick is
  * allowed to be on screen**, not about how it is drawn.
  *
  * **Every answer the panel shows is about a string the user is mid-typing.** A
@@ -360,7 +364,7 @@ function detectionRows(): string[] | null {
 
 // --- Fixtures ---------------------------------------------------------------
 
-const USABLE_PATH = "/home/lalenooz/projects/kantan"
+const USABLE_PATH = "/home/dev/projects/kantan"
 
 /** The three lines the artboard draws for a healthy repository. */
 const HEALTHY: DetectionCheck[] = [
@@ -458,14 +462,14 @@ describe("a detection answers for one path and no other", () => {
     { why: "a trailing space", typed: `${USABLE_PATH} `, detected: USABLE_PATH, fresh: false },
     { why: "a leading space", typed: ` ${USABLE_PATH}`, detected: USABLE_PATH, fresh: false },
     { why: "a trailing slash", typed: `${USABLE_PATH}/`, detected: USABLE_PATH, fresh: false },
-    { why: "a different case", typed: "/home/lalenooz/projects/Kantan", detected: USABLE_PATH, fresh: false },
+    { why: "a different case", typed: "/home/dev/projects/Kantan", detected: USABLE_PATH, fresh: false },
     { why: "an unexpanded tilde", typed: "~/projects/kantan", detected: USABLE_PATH, fresh: false },
     { why: "an empty box", typed: "", detected: USABLE_PATH, fresh: false },
     { why: "one more segment", typed: `${USABLE_PATH}/src`, detected: USABLE_PATH, fresh: false },
-    { why: "one segment fewer", typed: "/home/lalenooz/projects", detected: USABLE_PATH, fresh: false },
+    { why: "one segment fewer", typed: "/home/dev/projects", detected: USABLE_PATH, fresh: false },
     /* Decomposed vs composed: two different filenames on a Linux filesystem,
        and one `normalize()` away from reading as the same string. */
-    { why: "the other Unicode normalisation", typed: "/home/lalenooz/café", detected: "/home/lalenooz/café", fresh: false },
+    { why: "the other Unicode normalisation", typed: "/home/dev/café", detected: "/home/dev/café", fresh: false },
   ]
 
   for (const row of ROWS) {
@@ -561,30 +565,30 @@ describe("the refusals `src/git.ts` will actually make", () => {
     {
       code: "directory",
       says:
-        "/home/lalenooz/projects/kantan/README.md is a file, not a directory, so it cannot be a repository." +
+        "/home/dev/projects/kantan/README.md is a file, not a directory, so it cannot be a repository." +
         " Register the directory that contains your project.",
     },
     {
       code: "repo",
-      says: "/home/lalenooz/tmp is not a usable git repository: fatal: not a git repository",
+      says: "/home/dev/tmp is not a usable git repository: fatal: not a git repository",
     },
     {
       code: "worktree",
       says:
-        "/home/lalenooz/mirror.git is a bare git repository, so it has no working tree for an agent to edit." +
+        "/home/dev/mirror.git is a bare git repository, so it has no working tree for an agent to edit." +
         " Register a checkout of it instead.",
     },
     {
       code: "root",
       says:
-        "/home/lalenooz/projects/kantan/src is not the root of a git repository; it sits inside the one rooted at" +
-        " /home/lalenooz/projects/kantan. Register that root, or make this directory a repository of its own -" +
+        "/home/dev/projects/kantan/src is not the root of a git repository; it sits inside the one rooted at" +
+        " /home/dev/projects/kantan. Register that root, or make this directory a repository of its own -" +
         " kantan commits at the root, and a run here would commit there.",
     },
     {
       code: "commits",
       says:
-        "/home/lalenooz/projects/fresh has no commits yet, so orch/<task> has no base commit to branch from." +
+        "/home/dev/projects/fresh has no commits yet, so orch/<task> has no base commit to branch from." +
         " Make the first commit, then start the run.",
     },
     {
@@ -594,7 +598,7 @@ describe("the refusals `src/git.ts` will actually make", () => {
     {
       code: "registered",
       says:
-        "/home/lalenooz/projects/kantan is already registered in /home/lalenooz/.kantan/projects.json," +
+        "/home/dev/projects/kantan is already registered in /home/dev/.kantan/projects.json," +
         " so there is nothing to add.",
     },
   ]
@@ -864,8 +868,8 @@ describe("which account runs it", () => {
    * file never varies.
    */
   describe("two accounts of the same kind", () => {
-    const ACME = "/home/lalenooz/.claude-acme"
-    const GLOBEX = "/home/lalenooz/.claude-globex"
+    const ACME = "/home/dev/.claude-acme"
+    const GLOBEX = "/home/dev/.claude-globex"
     const TWO_WORK = [
       { kind: "work" as const, label: "work · acme", configDir: ACME },
       { kind: "work" as const, label: "work · globex", configDir: GLOBEX },
@@ -922,7 +926,7 @@ describe("which account runs it", () => {
           onSubmit: (d) => void drafts.push(d),
           accounts: [
             { kind: "personal" },
-            { kind: "work", configDir: "/home/lalenooz/.claude-work", usedFraction: 0.12 },
+            { kind: "work", configDir: "/home/dev/.claude-work", usedFraction: 0.12 },
           ],
         })}
       />,
@@ -931,7 +935,7 @@ describe("which account runs it", () => {
     await type(one<HTMLInputElement>(CMD_FIELD), "bun test")
     await click(addButton())
     expect(drafts).toEqual([
-      { path: USABLE_PATH, testCmd: "bun test", account: "work", configDir: "/home/lalenooz/.claude-work" },
+      { path: USABLE_PATH, testCmd: "bun test", account: "work", configDir: "/home/dev/.claude-work" },
     ])
   })
 
@@ -947,9 +951,9 @@ describe("which account runs it", () => {
 
   test("a profile directory that was given is printed verbatim", async () => {
     await render(
-      <api.AddRepo {...checked({ accounts: [{ kind: "personal", configDir: "/home/lalenooz/.claude" }] })} />,
+      <api.AddRepo {...checked({ accounts: [{ kind: "personal", configDir: "/home/dev/.claude" }] })} />,
     )
-    expect(prose()).toContain("/home/lalenooz/.claude")
+    expect(prose()).toContain("/home/dev/.claude")
   })
 
   /**
@@ -1012,10 +1016,10 @@ describe("which account runs it", () => {
   })
 
   test("the hint names the profile it was given", async () => {
-    await render(<api.AddRepo {...checked({ accounts: [{ kind: "work", configDir: "/home/lalenooz/.claude-work" }] })} />)
+    await render(<api.AddRepo {...checked({ accounts: [{ kind: "work", configDir: "/home/dev/.claude-work" }] })} />)
     await pickAccount("work")
     await type(one<HTMLInputElement>(CMD_FIELD), "bun test")
-    expect(prose()).toContain("Runs as work from /home/lalenooz/.claude-work. Tests: bun test.")
+    expect(prose()).toContain("Runs as work from /home/dev/.claude-work. Tests: bun test.")
   })
 
   test("not knowing the account is said as not knowing", async () => {
@@ -1058,7 +1062,7 @@ describe("the test command", () => {
     await pickAccount("personal")
     await type(one<HTMLInputElement>(CMD_FIELD), "make check")
 
-    const other = "/home/lalenooz/projects/other"
+    const other = "/home/dev/projects/other"
     await render(
       <api.AddRepo
         {...props({ path: other, detection: usable(other, { testCmd: "npm test", testCmdSource: "package.json" }) })}
@@ -1362,18 +1366,18 @@ describe("what the repository is called", () => {
   })
 
   test("repoLabel over every shape a root can take", () => {
-    expect(api.repoLabel("/home/lalenooz/projects/kantan")).toBe("kantan")
+    expect(api.repoLabel("/home/dev/projects/kantan")).toBe("kantan")
     expect(api.repoLabel("/kantan")).toBe("kantan")
     /* git prints no trailing slash, but a hand-written prop might. */
-    expect(api.repoLabel("/home/lalenooz/projects/kantan/")).toBe("kantan")
+    expect(api.repoLabel("/home/dev/projects/kantan/")).toBe("kantan")
     /* Nothing is left to name, so the whole thing is the name. */
     expect(api.repoLabel("/")).toBe("/")
     expect(api.repoLabel("")).toBe("this repository")
     /* A name that is itself a dot directory is still that directory's name. */
-    expect(api.repoLabel("/home/lalenooz/.dotfiles")).toBe(".dotfiles")
+    expect(api.repoLabel("/home/dev/.dotfiles")).toBe(".dotfiles")
     /* Spaces and non-ASCII are a directory name like any other. */
-    expect(api.repoLabel("/home/lalenooz/my repo")).toBe("my repo")
-    expect(api.repoLabel("/home/lalenooz/café")).toBe("café")
+    expect(api.repoLabel("/home/dev/my repo")).toBe("my repo")
+    expect(api.repoLabel("/home/dev/café")).toBe("café")
   })
 })
 

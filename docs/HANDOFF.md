@@ -716,7 +716,7 @@ If this is unified later, the fallbacks are load-bearing: happy-dom resolves a b
 a contrast test it should fail.
 
 
-### The tree cannot address a single route (open)
+### The tree cannot address a single route - BUILT, as specified
 
 `Tree.tsx` hands its caller a `TaskId` — `{projectPath, featureFile, taskRef}`.
 Every route in `src/server.ts` is keyed by **`runId`**: the stream, the plan,
@@ -735,7 +735,19 @@ The shell joins them. `taskKey` separates with `NUL`, which survives JSON as
 `\u0000` and is the one byte a path cannot contain, so the key stays unambiguous
 over the wire.
 
-### `raise` has no route (open)
+**Built, and in that shape**: `src/tree.ts` answers `runs` beside `projects`,
+keyed by `taskKey`, and it deliberately sends **every** task the logs know
+about rather than only the ones a tree row joined - a run whose feature file has
+since been renamed is still a run, and filtering to what is on screen would
+make it unaddressable the moment the tree and the logs disagree.
+
+One thing the NUL decision did *not* survive, and it is worth knowing which:
+that separator is right over the wire and wrong in the DOM. A React key built
+on it collided, and `optionId` in `src/ui/panel/accounts.ts` uses `/` instead -
+happy-dom's selector parser matches `\0` to U+0000, but CSS says an escape of
+zero is U+FFFD, so a NUL-keyed selector works only in the harness.
+
+### `raise` has no route - BUILT
 
 `createRunner` exposes `raise(runId, budgetUsd)`; nothing serves it. It is the
 only action carrying a numeric argument, so it owns a 400 no other route has:
@@ -743,6 +755,14 @@ a body that parses but whose number is absent, negative, zero, `NaN`, or a
 string. The CLI itself rejects a non-positive `--max-budget-usd` (probed,
 2026-10-11), so the route must not pass one through and let the spawn fail
 later, where the UI cannot attribute it.
+
+**Built**: `POST /api/runs/:id/raise` in `src/server.ts`, `raiseRun` in
+`src/routes/runs.ts`. The route's own 400 covers only a figure that could never
+fund anything - absent, not a number, not finite, not above zero - because
+whether a figure is a *raise* depends on the ceiling and the spend, neither of
+which is knowable over HTTP once a run has raised once: after that the ceiling
+lives in the run's own log rather than in `projects.json`. So the machine keeps
+that rule and answers `wrong-state`.
 
 ### `pkill -f "bun run src/server.ts"` is not yours alone
 
@@ -794,7 +814,7 @@ access on `never` and `x?.()` is "not callable". It cost four rounds of
 typecheck in `test/ui/useRun.test.tsx`. Use a holder - `const seen: { x: T |
 null } = { x: null }` - which keeps the declared type.
 
-### `GET /` serves a placeholder, so there is no single-process kantan (open)
+### `GET /` serves a placeholder, so there is no single-process kantan - BUILT
 
 `INDEX_STUB` in `src/server.ts` still answers *"kantan is running. The UI
 arrives in a later task."* The UI has arrived; `vite build` writes `dist/` and
@@ -807,6 +827,31 @@ built must still start and say why, rather than 404ing on its own index. Note
 the asset routes have to sit **inside** `ROUTES`, not in `Bun.serve({routes})`:
 the module header explains that a route registered there is matched before the
 guard chain runs and would never meet it.
+
+**Built**, in `src/routes/assets.ts`, that way - including the route placement,
+and including a `build` script, which did not exist, so the fallback page's
+advice was a command nobody could run. Assets are **not** token-exempt: the
+browser stores the cookie from `GET /` while processing its headers, before it
+parses the HTML referencing them, so the guard costs nothing and exempting a
+file route would have put a readable path on this port for any page on any
+other localhost port to probe.
+
+**Two things here were only found by probing, and one of them is a trap for
+anything else that serves a file:**
+
+- **`readBytesInside`'s root must be canonical, and `import.meta.dir` is not.**
+  The reader compares `realpath(file)` against the root it was handed. A
+  checkout reached through a symlink - `~/code` on another volume, macOS
+  resolving `/tmp` to `/private/tmp` - therefore failed containment **on the
+  build's own files**, and `GET /` answered a page telling someone who had just
+  run `bun run build` to run `bun run build`. Canonicalise per request, not at
+  launch: `dist/` is routinely built while the server is already up. Anything
+  new that reads a file under a configured directory inherits this.
+- **The shared reader decodes UTF-8 with `fatal: true`, on purpose.** Three of
+  the five files Vite emits are `.woff2`. So the read split into
+  `readBytesInside` (containment, cap, open flags) and `readInside` (a decoder
+  over it); a `binary` flag on one function would have made the return type
+  depend on an argument and put two policies behind one name.
 
 ### What a `done` run leaves behind: nothing in the working tree
 
@@ -1227,9 +1272,38 @@ and the Empty board's own note says why the others are not:
 
 `Empty.dc.html`'s CTA is now literally `<a href="AddRepo.dc.html">`.
 
-### What the four management screens need from the server (open)
+### What the four management screens need from the server - BUILT, bar one decision
 
-None of it exists. Recorded so the UI work and the API work can meet:
+All three are now served. Kept because each route carries a decision, and
+because the pattern they share turned out to be the most useful debugging
+heuristic in this project:
+
+**If something looks designed but inert, read the route table before the
+component.** `AddRepo`'s detection, `AddTasks`' Ask-Claude tab, `ProjectPanel`'s
+"Run it now" and "Add another account" were each written, documented and
+unreachable, and in every case the component was fine and the route did not
+exist. `POST /api/detect` was missing for long enough that adding a project
+answered a raw 400.
+
+The one piece still open, and it is a decision rather than work:
+
+- **`AddRepo`'s "Run it once" has no route, and should not get one yet.**
+  `POST /api/test` requires a *registered* project; this button wants to try a
+  command on a path that is not registered. `AddRepo.tsx` hides it when the
+  prop is absent, so there is no broken control on screen - the cheap
+  direction. `POST /api/detect`'s precedent does **not** carry: detect is
+  read-only and `sh -c` is not, so "we already widened one" is the wrong
+  argument. And the capability is reachable in two calls today - register, then
+  test - so widening buys a round trip, not a new power, which makes it a
+  convenience to weigh rather than a gap to close.
+  If it is built, the path must go through `requireUsableRepo` exactly as
+  registration does, and the live-run check must stay: `liveRunIdFor` is
+  already keyed on the path rather than the record, so it carries over
+  unchanged. Do **not** close this by running the *stored* command instead -
+  that answers a question nobody asked and labels the result with the command
+  on screen, which is the one reading that could get a bad command saved.
+
+The original note, for the reasoning behind each:
 
 - **Path detection while typing**, for `AddRepo`. Must answer, per path, what
   `requireUsableRepo` in `src/git.ts` already enumerates: no such directory
