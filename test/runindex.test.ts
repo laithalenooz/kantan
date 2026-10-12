@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { RunHeader, RunRecord } from "../src/runlog"
-import { foldRunLog, indexRuns, taskKey } from "../src/runindex"
+import { foldRunLog, indexRuns, taskKey, verificationOf } from "../src/runindex"
 
 // --- Folding one log --------------------------------------------------------
 
@@ -170,6 +170,96 @@ test("an end record outranks a stray phase record written after it", async () =>
   ])
 
   expect((await foldRunLog(path)).run?.state).toEqual({ kind: "done", merged: false })
+})
+
+// --- How a run was verified -------------------------------------------------
+// A project may have no test command, and then the agent verifies its own work
+// (docs/HANDOFF.md, user decision 2026-10-12). The one thing that holds is that
+// nothing claims a verification it did not observe, so the fold has to carry
+// **how** - and the absence policy makes the wrong guess here unusually cheap
+// to get wrong in the expensive direction: a log written before the field
+// existed cannot have recorded one, and reading that silence as "the tests
+// passed" would merge work nothing checked.
+
+test("a done run records which kind of verification it had", async () => {
+  const checked = await logFile([
+    headerLine(),
+    { kind: "end", state: "done", costUsd: 2, verifiedBy: "test-command" },
+  ])
+  const selfChecked = await logFile([
+    headerLine(),
+    { kind: "end", state: "done", costUsd: 2, verifiedBy: "self-check" },
+  ])
+
+  expect((await foldRunLog(checked)).run?.state).toEqual({
+    kind: "done",
+    merged: false,
+    verifiedBy: "test-command",
+  })
+  expect((await foldRunLog(selfChecked)).run?.state).toEqual({
+    kind: "done",
+    merged: false,
+    verifiedBy: "self-check",
+  })
+})
+
+test("a done run whose log never said how reads as unknown, never as tested", async () => {
+  // Every log on disk before this field existed is this case, and so is every
+  // log a newer writer truncates. The reading has to be "nobody wrote it down",
+  // because the alternative - inferring `test-command` from the fact that the
+  // field was once mandatory - is precisely the claim this run cannot support.
+  const path = await logFile([headerLine(), { kind: "end", state: "done", costUsd: 2 }])
+
+  const { run } = await foldRunLog(path)
+
+  expect(verificationOf(run?.state)).toBe("unknown")
+  // And it is absent from the state rather than filled in, so the state mirrors
+  // what the log actually said.
+  expect(run?.state).toEqual({ kind: "done", merged: false })
+})
+
+test("a verifiedBy this version does not know reads as unknown, with a warning", async () => {
+  // The open-dimension rule the rest of this fold follows: a newer writer can
+  // name a kind of verification this build has no word for. Passing it through
+  // would have the UI render a label it has no text for; reading it as tested
+  // would be the silent escalation. So: unknown, and say so in the warnings.
+  const path = await logFile([
+    headerLine(),
+    { kind: "end", state: "done", costUsd: 2, verifiedBy: "notarised-by-a-committee" },
+  ])
+
+  const { run, warnings } = await foldRunLog(path)
+
+  expect(verificationOf(run?.state)).toBe("unknown")
+  expect(warnings.join(" ")).toContain("notarised-by-a-committee")
+  // Stripped, not passed through: a label the UI has no text for would render
+  // as nothing at all, which looks exactly like a run that passed its tests.
+  expect(run?.state).toEqual({ kind: "done", merged: false })
+})
+
+test("verificationOf answers unknown for every state that is not a finished run", async () => {
+  // The guard the UI needs: a reader that only handles `done` would read a
+  // running or failed run's missing field as a pass by the same mistake.
+  for (const state of [
+    { kind: "running", phase: "implement" },
+    { kind: "waiting", reason: "gate" },
+    { kind: "failed", why: "it failed" },
+    { kind: "interrupted", resumeFrom: "test" },
+    undefined,
+  ] as const) {
+    expect(verificationOf(state), JSON.stringify(state)).toBe("unknown")
+  }
+})
+
+test("a failed run carries no verification, because nothing verified it", async () => {
+  const path = await logFile([
+    headerLine(),
+    { kind: "end", state: "failed", why: "the suite never passed", costUsd: 2, verifiedBy: "test-command" },
+  ])
+
+  // Even when a writer puts one there: `failed` means the work was not
+  // accepted, so a verification label on it could only mislead.
+  expect(verificationOf((await foldRunLog(path)).run?.state)).toBe("unknown")
 })
 
 test("test and human records do not move the run's state", async () => {
@@ -892,6 +982,38 @@ test("the predicate is given what the log knows about the run", async () => {
       branch: "orch/run-log-t7-cafe1234",
     },
   ])
+})
+
+test("verifiedBy survives the merge check, which is the layer the tree reads", async () => {
+  // The fold is not the layer the UI consumes - `indexRuns` is, and it rebuilds
+  // the done state to put `merged` in it. A literal there drops `verifiedBy`
+  // after the fold has read it, and the failure is silent: the state is still
+  // well-formed, still says `done`, and a self-checked run arrives at the tree
+  // indistinguishable from one whose suite passed. Both branches of the merge
+  // predicate, because only one of them rebuilds.
+  const dir = await scratchDir()
+  await logFile(
+    [headerLine({ runId: "r" }), { kind: "end", state: "done", costUsd: 1, verifiedBy: "self-check" }],
+    { dir, name: "r.jsonl" },
+  )
+
+  const merged = await indexRuns({ runsDir: dir, branchFor: fakeBranch, isMerged: () => true })
+  const unmerged = await indexRuns({ runsDir: dir, branchFor: fakeBranch, isMerged: () => false })
+  const unasked = await indexRuns({ runsDir: dir, branchFor: fakeBranch })
+
+  for (const [name, index] of [
+    ["merged", merged],
+    ["unmerged", unmerged],
+    ["no predicate", unasked],
+  ] as const) {
+    const state = index.tasks.get(taskKey(header()))?.state
+    expect(verificationOf(state), name).toBe("self-check")
+  }
+  expect(merged.tasks.get(taskKey(header()))?.state).toEqual({
+    kind: "done",
+    merged: true,
+    verifiedBy: "self-check",
+  })
 })
 
 test("a merge check that throws leaves the task unmerged with a warning", async () => {

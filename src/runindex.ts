@@ -1,7 +1,7 @@
 import { open, readdir } from "node:fs/promises"
 import { join } from "node:path"
 import { defaultRunsDir } from "./runlog"
-import type { RunHeader, RunPhase, RunRecord, WaitReason } from "./runlog"
+import type { RunHeader, RunPhase, RunRecord, Verification, WaitReason } from "./runlog"
 
 /**
  * What state is this task in?
@@ -43,10 +43,57 @@ import type { RunHeader, RunPhase, RunRecord, WaitReason } from "./runlog"
  *   unmerged" is a visible, recoverable refusal.
  */
 
+/**
+ * What a reader concludes about how a run was verified. `Verification` plus the
+ * one answer a writer cannot give: **nobody wrote it down.**
+ *
+ * `unknown` is not a gap to be filled in later. It is the honest reading of
+ * every log written before `verifiedBy` existed, of a log a newer writer
+ * truncated, and of a label this build has no word for - and it must never be
+ * rendered as, or collapse into, "the tests passed".
+ */
+export type VerificationReading = Verification | "unknown"
+
+/**
+ * How the newest run of a task was verified, read so that absence cannot pass
+ * for a pass.
+ *
+ * Exported as a function rather than left to callers reading `state.verifiedBy`
+ * for the reason `src/permissions.ts` exports `permissionDenials`: the
+ * guarantee - absence is `unknown`, a non-`done` run is `unknown`, and neither
+ * is ever `test-command` - lives here, once, instead of in every surface that
+ * draws a label. A caller that destructures the field instead gets `undefined`
+ * and will render nothing, which looks precisely like a run that passed.
+ *
+ * Deliberately total over `RunState | undefined`: a task with no run at all is
+ * `unknown` too, and making the caller guard first is how the one case nobody
+ * thinks about becomes the one case that reads wrong.
+ */
+export function verificationOf(state: RunState | undefined): VerificationReading {
+  if (state === undefined || state.kind !== "done") return "unknown"
+  return state.verifiedBy ?? "unknown"
+}
+
 export type RunState =
   | { kind: "running"; phase: RunPhase }
   | { kind: "waiting"; reason: WaitReason }
-  | { kind: "done"; merged: boolean }
+  | {
+      kind: "done"
+      merged: boolean
+      /**
+       * How it was verified, when the log said. **Absent means unknown** - read
+       * it through `verificationOf`, never directly.
+       *
+       * Optional rather than required, which is a deliberate trade and not an
+       * oversight. Required would force every reader to handle it, but it would
+       * also land a typecheck error in four `test/ui` suites that construct
+       * this value, which other agents hold right now. The guarantee is kept at
+       * runtime instead - `src/run.ts` writes it on every `done` run, so a
+       * state without one came from a log without one - and `verificationOf` is
+       * what makes the reading unmissable.
+       */
+      verifiedBy?: Verification
+    }
   | { kind: "failed"; why: string }
   /** No `end` record, and nobody says the run is live: the server died. */
   | { kind: "interrupted"; resumeFrom: RunPhase }
@@ -680,9 +727,35 @@ function readPhase(
  * `failed` naming it, never to `interrupted`: offering a resume would claim the
  * server died when the writer said the run finished.
  */
+/**
+ * The `verifiedBy` label on a `done` record, or `undefined` for "the log did
+ * not say" - which includes a label this version has no word for.
+ *
+ * An open dimension, like `phase` and `state` above, and read the same way: a
+ * newer writer can invent a kind of verification, and the two wrong answers are
+ * not symmetric. Passing an unrecognised label through would have the UI draw
+ * nothing for it, which is indistinguishable from a run that passed its tests;
+ * reading it as `test-command` would be that same lie stated outright. So it is
+ * stripped and said out loud in the warnings.
+ */
+function readVerification(value: unknown, warnings: string[]): Verification | undefined {
+  if (value === undefined) return undefined
+  if (value === "test-command" || value === "self-check") return value
+  warnings.push(
+    `an end record says it was verified by ${JSON.stringify(value)}, which this version has no reading for; treating how it was verified as unknown rather than guessing, since a run that cannot say how it was checked must not read as one that passed its tests`,
+  )
+  return undefined
+}
+
 function readEnd(record: RunRecord & { kind: "end" }, warnings: string[]): RunState {
   const state = record.state as unknown
-  if (state === "done") return { kind: "done", merged: false }
+  if (state === "done") {
+    // Spread rather than always present: the state mirrors what the log said,
+    // so a log that recorded nothing yields a state with nothing, and
+    // `verificationOf` is the single place that turns that into `unknown`.
+    const verifiedBy = readVerification(record.verifiedBy, warnings)
+    return { kind: "done", merged: false, ...(verifiedBy === undefined ? {} : { verifiedBy }) }
+  }
   const why = record.why
   if (state === "failed") {
     return {
@@ -819,7 +892,14 @@ export async function indexRuns(options: IndexOptions): Promise<RunIndex> {
     if (branch !== "" && state.kind === "done" && options.isMerged) {
       try {
         state = {
-          kind: "done",
+          // Spread, **not** a rebuild from `{kind, merged}`. This is the layer
+          // the tree actually consumes, so a literal here would drop
+          // `verifiedBy` after the fold had carefully read it - and a
+          // self-checked run would arrive at the UI indistinguishable from one
+          // whose suite passed, which is the single thing this field exists to
+          // prevent. It is also the direction that fails silently: the state is
+          // still well-formed and still says `done`.
+          ...state,
           merged: await options.isMerged({
             projectPath: newest.header.projectPath,
             featureFile: newest.header.featureFile,

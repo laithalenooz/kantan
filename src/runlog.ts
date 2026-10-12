@@ -222,11 +222,50 @@ export type HumanRecord =
   | { kind: "human"; action: "feedback"; text: string }
   | { kind: "human"; action: "raise"; budgetUsd: number }
 
+/**
+ * How a run's work was checked before its task was ticked. What a **writer**
+ * can claim, so there is no member for "nobody wrote it down" - that is a
+ * reading, and `verificationOf` in `src/runindex.ts` is where it is made.
+ *
+ * - `test-command` - the server ran `project.testCmd` and it exited 0. Design
+ *   §3.3's spine: verification from outside the agent, which cannot be talked
+ *   out of.
+ * - `self-check` - the project has no test command, so the agent was asked to
+ *   verify its own work and answered `ORCH: done` (the user's decision,
+ *   2026-10-12). **This is not a pass.** An agent saying "done" is not evidence
+ *   that it is - that is the entire reason the sentinel exists - so every
+ *   surface that reads this has to say so rather than borrowing the language of
+ *   a run whose tests ran.
+ */
+export type Verification = "test-command" | "self-check"
+
 export interface EndRecord {
   kind: "end"
   state: "done" | "failed"
   /** Why it failed. */
   why?: string
+  /**
+   * **How** this run was verified, on a `done` record - not merely that it was.
+   *
+   * The field exists because `testCmd` became optional, and with it the
+   * guarantee that a ticked task had ever been run. Once a run can be finished
+   * two ways, "done" alone is ambiguous in the one direction that costs
+   * something: it would let work nothing checked wear the language of work that
+   * passed a suite.
+   *
+   * Optional, per the absence policy in docs/HANDOFF.md: logs already on disk
+   * were written before this field existed. A reader must therefore treat its
+   * absence as **unknown**, and never as `test-command` - the inference is
+   * tempting, because the field was mandatory when those logs were written, but
+   * it is exactly the claim a log that does not say cannot support. Writers
+   * record it on every `done` run, command runs included, so that absence keeps
+   * meaning "an older log" rather than "this one".
+   *
+   * Nothing writes it on a `failed` record and no reader should honour one
+   * there: a failed run's work was not accepted, so a verification label on it
+   * could only mislead.
+   */
+  verifiedBy?: Verification
   /**
    * Things a human should see that are not the state: a feature file edited
    * mid-run, a task that was already ticked, a checkout that could not return
