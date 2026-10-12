@@ -722,6 +722,31 @@ export async function updateProject(
   if (!res.ok) throw new Error(`that change could not be saved: ${res.status} ${await text(res)}`)
 }
 
+/**
+ * Asks the server what is wrong with a path, before anything is registered.
+ *
+ * Answers `null` when the route is not there, which is deliberate rather than
+ * lazy: `AddRepo` has an `unknown` state for exactly this, and a probe that
+ * cannot run is not a path that is bad. Registration still enforces every rule
+ * — `requireUsableRepo` is the authority — so the worst case of a missing
+ * probe is the error arriving a moment later, which is where it arrived before
+ * this existed at all.
+ */
+export async function detectPath(
+  path: string,
+  fetcher: typeof fetch = fetch,
+): Promise<unknown | null> {
+  try {
+    const res = await withSession(fetcher, (f) =>
+      f(`${API}/detect`, { method: "POST", cache: "no-store", body: JSON.stringify({ path }) }),
+    )
+    if (!res.ok) return null
+    return await res.json()
+  } catch {
+    return null
+  }
+}
+
 /** The actions, design §4.4. POST, never GET: see the header of `src/server.ts`. */
 export type Action =
   | { kind: "approve" }

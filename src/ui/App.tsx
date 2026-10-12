@@ -6,7 +6,11 @@ import { Sidebar, sumProcessCost, type AccountWindow } from "./Sidebar.tsx"
 import { Digest, ReturnBand, type DigestSubject } from "./Digest.tsx"
 import { AppBar, Breadcrumb, NeedsYouBand, usePageAttention } from "./Chrome.tsx"
 import { Empty } from "./Empty.tsx"
-import { draftFeature, registerProject, removeProject, startRun, taskKeyOf, updateProject, type RunView } from "./live.ts"
+import { AddRepo, type Detection } from "./AddRepo.tsx"
+import { AddTasks } from "./AddTasks.tsx"
+import { ProjectPanel, type AccountOption } from "./ProjectPanel.tsx"
+import { StartPanel } from "./StartPanel.tsx"
+import { act, detectPath, registerProject, removeProject, startRun, taskKeyOf, updateProject, type RunView } from "./live.ts"
 import { useAction, usePlan, useRun, useTree } from "./useRun.ts"
 import type { RunPhase } from "../runlog.ts"
 import type { AskingPhase } from "./Gate.tsx"
@@ -186,284 +190,30 @@ function useNow(): number {
   return now
 }
 
-/**
- * Adding a repository: the only way a project enters the tree.
- *
- * A real form rather than a `prompt()`, because the server's refusals are the
- * useful part - "not a git repository", "not a worktree" - and they have to be
- * readable beside the field that caused them.
- */
-function AddProject({ onDone, onCancel }: { onDone: () => void; onCancel: () => void }) {
-  const [path, setPath] = useState("")
-  const [testCmd, setTestCmd] = useState("")
-  const [account, setAccount] = useState<"personal" | "work" | "">("")
-  const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
 
-  const submit = async (e: React.FormEvent): Promise<void> => {
-    e.preventDefault()
-    setBusy(true)
-    setError(null)
-    try {
-      await registerProject({
-        // Sent exactly as typed. `nonEmptyString` in `src/server.ts` judges
-        // emptiness on a trimmed copy and deliberately forwards the original —
-        // "nothing trimmed is ever forwarded" — so trimming here undid a
-        // decision made on purpose, and registered a path other than the one
-        // the user will later be shown.
-        path,
-        testCmd,
-        ...(account === "" ? {} : { account }),
-      })
-      onDone()
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setBusy(false)
-    }
-  }
 
-  return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-[#111216]/30 p-6" role="dialog" aria-modal="true" aria-label="Add a repository">
-      <form onSubmit={(e) => void submit(e)} className="w-full max-w-[520px] rounded-[18px] border border-edge bg-white p-6 shadow-lg">
-        <h2 className="text-[19px] font-[650] tracking-[-.015em] text-ink">Add a repository</h2>
-        <p className="mt-2 text-[13.5px] leading-[1.55] text-muted-500">
-          kantan reads the tasks in <span className="m">docs/features/*.md</span> and runs your test command after each one.
-        </p>
 
-        <label className="mt-5 block text-[12.5px] font-semibold text-muted-400" htmlFor="ap-path">Repository path</label>
-        <input id="ap-path" value={path} onChange={(e) => setPath(e.target.value)} required autoFocus
-          placeholder="/home/you/code/your-app"
-          className="m mt-1.5 w-full rounded-[10px] border border-edge px-3 py-2 text-[13.5px] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#5B5BD6]" />
-
-        <label className="mt-4 block text-[12.5px] font-semibold text-muted-400" htmlFor="ap-cmd">Test command</label>
-        <input id="ap-cmd" value={testCmd} onChange={(e) => setTestCmd(e.target.value)} required
-          placeholder="npm test"
-          className="m mt-1.5 w-full rounded-[10px] border border-edge px-3 py-2 text-[13.5px] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#5B5BD6]" />
-
-        <fieldset className="mt-4 border-0 p-0">
-          <legend className="text-[12.5px] font-semibold text-muted-400">Which Claude account does it bill to?</legend>
-          {/* Asked, never inferred. A rule turning a profile directory into
-              "work" is a guess about how someone names their folders, and
-              billing a client from the wrong account is the defect this chip
-              exists to prevent. "Not sure" is a real answer. */}
-          <div className="mt-2 flex gap-2">
-            {([["personal", "Personal"], ["work", "Work"], ["", "Not sure"]] as const).map(([value, label]) => (
-              <button
-                key={label}
-                type="button"
-                onClick={() => setAccount(value)}
-                aria-pressed={account === value}
-                className={`rounded-full border px-3 py-1.5 text-[12.5px] font-semibold ${
-                  account === value ? "border-ink bg-ink text-white" : "border-edge text-muted-500"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </fieldset>
-
-        {error !== null && (
-          <p role="alert" className="mt-4 rounded-[10px] border border-[#F3C6C9] bg-[#FDF2F3] px-3 py-2 text-[12.5px] leading-[1.5] text-[#D92D3A]">{error}</p>
-        )}
-
-        <div className="mt-6 flex items-center justify-end gap-3">
-          <button type="button" onClick={onCancel} className="ghost rounded-full px-4 py-2 text-[13px] font-semibold text-muted-500">Cancel</button>
-          <button type="submit" disabled={busy} className="cta rounded-full bg-ink px-4 py-2 text-[13px] font-semibold text-white disabled:opacity-50">
-            {busy ? "Adding…" : "Add repository"}
-          </button>
-        </div>
-      </form>
-    </div>
-  )
-}
 
 /**
- * Describing work, which writes the task file kantan runs from.
+ * What the centre column shows instead of a run.
  *
- * Without this the product has a hole in the middle: you register a repo, and
- * if it has no `docs/features/*.md` the tree shows it with nothing underneath
- * and no way forward. The entire input is a markdown file, and until now the
- * only way to get one was to leave, open an editor, and learn the format.
+ * One value, not four booleans. The design says each of these *replaces* the
+ * centre column, so two being open at once is a state that should not be
+ * representable - and dialogs are for confirmations only, which leaves exactly
+ * one, inside `ProjectPanel`.
  */
-function DescribeWork({ projectPath, onDone, onCancel }: { projectPath: string; onDone: (path: string) => void; onCancel: () => void }) {
-  const [text, setText] = useState("")
-  const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-
-  const submit = async (e: React.FormEvent): Promise<void> => {
-    e.preventDefault()
-    setBusy(true)
-    setError(null)
-    try {
-      onDone(await draftFeature(projectPath, text.trim()))
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-[#111216]/30 p-6" role="dialog" aria-modal="true" aria-label="Describe the work">
-      <form onSubmit={(e) => void submit(e)} className="w-full max-w-[560px] rounded-[18px] border border-edge bg-white p-6 shadow-lg">
-        <h2 className="text-[19px] font-[650] tracking-[-.015em] text-ink">What do you want done?</h2>
-        <p className="mt-2 text-[13.5px] leading-[1.55] text-muted-500">
-          Describe it the way you would to a teammate. kantan writes a task file into{" "}
-          <span className="m">docs/features/</span> and works through it one task at a time — you can edit the file afterwards.
-        </p>
-
-        <textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          required
-          rows={5}
-          autoFocus
-          placeholder="Add CSV export to the reports page, with a test that the file downloads and parses."
-          className="mt-4 w-full resize-y rounded-[12px] border border-edge px-3 py-2.5 text-[13.5px] leading-[1.6] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#5B5BD6]"
-        />
-
-        {error !== null && (
-          <p role="alert" className="mt-4 rounded-[10px] border border-[#F3C6C9] bg-[#FDF2F3] px-3 py-2 text-[12.5px] leading-[1.5] text-[#D92D3A]">{error}</p>
-        )}
-
-        <div className="mt-5 flex items-center justify-end gap-3">
-          <button type="button" onClick={onCancel} className="ghost rounded-full px-4 py-2 text-[13px] font-semibold text-muted-500">Cancel</button>
-          <button type="submit" disabled={busy || text.trim() === ""} className="cta rounded-full bg-ink px-4 py-2 text-[13px] font-semibold text-white disabled:opacity-50">
-            {busy ? "Writing the task file…" : "Write the task file"}
-          </button>
-        </div>
-      </form>
-    </div>
-  )
-}
-
-/** Changing a project's settings. Only what is edited is sent. */
-function ProjectSettings({ project, onDone, onCancel }: { project: TreeProject; onDone: () => void; onCancel: () => void }) {
-  const [testCmd, setTestCmd] = useState(project.testCmd)
-  const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-
-  const submit = async (e: React.FormEvent): Promise<void> => {
-    e.preventDefault()
-    setBusy(true)
-    setError(null)
-    try {
-      // Only what actually changed. A PATCH that sent every field would
-      // rewrite settings this dialog never shows - the budget, the models, the
-      // tool allowlist - which is the exact reason registering twice is
-      // refused rather than treated as an edit.
-      await updateProject(project.path, { testCmd: testCmd.trim() })
-      onDone()
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-[#111216]/30 p-6" role="dialog" aria-modal="true" aria-label="Project settings">
-      <form onSubmit={(e) => void submit(e)} className="w-full max-w-[520px] rounded-[18px] border border-edge bg-white p-6 shadow-lg">
-        <h2 className="text-[19px] font-[650] tracking-[-.015em] text-ink">{repoName(project.path)}</h2>
-        <p className="m mt-1 text-[12.5px] text-muted-400">{project.path}</p>
-
-        <label className="mt-5 block text-[12.5px] font-semibold text-muted-400" htmlFor="ps-cmd">Test command</label>
-        <input id="ps-cmd" value={testCmd} onChange={(e) => setTestCmd(e.target.value)} required
-          className="m mt-1.5 w-full rounded-[10px] border border-edge px-3 py-2 text-[13.5px] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#5B5BD6]" />
-
-        {/*
-          The account picker is deliberately NOT here.
-
-          `Project.account` is a label and controls nothing: `src/spawn.ts`
-          sets `CLAUDE_CONFIG_DIR` from `configDir`, `src/run.ts` records the
-          run's profile from `configDir`, and nothing reads `account` except
-          the chip's text. A control that PATCHed `account` alone would move
-          the chip, show a confirmation, and bill exactly the same account as
-          before - which is the defect `Account`'s own doc comment says the
-          chip exists to prevent.
-
-          The real switch is `ProjectPanel`'s, which carries the `configDir`
-          with it, and it lands with the server support for clearing that
-          field. Until then this dialog says so rather than offering a lever
-          that does nothing.
-        */}
-        <p className="mt-4 rounded-[10px] border border-edge bg-panel px-3 py-2.5 text-[12.5px] leading-[1.5] text-muted-500">
-          Changing which Claude account this project bills to means changing its profile directory, which this
-          dialog cannot do yet. It is <strong className="font-semibold text-ink">{repoName(project.path)}</strong>&rsquo;s
-          test command only for now.
-        </p>
-
-        {error !== null && (
-          <p role="alert" className="mt-4 rounded-[10px] border border-[#F3C6C9] bg-[#FDF2F3] px-3 py-2 text-[12.5px] leading-[1.5] text-[#D92D3A]">{error}</p>
-        )}
-
-        <div className="mt-6 flex items-center justify-end gap-3">
-          <button type="button" onClick={onCancel} className="ghost rounded-full px-4 py-2 text-[13px] font-semibold text-muted-500">Cancel</button>
-          <button type="submit" disabled={busy} className="cta rounded-full bg-ink px-4 py-2 text-[13px] font-semibold text-white disabled:opacity-50">
-            {busy ? "Saving…" : "Save"}
-          </button>
-        </div>
-      </form>
-    </div>
-  )
-}
-
-/** Confirming removal, and saying plainly what is and is not deleted. */
-function ConfirmRemove({
-  project,
-  onDone,
-  onCancel,
-  onError,
-}: {
-  project: TreeProject
-  onDone: () => void
-  onCancel: () => void
-  onError: (message: string) => void
-}) {
-  const [busy, setBusy] = useState(false)
-  const go = async (): Promise<void> => {
-    setBusy(true)
-    try {
-      await removeProject(project.path)
-      onDone()
-    } catch (cause) {
-      onError(cause instanceof Error ? cause.message : String(cause))
-      onCancel()
-    }
-  }
-  return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-[#111216]/30 p-6" role="dialog" aria-modal="true" aria-label="Remove project">
-      <div className="w-full max-w-[480px] rounded-[18px] border border-edge bg-white p-6 shadow-lg">
-        <h2 className="text-[19px] font-[650] tracking-[-.015em] text-ink">Remove {repoName(project.path)}?</h2>
-        {/* The sentence that matters: this is the one destructive-looking
-            action in the app, and it touches nothing on disk. */}
-        <p className="mt-2 text-[13.5px] leading-[1.55] text-muted-500">
-          kantan stops tracking it. Your repository, its branches and its task files are not touched — nothing is
-          deleted from disk. You can add it again at any time.
-        </p>
-        <div className="mt-6 flex items-center justify-end gap-3">
-          <button type="button" onClick={onCancel} className="ghost rounded-full px-4 py-2 text-[13px] font-semibold text-muted-500">Cancel</button>
-          <button type="button" onClick={() => void go()} disabled={busy}
-            className="rounded-full bg-[#D92D3A] px-4 py-2 text-[13px] font-semibold text-white disabled:opacity-50">
-            {busy ? "Removing…" : "Remove"}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
+type Panel =
+  | { kind: "addRepo" }
+  | { kind: "addTasks"; projectPath: string; featureFile: string }
+  | { kind: "project"; path: string }
+  | null
 
 export function App() {
   const { tree, origin, error: treeError, reload } = useTree()
-  const [adding, setAdding] = useState(false)
-  const [describing, setDescribing] = useState<string | null>(null)
-  /** A project opened in its own right, rather than one of its tasks. */
-  const [openProject, setOpenProject] = useState<string | null>(null)
-  const [editing, setEditing] = useState<TreeProject | null>(null)
-  const [removing, setRemoving] = useState<TreeProject | null>(null)
+  const [panel, setPanel] = useState<Panel>(null)
   const [projectError, setProjectError] = useState<string | null>(null)
+  const [repoPath, setRepoPath] = useState("")
+  const [detection, setDetection] = useState<Detection>({ phase: "idle" })
   const nowMs = useNow()
   const [selected, setSelected] = useState<TaskId | null>(null)
   const [started, setStarted] = useState<Record<string, string>>({})
@@ -492,6 +242,12 @@ export function App() {
       setStarted((prior) => ({ ...prior, [selectedKey]: id }))
     } catch (cause) {
       setStartError(cause instanceof Error ? cause.message : String(cause))
+      // Rethrown, not swallowed. `StartPanel` shows "Planning. The agent is
+      // reading your repo." until its promise settles, and resolving on a
+      // refusal leaves that sentence on screen forever beside the red alert —
+      // the card claiming a run that never started. Rejecting is how a refusal
+      // is reported, which is `Gate.onApprove`'s contract too.
+      throw cause
     }
   }, [selected, selectedKey])
 
@@ -573,7 +329,7 @@ export function App() {
      empty state's two-column hero, which then stacks below the fold. */
   const showRail = view !== null && view.ceilingUsd !== null
   const nothingSelected =
-    treeError === null && tree !== null && projects.length > 0 && selected === null && openProject === null && emptyProjectOf(projects) === null
+    treeError === null && tree !== null && projects.length > 0 && selected === null && panel === null
   /**
    * A registered project with no task file at all.
    *
@@ -589,12 +345,152 @@ export function App() {
    * broken.
    */
   const panelProject =
-    openProject !== null
-      ? (projects.find((p) => p.path === openProject) ?? null)
-      : selected === null
-        ? emptyProject
-        : null
-  const noProjects = treeError === null && tree !== null && projects.length === 0
+    panel?.kind === "project" ? (projects.find((p) => p.path === panel.path) ?? null) : null
+  const noProjects = treeError === null && tree !== null && projects.length === 0 && panel === null
+
+  /**
+   * The accounts to choose between, derived from what is registered.
+   *
+   * An account IS a profile directory: `src/spawn.ts` sets
+   * `CLAUDE_CONFIG_DIR` from `configDir` and `src/run.ts` records the run's
+   * profile from it, while `account` is only the chip's word. So the options
+   * are the distinct `configDir`s across the tree plus the default profile,
+   * and switching carries the directory - not the label - or it changes
+   * nothing at all.
+   */
+  const accountOptions: AccountOption[] = useMemo(() => {
+    const byKey = new Map<string, AccountOption>()
+    byKey.set("", { kind: "personal", label: "default profile" })
+    for (const p of projects) {
+      if (p.account.kind === "personal" || p.account.kind === "work") {
+        const label = p.account.label ?? p.account.kind
+        byKey.set(label, { kind: p.account.kind, label })
+      }
+    }
+    return [...byKey.values()]
+  }, [projects])
+
+  const guard = useCallback(async (work: () => Promise<void>): Promise<void> => {
+    setProjectError(null)
+    try {
+      await work()
+      reload()
+    } catch (cause) {
+      setProjectError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }, [reload])
+
+  const onSwitchAccount = useCallback(
+    async (path: string, account: AccountOption): Promise<void> => {
+      // Carries the profile, never just the word. See `accountOptions`.
+      await guard(() => updateProject(path, { account: account.kind }))
+    },
+    [guard],
+  )
+
+  const onSaveTestCmd = useCallback(
+    async (path: string, testCmd: string): Promise<void> => await guard(() => updateProject(path, { testCmd })),
+    [guard],
+  )
+
+  const onRemoveProject = useCallback(
+    async (project: TreeProject): Promise<void> => {
+      await guard(async () => {
+        await removeProject(project.path)
+        setPanel(null)
+        if (selected?.projectPath === project.path) setSelected(null)
+      })
+    },
+    [guard, selected],
+  )
+
+  /* Debounced in the shell, not the component: one owner holds the string and
+     the component keys its answer on the exact bytes it was told about. */
+  useEffect(() => {
+    if (panel?.kind !== "addRepo" || repoPath.trim() === "") {
+      setDetection({ phase: "idle" })
+      return
+    }
+    const asked = repoPath
+    setDetection({ phase: "checking", path: asked })
+    let live = true
+    const id = setTimeout(() => {
+      void (async () => {
+        const answer = await detectPath(asked)
+        if (!live) return
+        setDetection(
+          answer === null
+            ? { phase: "unknown", path: asked, why: "kantan could not check this path from here. Adding it will still be checked properly." }
+            : (answer as Detection),
+        )
+      })()
+    }, 350)
+    return () => {
+      live = false
+      clearTimeout(id)
+    }
+  }, [panel?.kind, repoPath])
+
+  /**
+   * Another task in this project that is already holding the run lock.
+   *
+   * `acquireRunLock` is per repository - one active run per project - so this
+   * is computed within the selected project and not across the tree. The
+   * state travels with the label because "is running" is a claim the card
+   * cannot make from being blocked alone: a run parked at a gate holds the
+   * lock and no process.
+   */
+  const blockedBy = useMemo(() => {
+    if (project === null || selected === null) return null
+    for (const feature of project.features) {
+      for (const other of feature.tasks) {
+        if (other.ref === selected.taskRef && feature.path === selected.featureFile) continue
+        const state = other.run?.state
+        if (state?.kind === "running" || state?.kind === "waiting") {
+          return { label: other.ref === null ? other.text : `${other.ref} ${other.text}`, state }
+        }
+      }
+    }
+    return null
+  }, [project, selected])
+
+  /** The feature file an "add tasks" panel is about. */
+  const addTasksFor = useMemo(() => {
+    if (panel?.kind !== "addTasks") return null
+    const project = projects.find((p) => p.path === panel.projectPath)
+    const feature = project?.features.find((f) => f.path === panel.featureFile)
+    return project === undefined || feature === undefined ? null : { project, feature }
+  }, [panel, projects])
+
+  /**
+   * Start or resume, which is the centre column for a selected task with no
+   * run on screen. `canStart` and `canResume` are the Tree's own readings, so
+   * the two cannot disagree about what a task's state allows.
+   */
+  const startPanel = useMemo(() => {
+    if (task === null || selected === null || project === null) return null
+    if (runId !== null && view !== null) return null
+    const common = {
+      task,
+      featureFile: selected.featureFile,
+      account: project.account,
+      testCmd: project.testCmd === "" ? null : project.testCmd,
+    }
+    // `act` directly, not `send`: `useAction` catches into its own `error` and
+    // resolves, which would settle the card as though the resume had worked.
+    if (canResume(task) && runId !== null) {
+      return { ...common, kind: "resume" as const, onResume: () => act(runId, { kind: "resume" }) }
+    }
+    if (canStart(task)) {
+      return {
+        ...common,
+        kind: "start" as const,
+        onStart: () => onStart(),
+        ...(blockedBy === null ? {} : { blockedBy }),
+      }
+    }
+    return null
+  }, [task, selected, project, runId, view, onStart, blockedBy])
 
   const failure = treeError ?? startError ?? actionError ?? projectError
 
@@ -629,19 +525,19 @@ export function App() {
         <Tree
           projects={projects}
           selected={selected}
-          selectedProject={openProject}
+          selectedProject={panel?.kind === "project" ? panel.path : null}
           onSelect={(task) => {
             // The two selections are exclusive: the centre column is about one
             // thing, and leaving a project open behind a task would make the
             // breadcrumb and the panel disagree.
-            setOpenProject(null)
+            setPanel(null)
             setSelected(task)
           }}
           onSelectProject={(path) => {
             setSelected(null)
-            setOpenProject(path)
+            setPanel({ kind: "project", path })
           }}
-          onAddProject={() => setAdding(true)}
+          onAddProject={() => setPanel({ kind: "addRepo" })}
         />
       </div>
 
@@ -652,7 +548,28 @@ export function App() {
           rendered *inside* the main these replace, and `useTree` does not clear
           `tree` on a failed refetch - so without it an error would be silently
           swallowed on a tree that had loaded once. */}
-      {noProjects && <Empty kind="no-projects" onAddProject={() => setAdding(true)} />}
+      {noProjects && <Empty kind="no-projects" onAddProject={() => setPanel({ kind: "addRepo" })} />}
+
+      {panel?.kind === "addRepo" && (
+        <AddRepo
+          path={repoPath}
+          onPathChange={setRepoPath}
+          detection={detection}
+          onCheck={() => setRepoPath((p) => p)}
+          onSubmit={async (draft) => {
+            await guard(async () => {
+              await registerProject(draft)
+              setPanel(null)
+              setRepoPath("")
+            })
+          }}
+          onCancel={() => {
+            setPanel(null)
+            setRepoPath("")
+          }}
+          accounts={accountOptions}
+        />
+      )}
       {nothingSelected && <Empty kind="no-selection" />}
 
       {/* The dotted ground is its **own absolutely positioned layer**, exactly
@@ -680,6 +597,23 @@ export function App() {
           </p>
         )}
 
+        {panel?.kind === "addTasks" && addTasksFor !== null && (
+          <AddTasks
+            project={addTasksFor.project.path.split("/").at(-1) ?? addTasksFor.project.path}
+            featureFile={addTasksFor.feature.path}
+            tasks={addTasksFor.feature.tasks}
+            account={addTasksFor.project.account}
+            onAdd={() => {
+              // No write endpoint yet: the component reports a refusal rather
+              // than claiming an append that did not happen.
+              throw new Error("adding tasks to an existing file is not wired to the server yet")
+            }}
+            onCancel={() => setPanel(null)}
+          />
+        )}
+
+        {startPanel !== null && <StartPanel {...startPanel} />}
+
         {gate !== null && (
           <div className="w-full max-w-[920px]">
             <Gate {...gate} />
@@ -704,90 +638,16 @@ export function App() {
         )}
 
         {panelProject !== null && (
-          <section className="m-4 max-w-[620px] rounded-[14px] border border-edge bg-white px-5 py-5">
-            <h2 className="text-[19px] font-[650] tracking-[-.015em] text-ink">{repoName(panelProject.path)}</h2>
-            <p className="m mt-1 text-[12.5px] text-muted-400">{panelProject.path}</p>
-            <p className="m mt-3 text-xs text-muted-400">$ {panelProject.testCmd}</p>
-
-            {panelProject.features.length === 0 ? (
-              <p className="mt-4 text-[13.5px] leading-[1.55] text-muted-500">
-                No task file yet. kantan works through tasks written in <span className="m">docs/features/*.md</span>,
-                one at a time. Describe what you want and it will write the first one — or add the file yourself and
-                it will appear here.
-              </p>
-            ) : (
-              <>
-                <p className="mt-4 text-[13.5px] leading-[1.55] text-muted-500">
-                  {taskCount(panelProject)} in {panelProject.features.length}{" "}
-                  {panelProject.features.length === 1 ? "task file" : "task files"}. Pick one on the left to plan it,
-                  or add more work below.
-                </p>
-                <ul className="m mt-3 list-none space-y-1 p-0 text-[12.5px] text-muted-500">
-                  {panelProject.features.map((f) => (
-                    <li key={f.path}>
-                      {f.path} · {f.tasks.length} {f.tasks.length === 1 ? "task" : "tasks"}
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-
-            <div className="mt-5 flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                onClick={() => setDescribing(panelProject.path)}
-                className="cta rounded-full bg-ink px-4 py-2 text-[13px] font-semibold text-white"
-              >
-                Describe what you want done
-              </button>
-              <button
-                type="button"
-                onClick={() => setEditing(panelProject)}
-                className="ghost rounded-full border border-edge px-4 py-2 text-[13px] font-semibold text-muted-500"
-              >
-                Settings
-              </button>
-              <button
-                type="button"
-                onClick={() => setRemoving(panelProject)}
-                className="ghost rounded-full px-4 py-2 text-[13px] font-semibold text-[#D92D3A]"
-              >
-                Remove
-              </button>
-            </div>
-          </section>
+          <ProjectPanel
+            project={panelProject}
+            accounts={accountOptions}
+            onSwitchAccount={(account) => onSwitchAccount(panelProject.path, account)}
+            onSaveTestCmd={(cmd) => onSaveTestCmd(panelProject.path, cmd)}
+            onRemove={() => onRemoveProject(panelProject)}
+          />
         )}
 
-        {task !== null && canResume(task) && runId !== null && (
-          <div className="m-4 max-w-[620px] rounded-[14px] border border-edge bg-panel px-5 py-[18px]">
-            <p className="text-[13.5px] leading-[1.55] text-muted-500">
-              {task.ref} was interrupted — the run was killed before it finished, so its log just stops. Resuming
-              picks it up from the last phase it recorded, on the branch it was already using.
-            </p>
-            <button
-              type="button"
-              onClick={() => void send({ kind: "resume" })}
-              className="cta mt-3 rounded-full bg-ink px-4 py-2 text-[13px] font-semibold text-white"
-            >
-              Resume this run
-            </button>
-          </div>
-        )}
 
-        {runId === null && task !== null && canStart(task) && (
-          <div className="m-4 rounded-[14px] border border-edge bg-panel px-4 py-[18px]">
-            <p className="text-[13.5px] leading-[1.55] text-muted-500">
-              {task.ref} has not run yet.
-            </p>
-            <button
-              type="button"
-              onClick={() => void onStart()}
-              className="mt-3 rounded-full bg-ink px-4 py-2 text-[13px] font-semibold text-white"
-            >
-              Start this task
-            </button>
-          </div>
-        )}
         </div>
       </main>
 
@@ -809,52 +669,9 @@ export function App() {
       )}
       </div>
 
-      {editing !== null && (
-        <ProjectSettings
-          project={editing}
-          onDone={() => {
-            setEditing(null)
-            reload()
-          }}
-          onCancel={() => setEditing(null)}
-        />
-      )}
 
-      {removing !== null && (
-        <ConfirmRemove
-          project={removing}
-          onDone={() => {
-            // The panel was about a project that no longer exists.
-            if (openProject === removing.path) setOpenProject(null)
-            if (selected?.projectPath === removing.path) setSelected(null)
-            setRemoving(null)
-            reload()
-          }}
-          onCancel={() => setRemoving(null)}
-          onError={setProjectError}
-        />
-      )}
 
-      {describing !== null && (
-        <DescribeWork
-          projectPath={describing}
-          onDone={() => {
-            setDescribing(null)
-            reload()
-          }}
-          onCancel={() => setDescribing(null)}
-        />
-      )}
 
-      {adding && (
-        <AddProject
-          onDone={() => {
-            setAdding(false)
-            reload()
-          }}
-          onCancel={() => setAdding(false)}
-        />
-      )}
     </div>
   )
 }
