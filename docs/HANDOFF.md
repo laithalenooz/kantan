@@ -1095,6 +1095,63 @@ turn. The general rule earns its keep on lists and cards, not here.
 Re-run the detector after any further UI work; these two are the expected
 output, so anything else is new.
 
+### The artboards are an INTERACTIVE prototype, and mirrors lose that
+
+`docs/design/*.dc.html` are mirrors of
+`https://claude.ai/artifact/8bUgEYyZnhurjGHMjWjNvE`. Eight of its nine boards
+carry `is_interactive: true` in `docs/design/canvas.json`, and they link to each
+other: `Empty -> AddRepo -> Start`, `Start -> {AddTasks, Project, AddRepo,
+Return}`, `AddTasks -> {Start, Project, AddRepo}`, `Project -> AddRepo`.
+
+Every round of UI work so far was built from **screenshots of a working
+prototype**, so the behaviour was re-invented each time and the flows were
+never built at all. When reading a board, read its `<sc-if>` branches, its
+`<sc-for>` loops and its `data-props` - those are the specification, not the
+pixels. `Start.dc.html` alone declares
+`variant: "open" | "interrupted" | "busy"` and branches nine ways on it.
+
+`docs/design/canvas.json`'s `notes` carry a component-level spec per screen.
+Read it before touching a screen; it is the most information-dense file in the
+design.
+
+### Dialogs are for confirmations ONLY
+
+The governing line, from the canvas notes:
+
+> *"All of these replace the centre column. No routes, no settings page, and
+> dialogs only for confirmations."*
+
+Four modals were built before this was known - Add a repository, Describe the
+work, Project settings, Remove project. **Only Remove is allowed to be one**,
+and the Empty board's own note says why the others are not:
+
+> *"One action: shadcn Button that opens the Add repository panel inline in the
+> centre column. It is not a dialog, because the brief allows modals only for
+> confirmations."*
+
+`Empty.dc.html`'s CTA is now literally `<a href="AddRepo.dc.html">`.
+
+### What the four management screens need from the server (open)
+
+None of it exists. Recorded so the UI work and the API work can meet:
+
+- **Path detection while typing**, for `AddRepo`. Must answer, per path, what
+  `requireUsableRepo` in `src/git.ts` already enumerates: no such directory
+  (**naming the deepest ancestor that does exist** - the sentence that finds a
+  typo), a file rather than a directory, not a git repository, a bare repo, a
+  subdirectory of a repo (naming the root), no commits yet, a relative path.
+  A user hit exactly this and only learned after submitting.
+- **"Run it now"** for the test command, answering an exit code, for
+  `Project`. `src/testrun.ts` already runs a project's command. This is also
+  the honest answer to "why is a test command mandatory" - you can prove it
+  works before trusting it.
+- **Draft without writing**, for `AddTasks`. `POST /api/features` currently
+  drafts *and* writes in one step. The design proposes tasks as editable,
+  checkable rows with a diff, so drafting must return `{path, markdown,
+  feature}` and a separate call must write the chosen subset. `draftFeature`
+  in `src/draft.ts` already returns without writing - only the route conflates
+  the two.
+
 ## Settled: decisions with non-obvious reasons
 
 | Decision | Why it is not the obvious thing |
