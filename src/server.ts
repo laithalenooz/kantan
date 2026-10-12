@@ -52,57 +52,53 @@ import type { RunRecord } from "./runlog"
  */
 import type { Account, TreeFeature, TreeProject, TreeTask } from "./ui/Tree.tsx"
 
+/* The HTTP shapes. Re-exported below, because `src/server.ts` is still the one
+   entry point to this layer: a caller that wanted `RouteContext` should not
+   have to learn that it moved, and the test suite imports several of these. */
+import {
+  DEFAULT_DEV_PORT,
+  DEFAULT_PORT,
+  LOOPBACK,
+  TOKEN_COOKIE,
+  allowedHosts,
+  allowedOrigins,
+  checkRequest,
+  fault,
+  hasToken,
+  refuse,
+  tokenCookie,
+} from "./http/guards"
+import { badBody, nonEmptyString, parseBody, readBody } from "./http/body"
+import { inside, readInside } from "./http/readinside"
+import type { FileRead } from "./http/readinside"
 
-/**
- * The local HTTP server, and the guard chain that runs ahead of every route.
- *
- * These endpoints hand arbitrary text to an agent with file-write and shell
- * access, so "it only listens on localhost" is not sufficient protection:
- *
- * - Any page the owner visits can POST to a localhost port. The browser sends
- *   it willingly; the same-origin policy only stops the page reading the
- *   response, which is no comfort for an endpoint that *starts work*.
- * - DNS rebinding defeats the naive assumption: the attacker's domain resolves
- *   to their server, then re-resolves to 127.0.0.1, and their page is now
- *   same-origin with us. The `Host` header is what catches that, which is why
- *   an absent `Host` is refused rather than read as local.
- *
- * Both guards *accept* input, so the usual costs invert: over-accepting is a
- * vulnerability and over-rejecting is a tool that will not start. Hence exact
- * matching against an allowlist, with no normalisation step anywhere - a
- * suffix match on `localhost` would accept `localhost.evil.com`, and a prefix
- * match on `127.0.0.1` would accept `127.0.0.1.evil.com`.
- *
- * The one streaming route lives here too. Design §4.4: SSE carries the run
- * stream, and on connect the server replays the run's JSONL from byte 0 before
- * following it live. That is what makes closing the browser safe - the server
- * owns the child process, so a reconnecting client replays everything and then
- * tails, with no cursor and no reconnect state machine.
- *
- * Every action - start, approve, feedback, answer, raise, resume, stop, and
- * registering, editing or removing a project - uses a method a browser sends an
- * `Origin` with, and that is not a stylistic choice. `SameSite=Strict`
- * ignores **ports**, so a page on any other localhost port is same-site: its
- * no-cors GETs (an `img`, a `script`, a navigation) carry the auth cookie and
- * send no `Origin`. A convenience GET that started a run would be reachable
- * from every other local page on this machine.
- *
- * None of the seven run actions does any orchestration here. They validate a
- * request and hand it to the `Runner` the server was constructed with - the
- * phase machine - so the states a run can be in are decided in one place
- * rather than encoded a second time in a status code.
- *
- * Registration is the exception, and deliberately so: there is no run and no
- * machine involved, only `src/projects.ts`'s store plus the one check the store
- * cannot make, which is whether the path is a git repository kantan could run
- * in at all.
- */
+import type {
+  Acted,
+  Launch,
+  Refusal,
+  Refused,
+  RouteContext,
+  RouteHandler,
+  Runner,
+  ServerOptions,
+  StartRequest,
+  Started,
+} from "./http/context"
 
-const LOOPBACK = "127.0.0.1"
-const DEFAULT_PORT = 3100
-/** Vite's default. Only ever consulted in dev mode. */
-const DEFAULT_DEV_PORT = 5173
-const TOKEN_COOKIE = "orch_token"
+export type {
+  Acted,
+  Launch,
+  Refusal,
+  Refused,
+  RouteContext,
+  RouteHandler,
+  Runner,
+  ServerOptions,
+  StartRequest,
+  Started,
+}
+
+
 /** `replay`'s own default, not a second opinion about it. */
 const DEFAULT_STREAM_POLL_MS = 50
 /**
@@ -122,317 +118,6 @@ const DEFAULT_STREAM_POLL_MS = 50
  * for as long as the human takes, which is the case that breaks.
  */
 const DEFAULT_STREAM_KEEP_ALIVE_MS = 5_000
-
-// --- The seam to the phase machine -----------------------------------------
-
-/**
- * The task a start request names, in the three parts that identify one.
- *
- * Nothing here is resolved: `projectPath` is a key into `projects.json` and not
- * a repo the server has looked at, and `featureFile` is a path **from a request
- * body**, in the same escape class as a run id. The machine owns both lookups,
- * because it is the one that already holds the project record, the parse-time
- * bytes of the feature file and the git guards - and because `featureFile` is a
- * path `tickTask` later *writes* to, so whoever refuses an absolute path or a
- * `..` in it must be the code that joins it, not a layer above.
- */
-export interface StartRequest {
-  /** The repo, spelled as `projects.json` spells it: the record's identity. */
-  projectPath: string
-  /** The feature markdown, relative to the repo root. */
-  featureFile: string
-  /** The `T<n>` label inside that file. */
-  taskRef: string
-  /**
-   * Start even though the repo has uncommitted work, so the agent continues
-   * from where the human left off.
-   *
-   * **Optional, and omitted rather than sent as `false`.** The port is a
-   * structural match against `createRunner` rather than an import, so this
-   * declaration and the machine's have to agree by hand; keeping it optional on
-   * both sides means an ordinary start is expressible without mentioning the
-   * flag at all, which is what a caller that has never heard of it sends.
-   *
-   * It does not waive an in-progress merge or an unresolved conflict - the
-   * machine refuses those whatever this says.
-   */
-  allowDirty?: boolean
-}
-
-/**
- * Why the machine would not do what was asked.
- *
- * A code rather than a message alone, because two refusals that share a status
- * need different UI: `dirty` carries `git stash` advice to show, `busy` points
- * at a run already going. The status mapping is `ACTION_STATUS` below.
- */
-export type Refusal =
-  | "unknown-project"
-  | "unknown-feature"
-  | "unknown-task"
-  | "unknown-run"
-  /** The project already has an active run. One per project is the collision
-   * guard (design §7), so this is a normal answer and not an error. */
-  | "busy"
-  /** The repo has uncommitted work, so a new run there could commit over it. */
-  | "dirty"
-  /** The run exists and is in a state that does not take this action: approving
-   * a run that is not at the gate, stopping one that has already finished. */
-  | "wrong-state"
-
-export interface Refused {
-  ok: false
-  refusal: Refusal
-  /**
-   * Shown to the human as written, so it is **the machine's** prose and never
-   * the caller's. `src/git.ts` names the dirty files and the stash that clears
-   * them; forwarding that is the whole point, and a bare "repo is dirty" would
-   * be a bad experience when the fix is one command. Nothing from a request
-   * body may be quoted back into it.
-   */
-  message: string
-}
-
-export type Started = { ok: true; runId: string } | Refused
-export type Acted = { ok: true } | Refused
-
-/**
- * The phase machine, as these routes need it. `src/run.ts` (Task 13)
- * satisfies it; the server is constructed with one so a test can inject a
- * double, and so this file imports nothing from the machine.
- *
- * Four facts this interface is making a promise about:
- *
- * 1. **An expected refusal comes back as a tagged result, not a throw.** Every
- *    state question - busy, dirty, not at the gate, no such run - is a `Refused`
- *    with a code. A rejection means a fault, and the server answers 500 and
- *    logs it. Sniffing an `Error` message for "dirty" would be the alternative,
- *    and it would break on a reworded sentence.
- * 2. **Each call resolves once the transition is accepted**, not when the work
- *    finishes: the run registered and the child spawned, or the signal sent. A
- *    phase runs for minutes and an HTTP request cannot wait for one - Bun cuts
- *    an idle connection at about ten seconds (HANDOFF), and everything after
- *    the transition reaches the client through the run stream anyway.
- * 3. **The machine decides the state rule, and the server never reads the run
- *    log or the index to second-guess it.** Encoding "which states accept
- *    feedback" in both places would put the answer in two files and race
- *    between the asking and the doing - the same race a separate `isBusy` query
- *    would open on start.
- * 4. **The machine is the only writer of a run log.** The server appends no
- *    `human` record for an approval or a feedback: one writer per log, and the
- *    machine is holding it open.
- */
-export interface Runner {
-  /** Resolves once the run is registered and its plan phase is spawned. */
-  start(request: StartRequest): Promise<Started>
-  /** Approves the plan at the gate, which starts a **fresh** implement session
-   * (design §3.1). `wrong-state` for a run that is not waiting at the gate. */
-  approve(runId: string): Promise<Acted>
-  /**
-   * Replaces approval with the human's words, resuming the **plan** session.
-   *
-   * `text` is passed through byte for byte, exactly as the human typed it:
-   * `src/spawn.ts` puts a prompt into a stream-json user message on the child's
-   * **stdin**, so `JSON.stringify` escapes every byte of it and there is no
-   * shell and no argv length to respect. The server judges emptiness on a
-   * trimmed copy and forwards the original.
-   */
-  feedback(runId: string, text: string): Promise<Acted>
-  /**
-   * The reply to a run parked at `waiting(question)` or `waiting(blocked)`,
-   * sent as the next turn on **the session that asked** - plan or implement,
-   * whichever the phase record names.
-   *
-   * **It is not `feedback`, and that is the whole reason this method exists.**
-   * A question and a completion are indistinguishable in `claude -p`, so an
-   * agent that asked something exits `success` and kantan catches it by the
-   * missing sentinel. Routing that reply through `feedback` would send it into
-   * `feedbackPrompt`, which opens with "a human read that plan at the gate and
-   * did not approve it" - false for an agent waiting on an answer, and the
-   * wrong instruction for a question raised mid-implement, where the gate's
-   * feedback revises a plan while an answer continues work. `answerPrompt`
-   * carries the reply verbatim plus the one clause that differs by phase.
-   *
-   * Without this route such a run is unreachable: approve and feedback both
-   * refuse it `wrong-state`, and stop and resume only re-park it.
-   *
-   * Which states take an answer stays the machine's rule, per fact 3 above:
-   * `wrong-state` for a run that is not waiting on one.
-   */
-  answer(runId: string, text: string): Promise<Acted>
-  /**
-   * The new ceiling for a run parked at a human, **in full rather than as a
-   * delta**, and a run that stopped on its budget continues from it.
-   *
-   * In full because the figure is recorded as a `human` record on the run's own
-   * log and folded back by `foldForResume`, which takes the last usable one: a
-   * delta would have to be folded against a ceiling nobody over HTTP can see.
-   * `projects.json` is the *next* run's default, not a live control, so a run
-   * started with a per-run ceiling has none to re-derive and one edit to the
-   * store would raise every unfinished run of that project at once.
-   *
-   * **A raise has to exceed both the ceiling and the spend**, and that rule is
-   * the machine's: anything at or under either one lowers the ceiling or parks
-   * the run again on arrival, and it refuses that as `wrong-state`. Neither
-   * figure is known here, so the route's own 400 is only for a figure that
-   * could never fund anything - absent, not a number, not finite, or not above
-   * zero. The CLI rejects a non-positive `--max-budget-usd` (probed,
-   * 2026-10-11), so a figure let through would fail at the spawn, where the UI
-   * cannot attribute the failure to the input that caused it.
-   *
-   * Like `answer`, this exists because without it an exhausted run is
-   * unreachable: feedback and an answer are both refused for want of funds
-   * *before* the text is taken, approve re-parks, and stop only ends it.
-   */
-  raise(runId: string, budgetUsd: number): Promise<Acted>
-  /**
-   * Picks a run back up after a crash, a reload or a stop.
-   *
-   * **Without this the one state the tree can offer no action for is
-   * `interrupted`.** `src/run.ts` has exported `resumeRun` since the phase
-   * machine landed and nothing called it, `RunState` carries
-   * `{kind:"interrupted", resumeFrom}`, and `Tree.tsx` already exports
-   * `canResume` - so the row existed, the mechanism existed, and the port in
-   * between had no method.
-   *
-   * Where it resumes from is **the last complete `phase` record**, which is why
-   * this takes no argument but the run id: a client naming a phase would be
-   * guessing at something the log already knows, and a run that was parked at a
-   * human is simply reported rather than driven.
-   *
-   * Its refusals are the guidance a person gets at the worst moment, so they
-   * are forwarded as written. The one that matters is the dirty check
-   * `resumeTaskBranch` carries: a run's own half-written files are exempt
-   * **only while the checkout is still on its branch**, and anywhere else they
-   * are somebody's and a `git switch` would carry them onto the task branch for
-   * the agent to commit. "I have uncommitted work from the run that was cut" is
-   * therefore fine, and "I have unrelated work on my base branch" is not, and
-   * the message says which - including the `git switch` that makes the second
-   * one deliberate.
-   */
-  resume(runId: string): Promise<Acted>
-  /**
-   * Stops the run and leaves it **resumable**: SIGTERM the child, per
-   * `src/spawn.ts`'s `terminate`, which deliberately does not close stdin or
-   * clean up, because the session resumes from the same id and stopping
-   * therefore costs nothing.
-   *
-   * A run waiting at the gate holds no process at all (design §3.1), so what
-   * `stop` means there is a question only the machine can answer - at minimum
-   * the project must stop being `busy`, or nothing else could ever start. A run
-   * that has already reached `done` or `failed` is `wrong-state`.
-   */
-  stop(runId: string): Promise<Acted>
-}
-
-export interface ServerOptions {
-  /** 0 asks the OS for a free port. There is deliberately no `hostname`: a
-   * wide bind should take a code edit, not a configuration mistake. */
-  port?: number
-  /** Allows the Vite dev server's origin. Off unless asked, so the exception
-   * can be turned off - one that cannot is not an exception. */
-  dev?: boolean
-  devPort?: number
-  /** Where the run logs are. Defaults to `~/.orch/runs`; injectable so a test
-   * never reads or writes the developer's own history. */
-  runsDir?: string
-  /** How often a followed run log is checked for appended bytes. */
-  streamPollMs?: number
-  /** How often an idle run stream sends a keep-alive comment. */
-  streamKeepAliveMs?: number
-  /** The phase machine the run actions drive. Absent means a server that
-   * can serve pages and stream run logs but cannot drive a run, which answers
-   * 503 on every action rather than 500 or a missing route. */
-  runner?: Runner
-  /**
-   * `projects.json`, which registration writes. **Deliberately without a
-   * default**, unlike `runsDir`: the store's location is a deployment fact that
-   * `defaultProjectsFile()` in `src/run.ts` owns, and the entry point passes
-   * the same path to the machine, so the two provably read one file. A default
-   * here would also mean every test that forgot to inject one registering
-   * projects in the developer's own `~/.orch/projects.json`.
-   */
-  projectsFile?: string
-  /**
-   * How the two drafting routes reach a model. Defaults to `askHaiku`.
-   *
-   * Injectable for the reason `runsDir` is, only sharper: without it those
-   * routes have **no testable happy path at all**, because exercising one
-   * spawns the real `claude` binary and bills a real account. `POST
-   * /api/features` consequently had none, and the first test to try - for
-   * `POST /api/features/propose` - made a billed call from `bun test` and took
-   * five seconds doing it. A suite that can spend money is a suite nobody can
-   * run freely.
-   */
-  ask?: Ask
-  /**
-   * The run ids the machine holds a process for **right now**, asked at the
-   * moment the tree is rendered.
-   *
-   * A function and not a list, because liveness is a fact about this instant: a
-   * list captured at launch would be empty forever. `liveRunIds()` in
-   * `src/run.ts` is what the entry point passes.
-   *
-   * Without it `indexRuns` reads every run with no `end` record as
-   * `interrupted` - liveness is not in the log and cannot be - so the tree
-   * would show a run that is going as one the server died in the middle of, and
-   * `running` would be unreachable. Deliberately not a method on `Runner`:
-   * `createRunner` does not expose one, and adding it to that port would make
-   * the machine's own object no longer satisfy it.
-   */
-  liveRunIds?: () => Iterable<string>
-}
-
-export interface Launch {
-  /** `Server<undefined>` is what `Bun.serve` returns without a websocket
-   * handler, which this server has no use for: SSE carries the run stream. */
-  server: Server<undefined>
-  /** Per launch, in memory only, never written to disk. */
-  token: string
-  /** The port actually bound, which differs from the request when it was 0. */
-  port: number
-  stop(): void
-}
-
-/** What a route handler is given besides the request. */
-export interface RouteContext {
-  token: string
-  port: number
-  dev: boolean
-  devPort: number
-  /** Exact-match allowlists, built from the port we actually bound. */
-  hosts: ReadonlySet<string>
-  origins: ReadonlySet<string>
-  /** Resolved from `ServerOptions`, so a handler never consults a default. */
-  runsDir: string
-  streamPollMs: number
-  streamKeepAliveMs: number
-  /** `null` when the server was launched without one. Nullable rather than
-   * optional so a handler cannot forget the case. */
-  runner: Runner | null
-  /** `projects.json`, or `null` when the launch named none - see
-   * `ServerOptions.projectsFile`, which has no default on purpose. Nullable for
-   * the same reason as `runner`. */
-  projectsFile: string | null
-  /** Who is running right now, or `null` when the launch can not say - in which
-   * case every unfinished run reads as `interrupted`. Nullable rather than
-   * optional, for the same reason as the two above. */
-  liveRunIds: (() => Iterable<string>) | null
-  /** How the drafting routes reach a model. Never `null`: there is a real
-   * default, and a route with no way to ask is a route that cannot work. */
-  ask: Ask
-}
-
-/**
- * `params` holds the `:name` segments of the key the route was registered
- * under, **as sent**: dispatch percent-decodes nothing, and this is no place
- * to start. It is optional so a static route can keep taking two arguments.
- */
-export type RouteHandler = (
-  req: Request,
-  ctx: RouteContext,
-  params?: Readonly<Record<string, string>>,
-) => Response | Promise<Response>
 
 /** Replaced by the built `dist/` in Task 20. Its job today is to carry the
  * cookie, so it must not carry the token in its body: a page that can read a
@@ -581,106 +266,6 @@ export const ROUTES: Record<string, RouteHandler> = {
  */
 export const TOKEN_EXEMPT: ReadonlySet<string> = new Set(["GET /", "GET /api/session"])
 
-/** Session-lifetime on purpose: the token dies with the launch, so a cookie
- * that outlived it would only produce a confusing 401 after a restart.
- * No `Secure`, which a browser would honour by dropping the cookie over http. */
-function tokenCookie(ctx: RouteContext): string {
-  return `${TOKEN_COOKIE}=${ctx.token}; Path=/; HttpOnly; SameSite=Strict`
-}
-
-function allowedHosts(port: number, dev: boolean, devPort: number): Set<string> {
-  const hosts = new Set([`${LOOPBACK}:${port}`, `localhost:${port}`])
-  if (dev) {
-    // http-proxy forwards the browser's Host unchanged unless `changeOrigin`
-    // is set, so in dev the Vite authority can arrive here. Still loopback
-    // names, so the rebinding guard holds; and only when dev mode is on.
-    hosts.add(`${LOOPBACK}:${devPort}`)
-    hosts.add(`localhost:${devPort}`)
-  }
-  return hosts
-}
-
-function allowedOrigins(port: number, dev: boolean, devPort: number): Set<string> {
-  const origins = new Set([`http://${LOOPBACK}:${port}`, `http://localhost:${port}`])
-  if (dev) {
-    origins.add(`http://${LOOPBACK}:${devPort}`)
-    origins.add(`http://localhost:${devPort}`)
-  }
-  return origins
-}
-
-/** Names the guard that refused, because a reverse proxy in front of this is
- * the likeliest cause and the README tells people not to loosen the checks to
- * make one work. It never echoes the offending value: that is attacker-chosen
- * text, and it never carries the token. */
-function refuse(status: number, message: string): Response {
-  return Response.json({ error: message }, { status })
-}
-
-/**
- * Accepts if **any** `orch_token` value matches. Cookies ignore ports, so any
- * page on another localhost port can set one for this host; it cannot know the
- * real value, so the browser sends both and taking the first would turn a
- * decoy into a denial of service. Accepting any match cannot be a bypass,
- * since a bypass still needs the real token.
- *
- * No normalisation: values are compared as sent. Nothing strips quotes or
- * trims, because every such step is a place for the next trap to hide.
- */
-function hasToken(req: Request, token: string): boolean {
-  const header = req.headers.get("cookie")
-  if (header === null) return false
-  for (const pair of header.split(";")) {
-    const eq = pair.indexOf("=")
-    if (eq === -1) continue
-    if (pair.slice(0, eq).trim() !== TOKEN_COOKIE) continue
-    if (sameSecret(pair.slice(eq + 1), token)) return true
-  }
-  return false
-}
-
-function sameSecret(given: string, token: string): boolean {
-  const a = Buffer.from(given, "utf8")
-  const b = Buffer.from(token, "utf8")
-  // timingSafeEqual throws on a length mismatch, and the token's length is
-  // fixed, so the early return leaks nothing.
-  return a.length === b.length && timingSafeEqual(a, b)
-}
-
-/**
- * `Host` first, then `Origin`, from the **raw headers**.
- *
- * Never from `new URL(req.url)`: Bun builds `req.url` from the `Host` header
- * and the URL parser canonicalises, so `Host: 2130706433:3100` arrives as
- * `http://127.0.0.1:3100/...` and would pass a URL-based check (probed). A
- * `Host` that is not a valid authority makes `req.url` relative, so parsing it
- * throws - which is the other reason this runs before any URL parsing.
- */
-function checkRequest(req: Request, ctx: RouteContext): Response | null {
-  const host = req.headers.get("host")
-  if (host === null || !ctx.hosts.has(host)) {
-    return refuse(403, `refused: the Host header must be exactly ${[...ctx.hosts].join(" or ")}`)
-  }
-
-  const origin = req.headers.get("origin")
-  if (origin === null) {
-    // A top-level navigation sends no Origin, so refusing an absent one would
-    // refuse page loads. Browsers do send it on every method other than GET
-    // and HEAD, including cross-site form posts, so absent there means the
-    // request did not come from a browser. Keyed on the method rather than on
-    // POST alone, or a later DELETE would slip through.
-    if (req.method !== "GET" && req.method !== "HEAD") {
-      return refuse(403, "refused: this method requires an Origin header from this server's own origin")
-    }
-  } else if (!ctx.origins.has(origin)) {
-    // Includes the literal "null" that a sandboxed iframe or a file: page
-    // sends, and the empty string, neither of which is an allowlist member.
-    return refuse(403, `refused: the Origin header must be exactly ${[...ctx.origins].join(" or ")}`)
-  }
-
-  return null
-}
-
 function handle(req: Request, ctx: RouteContext): Response | Promise<Response> {
   const refused = checkRequest(req, ctx)
   if (refused !== null) return refused
@@ -708,14 +293,6 @@ function handle(req: Request, ctx: RouteContext): Response | Promise<Response> {
   } catch (cause) {
     return fault(key, cause)
   }
-}
-
-/** The reason goes to the terminal, which on a local server is where a surprise
- * belongs, and never into the body: a fault's message can carry a local path or
- * whatever else the failing code was holding. */
-function fault(key: string, cause: unknown): Response {
-  console.error(`${key} failed:`, cause)
-  return refuse(500, "the server failed to handle that request; its terminal has the reason")
 }
 
 /**
@@ -1205,124 +782,6 @@ async function readPlan(ctx: RouteContext, id: string): Promise<Response> {
   }
 }
 
-/**
- * What one guarded read answered: the text, or which way it would not give it.
- *
- * A code rather than prose, because the two callers say different things about
- * the same outcome - the gate owns "the agent ended its planning turn without
- * writing one", and the tree owns a warning naming a backlog it could not list.
- * `size` is present when the refusal came from the `fstat` and `null` when the
- * bounded read is what found it, which is the difference between a message that
- * can name the size and one that cannot.
- */
-type FileRead =
-  | { ok: true; text: string }
-  /** Nothing at that path, or a path component that is a file. */
-  | { ok: false; why: "missing" }
-  /** It resolves outside `root`, so a link is pointing out of the repository. */
-  | { ok: false; why: "outside" }
-  | { ok: false; why: "not-a-file" }
-  | { ok: false; why: "too-large"; size: number | null }
-  /** Anything else, with the cause's own message: a permission error, an
-   * `ELOOP`, or bytes that are not UTF-8. */
-  | { ok: false; why: "failed"; message: string }
-
-/**
- * `joined`'s contents as text, if and only if it really sits inside `root`.
- *
- * **The string checks a caller makes on a path are not enough, and this is the
- * function that makes a route safe.** `stat` and `readFile` follow symlinks, so
- * a `docs/plans/x.md` or a `docs/features/x.md` that links to `~/.ssh/id_rsa` -
- * or a `docs/plans` directory that does - passes every check on the path and
- * still reads the key. The agent kantan runs has shell access in that repo, so
- * the link is one command away.
- *
- * Resolved once, and then **opened** with `O_NOFOLLOW` and read through that
- * one handle: the window between resolving and reading is a window the same
- * agent can swap the final component in, and a handle-based `stat` and read
- * cannot be pointed at a second file after the size was checked. Only the final
- * component is covered, which is the realistic case; an intermediate directory
- * swapped mid-request would need `openat` on every segment, which is a
- * different piece of machinery than an HTTP route should carry.
- *
- * `root` must already be canonical - both sides of the containment check are
- * compared as resolved paths, and a `root` that is itself a symlinked spelling
- * would refuse every file under it.
- *
- * **What this does not stop is a hard link**, and that is worth saying plainly
- * rather than leaving to be discovered: `ln ~/.ssh/id_rsa docs/features/x.md`
- * is a second directory entry for the same inode, not a link to follow, so
- * `realpath` answers the path inside the repository and `O_NOFOLLOW` has
- * nothing to refuse. Probed through this route, and the contents came back.
- * Both callers inherit it. Refusing on `st_nlink > 1` would close it, and is
- * not done here because it is a judgement about the threat model rather than
- * about this function: the agent that could make the link can already read the
- * file and paste it into the repo, so the hole is about what this server
- * *renders*, not about what that agent can reach - and a hard-linked file is a
- * thing a real repository can contain.
- */
-async function readInside(root: string, joined: string, maxBytes: number): Promise<FileRead> {
-  let real: string
-  try {
-    real = await realpath(joined)
-  } catch (cause) {
-    const code = (cause as NodeJS.ErrnoException).code
-    // `ENOTDIR` is the same answer one level up: a path component that is a
-    // file. `ENOENT` is also a dangling symlink, which has nothing to read.
-    if (code === "ENOENT" || code === "ENOTDIR") return { ok: false, why: "missing" }
-    return { ok: false, why: "failed", message: (cause as Error).message }
-  }
-  if (!inside(real, root)) return { ok: false, why: "outside" }
-
-  // `O_NONBLOCK` as well, so a FIFO swapped in where the file was does not hang
-  // the request on a writer that never comes.
-  let handle: Awaited<ReturnType<typeof open>>
-  try {
-    handle = await open(real, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
-  } catch (cause) {
-    // `ELOOP` is the final component having become a symlink since `realpath`
-    // answered, which is the swap this flag exists to refuse.
-    return { ok: false, why: "failed", message: (cause as Error).message }
-  }
-  try {
-    const info = await handle.stat()
-    if (!info.isFile()) return { ok: false, why: "not-a-file" }
-    if (info.size > maxBytes) return { ok: false, why: "too-large", size: info.size }
-    // Read through the handle the size came from, and read it **bounded**: the
-    // check above is a cheap refusal that can name the size, but a file appended
-    // to between the two would be read to its new end, and bounding what one
-    // GET spends is the cap's only job. One byte past the cap is what makes
-    // "too large" detectable here rather than silently truncated - and a short
-    // read is why this loops, since dropping half of the document a human is
-    // being asked to approve is the worst thing a read could do.
-    const buffer = new Uint8Array(maxBytes + 1)
-    let total = 0
-    while (total < buffer.length) {
-      const { bytesRead } = await handle.read(buffer, total, buffer.length - total, total)
-      if (bytesRead === 0) break
-      total += bytesRead
-    }
-    if (total > maxBytes) return { ok: false, why: "too-large", size: null }
-    // Not `utf8`: a decoder that substitutes U+FFFD would show a human mangled
-    // prose and let them approve it, and would put a replacement character into
-    // a task's text, so invalid bytes refuse instead.
-    return { ok: true, text: new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(buffer.subarray(0, total)) }
-  } catch (cause) {
-    return { ok: false, why: "failed", message: (cause as Error).message }
-  } finally {
-    // Closed because a handle left to the garbage collector is an error on bun
-    // 1.4, and swallowing a close failure because the answer is already decided
-    // by then - letting it throw would turn a served file into a 500.
-    await handle.close().catch((cause: unknown) => console.error(`closing ${real} failed:`, cause))
-  }
-}
-
-/** Whether `path` is `root` or sits under it. Both sides are canonical where
- * this is called, so there is nothing left for a link to hide behind. */
-function inside(path: string, root: string): boolean {
-  return path === root || path.startsWith(root + sep)
-}
-
 /** The path the **log** recorded is what the gate prints, never the resolved
  * one: that is the path the prompt dictated and the one a human would look for,
  * and a resolved path would leak where a symlink inside their repo points. */
@@ -1692,153 +1151,6 @@ function acted(result: Acted): Response {
 
 function noRunner(): Response {
   return refuse(503, "refused: this server was launched without a phase machine, so it cannot drive a run")
-}
-
-/**
- * The most a request body may be, in bytes.
- *
- * The only fields that can be large are the words a human types - feedback at
- * the gate, or an answer to a question the agent asked - and 64 KiB is roughly
- * ten thousand words: an order of magnitude past what
- * anyone types into a textarea, with room left for a pasted diff or stack
- * trace, which is a legitimate thing to paste at a gate. Both directions were
- * weighed: a tighter cap refuses that paste, and no cap at all lets one request
- * decide how much memory the server spends, because the body is buffered before
- * a single field of it can be validated.
- */
-const MAX_BODY_BYTES = 64 * 1024
-
-type BodyText = { text: string } | { refused: Response }
-
-/**
- * The body as text, refused if it is too large or not UTF-8.
- *
- * Read through the stream with a running total rather than through
- * `req.text()`, which buffers whatever arrives before anyone can object.
- * Probed: a chunked request declares **no** `Content-Length` at all, so a guard
- * that only read the header would be skipped by exactly the client that needed
- * capping. The header is still checked first, because refusing a declared 10 MB
- * without reading it is cheaper than reading 64 KiB of it.
- */
-async function readBody(req: Request): Promise<BodyText> {
-  const declared = Number(req.headers.get("content-length"))
-  // `null` becomes 0 and a malformed value becomes NaN; neither is over the
-  // cap, and the running total below is what catches them.
-  if (declared > MAX_BODY_BYTES) return { refused: tooLarge() }
-
-  const body = req.body
-  if (body === null) return { text: "" }
-
-  const chunks: Uint8Array[] = []
-  let total = 0
-  const reader = body.getReader()
-  try {
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      total += value.byteLength
-      if (total > MAX_BODY_BYTES) return { refused: tooLarge() }
-      chunks.push(value)
-    }
-  } finally {
-    // Returning early leaves the rest of the upload unread, and an unread
-    // request body is a socket nothing drains.
-    await reader.cancel().catch(() => {})
-  }
-
-  const bytes = new Uint8Array(total)
-  let at = 0
-  for (const chunk of chunks) {
-    bytes.set(chunk, at)
-    at += chunk.byteLength
-  }
-  try {
-    // `fatal`, so invalid UTF-8 is refused rather than silently becoming
-    // U+FFFD. The large field here is the human's own words, and replacing a
-    // byte of them is the expensive direction; a browser never sends anything
-    // but UTF-8, so the refusal costs nothing. Decoded once over the joined
-    // bytes, so a character split across two chunks survives.
-    return { text: new TextDecoder("utf-8", { fatal: true }).decode(bytes) }
-  } catch {
-    return { refused: refuse(400, "refused: the body must be UTF-8") }
-  }
-}
-
-function tooLarge(): Response {
-  return refuse(413, `refused: a request body may be at most ${MAX_BODY_BYTES} bytes`)
-}
-
-/**
- * The body's fields, or the response that refuses it.
- *
- * Accepting input, so CLAUDE.md's rule applies and the dimension - the bytes of
- * the body - is enumerated rather than sampled. Over-accepting hands malformed
- * state to a run that spends money; over-rejecting means the UI cannot drive
- * the tool. The enumeration, and what each value answers:
- *
- * - **Absent, or empty.** Indistinguishable on the wire (probed: Bun declares
- *   `Content-Length: 0` for both), so they read the same: no fields. A route
- *   with required keys then refuses for a missing key, and one with none
- *   proceeds, which is the normal case for approve and stop.
- * - **Not JSON.** 400. There is no second format to try.
- * - **`null`.** 400. `typeof null === "object"`, which is the trap this check
- *   exists for.
- * - **An array**, even one holding the right record. 400, for the other half of
- *   the same trap.
- * - **A scalar.** 400: a number, a string or a boolean carries no fields.
- * - **An unknown key.** 400, for the reason `src/projects.ts` refuses one: a
- *   near-miss spelling is a setting the caller typed and would otherwise be
- *   dropped in silence. The message names **the keys the route takes** and
- *   never the key that was sent - that is caller-chosen text, and `refuse`
- *   does not echo it.
- * - **A duplicated key.** Accepted; `JSON.parse` keeps the last. One parser
- *   reads this body and nothing downstream reads it again, so there is no
- *   second opinion for a smuggled value to hide behind, and the key set the
- *   allowlist sees is unchanged either way.
- * - **A correct object.** Its fields, for the route to read.
- *
- * `Object.keys` and not a `for...in`: own enumerable keys only, which is also
- * what makes a literal `__proto__` key - which `JSON.parse` does create as an
- * own property - an ordinary unknown key rather than something clever.
- */
-type ParsedBody = { fields: Record<string, unknown> } | { refused: Response }
-
-function parseBody(text: string, allowed: readonly string[]): ParsedBody {
-  if (text.trim() === "") return { fields: {} }
-
-  let value: unknown
-  try {
-    value = JSON.parse(text)
-  } catch {
-    return { refused: badBody(allowed, "the body must be JSON") }
-  }
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    return { refused: badBody(allowed, "the body must be a JSON object") }
-  }
-  const fields = value as Record<string, unknown>
-  for (const key of Object.keys(fields)) {
-    if (!allowed.includes(key)) return { refused: badBody(allowed, "the body has a key this route does not take") }
-  }
-  return { fields }
-}
-
-function badBody(allowed: readonly string[], what: string): Response {
-  const keys = allowed.length === 0 ? "this route takes no keys at all" : `the keys it takes are: ${allowed.join(", ")}`
-  return refuse(400, `refused: ${what}; ${keys}`)
-}
-
-/**
- * `value` when it is a string with something in it, otherwise `null`.
- *
- * Emptiness is judged on a trimmed copy and the **original** is returned.
- * Nothing trimmed is ever forwarded: the one field this guards that a human
- * writes is gate feedback, and collapsing its whitespace would change what they
- * said to the agent. An all-whitespace value is still empty, because feedback
- * with nothing in it spends a planning turn on silence and a path or a task ref
- * made of spaces names nothing.
- */
-function nonEmptyString(value: unknown): string | null {
-  return typeof value === "string" && value.trim() !== "" ? value : null
 }
 
 const START_KEYS = ["projectPath", "featureFile", "taskRef", "allowDirty"] as const
