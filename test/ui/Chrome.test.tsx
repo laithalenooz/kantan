@@ -59,7 +59,10 @@ import type { Account } from "../../src/ui/Tree.tsx"
  * ## It is taken and never given back, which is a correction to that pattern
  *
  * docs/HANDOFF.md says to `unregister()` only what you took, and this file did,
- * and that was still wrong. Probed: `bun test` loads and runs one file at a
+ * and that was still wrong. Probed - two throwaway suites, each logging from
+ * module scope, `beforeAll`, its test body and `afterAll`, run as
+ * `bun test a.test.ts b.test.ts`, print all four of A's lines before B's module
+ * scope - `bun test` loads and runs one file at a
  * time, so this file's `beforeAll` wins the slot, and an `unregister()` in its
  * `afterAll` closes that window before `test/ui/Sidebar.test.tsx` has even been
  * loaded. Sidebar then registers a **second** window — while `motion`, already
