@@ -206,6 +206,20 @@ const metrics = await send("Runtime.evaluate", {
       const r = b.getBoundingClientRect()
       return { top: Math.round(r.top), bottom: Math.round(r.bottom), inViewport: r.top >= 0 && r.bottom <= innerHeight }
     })(),
+    /** Every element the browser is actually animating, by keyframe name. */
+    animations: (() => {
+      const seen = {}
+      for (const el of document.querySelectorAll("*")) {
+        const cs = getComputedStyle(el)
+        if (cs.animationName === "none" || cs.animationName === "") continue
+        for (const name of cs.animationName.split(",").map((n) => n.trim())) {
+          const key = name + " | " + el.tagName.toLowerCase() + "." +
+            String(el.className).split(" ").filter((c) => c.length < 12).slice(0, 2).join(".")
+          seen[key] = (seen[key] ?? 0) + 1
+        }
+      }
+      return Object.entries(seen).map(([k, n]) => k + " x" + n).sort()
+    })(),
     buttons: [...document.querySelectorAll("button")].map((b) => {
       const cs = getComputedStyle(b)
       const label = (b.innerText ?? "").trim().replace(/\s+/g, " ").slice(0, 34)
