@@ -877,7 +877,13 @@ function PhaseGlyph({ state, reduce }: { state: PhaseState; reduce: boolean }) {
           data-glyph="running"
           data-motion={reduce ? "static" : "animated"}
           viewBox="0 0 24 24"
-          className={`size-4 origin-center justify-self-center ${reduce ? "" : "spin"}`}
+          /* No `justify-self`, which is not an oversight: in the phase rail
+             the artboards centre the 14px glyphs in the 18px column and leave
+             the 16px ones at the start, so a spinner that is centred sits a
+             pixel right of the checks above it. `Return.dc.html`'s own running
+             row carries no `justify-self`; the ones that do are 14px, or the
+             left rail's task rows. */
+          className={`size-4 origin-center ${reduce ? "" : "spin"}`}
         >
           <circle cx="12" cy="12" r="9" fill="none" stroke="#DCDCF6" strokeWidth="3" />
           <path d="M21 12a9 9 0 0 0-9-9" fill="none" stroke="#5B5BD6" strokeWidth="3" strokeLinecap="round" />
@@ -965,7 +971,11 @@ function Cost({
         <span
           data-testid="cost-status"
           className={`inline-flex items-center gap-1.5 text-[12px] ${
-            status.live ? "font-medium text-indigo-deeper" : "text-muted-500"
+            /* 560 and 400 are the artboard's own weights: `Return.dc.html`
+               sets `font-weight:560` on "live" and `Main.dc.html` sets none at
+               all on "paused at gate", so the moving one reads a shade firmer
+               than the parked one. */
+            status.live ? "font-[560] text-indigo-deeper" : "text-muted-500"
           }`}
         >
           <span
