@@ -485,18 +485,30 @@ describe("a detection answers for one path and no other", () => {
     expect(detectionRows()).toBeNull()
   })
 
-  test("a stale result is refused inside the handler, not only by `disabled`", async () => {
-    /* `disabled` is a render away from the truth and a click is not. A parent
-       that re-renders late, or a test that clicks a button React has not
-       repainted, must not be able to register an unchecked path. */
+  test("a stale result registers nothing, and the button says so", async () => {
+    /**
+     * What this can and cannot see, because the difference matters.
+     *
+     * It pins the reachable guarantee: with an answer that is about another
+     * path, the control is `disabled` and a click through it registers
+     * nothing. The `disabled` is asserted as well as the silence, or the test
+     * would pass just as well if the button were missing altogether.
+     *
+     * It does **not** pin the re-read inside `submit`. Probed: React delivers
+     * no `onClick` to a disabled form control, through either `.click()` or a
+     * dispatched `MouseEvent`, so that branch is unreachable from here and
+     * deleting it leaves this file green. It is kept as the second belt on a
+     * one-line path — the attribute is the first — and this comment is here so
+     * nobody reads the green as cover for it.
+     */
     const seen: RepoDraft[] = []
     await render(
       <api.AddRepo
         {...props({ path: USABLE_PATH, detection: usable(`${USABLE_PATH}-other`), onSubmit: (d) => void seen.push(d) })}
       />,
     )
-    const add = maybe<HTMLButtonElement>(ADD_BUTTON)
-    if (add !== null) await click(add)
+    expect(addButton().disabled).toBe(true)
+    await click(addButton())
     expect(seen).toEqual([])
   })
 
@@ -1356,7 +1368,12 @@ describe("someone who asked for less movement", () => {
     setPrefersReduce(false)
     await fillIn()
     const moving = prose()
-    setPrefersReduce(true)
+    /* Inside `act`, because a mounted panel is subscribed to this query
+       through `useSyncExternalStore` and firing the listeners is a state
+       update like any other. */
+    await api.act(async () => {
+      setPrefersReduce(true)
+    })
     await fillIn()
     expect(prose()).toBe(moving)
   })
