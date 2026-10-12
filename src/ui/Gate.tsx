@@ -114,8 +114,19 @@ export interface GateShape {
    */
   waitId: string
   plan: PlanSource
-  /** The project's test command, printed verbatim: it is the promise Approve makes. */
-  testCommand: string
+  /**
+   * The project's test command, printed verbatim: it is the promise Approve
+   * makes - or `null`, meaning this project has none and the agent verifies
+   * its own work.
+   *
+   * `null` is the store's own spelling (`Project.testCmd` is `string | null`),
+   * and blanks fold into it rather than being printed, for the reason
+   * `commandOf` below gives. A card that printed a blank would promise "kantan
+   * runs    until the exit code says it passed", which is the one promise no
+   * value of this field justifies - and it would make it at the moment a human
+   * is deciding whether to let an agent change their repository.
+   */
+  testCommand: string | null
   /** Other files the planning step read. Collapsed, and omitted when empty. */
   filesRead?: readonly string[]
   /** How long the plan phase took, if the log has both ends of it. */
@@ -228,6 +239,38 @@ function formatCost(usd: number): string {
 
 function countLabel(n: number, one: string, many: string): string {
   return n === 1 ? `1 ${one}` : `${n} ${many}`
+}
+
+/**
+ * The command this card may promise, or `null` for a project that has none.
+ *
+ * The dimension is the value of `testCommand`, and it takes four kinds of
+ * value: a command, `null`, `""`, and whitespace. The store refuses `""`,
+ * `"   "` and `"\t\n"` outright, so they cannot come from a valid record - but
+ * this card is handed a prop by a shell that reads a tree over HTTP, and
+ * `App.tsx` spells the null case `?? ""` on the way in. So the blanks arrive,
+ * and they fold rather than being printed.
+ *
+ * The two directions are not symmetric. Printing a blank promises *"kantan
+ * runs    until the exit code says it passed"* to a human who is deciding
+ * whether to let an agent change their repository: they approve believing
+ * something outside the agent will check the work. Folding a real command to
+ * `null` would under-claim to someone who does have a suite, who is then more
+ * careful than they needed to be and can read the command in the start panel
+ * and the project settings anyway. Under-claiming is the cheap direction, so
+ * that is the way this fails.
+ *
+ * The command is never trimmed for display: it is a shell string handed to
+ * `sh -c` verbatim, so its spacing is the user's.
+ *
+ * Deliberately a local mirror of `commandOf` in `StartPanel.tsx`, not a shared
+ * import: that one is module-private in a file another agent owns, and a third
+ * module to hold six lines is not a thing anyone asked for. The two are kept
+ * identical in behaviour, and both are tested against the same enumeration.
+ */
+function commandOf(testCommand: string | null | undefined): string | null {
+  if (testCommand === null || testCommand === undefined) return null
+  return testCommand.trim() === "" ? null : testCommand
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1220,10 +1263,19 @@ export function Gate(props: GateProps) {
       props.phase === "plan"
         ? "There is no plan yet, so there is nothing to approve. Your answer goes back into the same planning conversation and planning continues."
         : "This is a question from the work in progress, not a plan, so there is nothing to approve. Your answer goes back into the same implementation conversation and the work continues."
+    /* The second half of the implement hint used to read "The tests still
+       decide when it is done", which is the lede's over-claim in another
+       place: a project may have no test command, and then nothing outside the
+       agent decides anything. `QuestionShape` carries no command and has no
+       reason to, so the sentence is made true of every project instead of
+       conditioned on one. What was worth keeping is that an answer is not a
+       sign-off, and that survives without naming a suite - while "records how
+       it was verified" is exactly what `EndRecord.verifiedBy` now does on
+       every finished run, whichever way it was checked. */
     const hint =
       props.phase === "plan"
         ? "Resumes planning. No code is written until you approve a plan."
-        : "Resumes the implementation. The tests still decide when it is done."
+        : "Resumes the implementation. Answering is not signing off: the run still has to finish, and it records how it was verified."
     const resumed =
       props.phase === "plan"
         ? "Planning resumed. You'll be asked to approve the plan when it's ready."
@@ -1318,6 +1370,7 @@ export function Gate(props: GateProps) {
   /* --- the gate -------------------------------------------------------- */
 
   const { plan, testCommand, filesRead, planDurationMs, costUsd } = props
+  const command = commandOf(testCommand)
   const loaded = plan.status === "loaded"
   const planPath = plan.status === "undictated" ? null : plan.path
   const whyId = `kg-why-${ids}`
@@ -1351,9 +1404,26 @@ export function Gate(props: GateProps) {
             {heading}
           </h1>
           {loaded ? (
+            /* The promise Approve makes, and the one sentence on this card that
+               must be true of the project in front of the person reading it.
+               With a command it is kantan's own claim, checkable from outside
+               the agent; with none there is no exit code to promise, and the
+               honest sentence says so rather than borrowing the language of a
+               run that passed. The wording of the second is
+               `StartPanel.tsx`'s, because the two cards are read minutes apart
+               by the same person. */
             <p className="kg-lede">
-              Read it the way you would read a teammate's draft. If you approve, a fresh agent implements it, and
-              kantan runs <code className="kg-mono">{testCommand}</code> until the exit code says it passed.
+              Read it the way you would read a teammate's draft. If you approve, a fresh agent implements it
+              {command === null ? (
+                <>
+                  , then verifies its own work and records how it did — this project has no test command, so nothing
+                  outside the agent will check it.
+                </>
+              ) : (
+                <>
+                  , and kantan runs <code className="kg-mono">{command}</code> until the exit code says it passed.
+                </>
+              )}
             </p>
           ) : (
             <p className="kg-lede" id={whyId}>

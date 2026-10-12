@@ -621,6 +621,113 @@ describe("approve and feedback fire distinct actions", () => {
   })
 })
 
+/**
+ * What the gate promises, when there is no command to promise.
+ *
+ * A project may have no test command, and then the agent verifies its own work
+ * (`docs/HANDOFF.md`, user decision 2026-10-12). The binding constraint from
+ * that record is **nothing may claim a verification it did not observe**, and
+ * this card is where it bites hardest: the lede told the human *"kantan runs
+ * `<cmd>` until the exit code says it passed"* at the exact moment they are
+ * deciding whether to let an agent change their repository.
+ *
+ * The guard reads **one dimension: the value of `testCommand`**, and because
+ * that is a guess about input, every value it can take is enumerated here
+ * rather than sampled - CLAUDE.md's skipping-guard rule:
+ *
+ * | Value | Reading | Why |
+ * |---|---|---|
+ * | `"npm test"` | a command | the only value that may promise an exit code |
+ * | `null` | no command | the store's own spelling of "the agent verifies" |
+ * | `""` | no command | `App.tsx:266` is `project?.testCmd ?? ""`, so the null arrives spelled this way, and there is no project at all when it is undefined |
+ * | `"   "`, `"\t\n"` | no command | the store refuses these, but this card reads a tree over HTTP rather than the store, and "kantan runs    until it exits 0" is a promise no value of this field justifies |
+ *
+ * The two directions are not symmetric, which is what settles the blank cases.
+ * **Over-claiming** puts a false promise in front of a human funding a run:
+ * they approve believing something outside the agent will check the work, and
+ * find out only when a bug ships. **Under-claiming** tells someone who does
+ * have a suite that the agent will verify itself; they are more careful than
+ * they needed to be, and the command is on screen in the start panel and the
+ * project settings anyway. So a blank folds to "no command", exactly as
+ * `commandOf` in `StartPanel.tsx` already folds it.
+ *
+ * The wording is `StartPanel.tsx:856`'s, deliberately not a third vocabulary:
+ * the two cards are read minutes apart by the same person.
+ */
+describe("the gate never promises a test command it does not have", () => {
+  /** Every value that is not a command, including the two the store refuses. */
+  const NO_COMMAND = [null, "", "   ", "\t\n"] as const
+
+  const ledeOf = (host: HTMLElement): string => host.querySelector(".kg-lede")?.textContent ?? ""
+
+  test("with a command, the lede promises the exit code and prints the command verbatim", async () => {
+    const { host } = await render(<Gate {...gateProps({ testCommand: "vendor/bin/pest --parallel" })} />)
+    const lede = ledeOf(host)
+    expect(lede).toContain("kantan runs")
+    expect(lede).toContain("vendor/bin/pest --parallel")
+    expect(lede).toContain("until the exit code says it passed")
+    expect(host.querySelector("code")?.textContent).toBe("vendor/bin/pest --parallel")
+  })
+
+  test("with no command, the lede claims no exit code and no command at all", async () => {
+    for (const testCommand of NO_COMMAND) {
+      const { host } = await render(<Gate {...gateProps({ testCommand })} />)
+      const lede = ledeOf(host)
+      const where = JSON.stringify(testCommand)
+
+      /* The claim that must be gone, in every spelling it could survive in. */
+      expect(lede, where).not.toContain("exit code")
+      expect(lede, where).not.toContain("kantan runs")
+      expect(lede, where).not.toContain("until the exit code says it passed")
+
+      /* And what HANDOFF requires in its place: that the agent verifies its
+         own work, and that nothing outside it will check. */
+      expect(lede, where).toContain("verifies its own work")
+      expect(lede, where).toContain("no test command")
+      expect(lede, where).toMatch(/nothing outside (it|the agent) will check/)
+    }
+  })
+
+  test("with no command there is no command chip to read one off", async () => {
+    for (const testCommand of NO_COMMAND) {
+      const { host } = await render(<Gate {...gateProps({ testCommand })} />)
+      const where = JSON.stringify(testCommand)
+      /* Scoped to the lede, not the card: the plan markdown has a fenced code
+         block of its own, so a document-wide assertion here could never pass
+         and would be testing this fixture rather than the promise.
+         The lede's `<code>` is the only one the head draws, and a blank one is
+         the bare `$`-with-nothing-after-it defect in its Gate spelling: a chip
+         containing nothing reads as a command too short to see. */
+      const codes = [...host.querySelectorAll(".kg-lede code")]
+      expect(codes.length, where).toBe(0)
+    }
+  })
+
+  /**
+   * The question shape makes the same claim, and cannot condition it.
+   *
+   * The composer hint for an implement-phase question read *"The tests still
+   * decide when it is done"*. That is the lede's over-claim in a second place:
+   * on a project with no test command no tests decide anything, and the
+   * agent's own word is what ends the run.
+   *
+   * `QuestionShape` carries no `testCommand` and nothing asked for one, so the
+   * fix is to make the sentence true of every project rather than to add a prop
+   * and a branch. The reassurance worth keeping is that answering is not a
+   * sign-off - that survives without naming a suite, and "records how it was
+   * verified" is exactly what `EndRecord.verifiedBy` now does on every `done`
+   * run, whichever way it was checked.
+   */
+  test("the implement-phase hint promises no suite, because the shape cannot know there is one", async () => {
+    const { host } = await render(<Gate {...questionProps({ phase: "implement" })} />)
+    const text = host.textContent ?? ""
+    expect(text).not.toContain("The tests still decide")
+    expect(text).not.toMatch(/\btests\b/i)
+    expect(text).toContain("Answering is not signing off")
+    expect(text).toContain("records how it was verified")
+  })
+})
+
 describe("the approve chord", () => {
   test("⌘↵ and Ctrl+↵ approve from the page", async () => {
     for (const mod of ["meta", "ctrl"] as const) {
