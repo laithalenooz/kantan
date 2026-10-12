@@ -12,6 +12,7 @@ import { ProjectPanel, accountOptionsFor, type AccountOption } from "./ProjectPa
 import { StartPanel } from "./StartPanel.tsx"
 import { act, addTasks, detectPath, draftFeature, proposeTasks, registerProject, removeProject, removeTask, runTestCommand, startRun, summaryOf, taskKeyOf, updateProject, type RunView } from "./live.ts"
 import { useAction, usePlan, useRun, useTree } from "./useRun.ts"
+import { useNewTaskFile, useTaskRemoval } from "./actions.ts"
 import type { RunPhase } from "../runlog.ts"
 import type { AskingPhase } from "./Gate.tsx"
 
@@ -444,73 +445,13 @@ export function App() {
     [guard],
   )
 
-  /**
-   * The task a removal has been asked about, or `null`.
-   *
-   * Confirmed rather than done on the click, because it edits a file in the
-   * user's own repository and the row it came from is one of a dozen a few
-   * pixels apart. `ProjectPanel` confirms removing a project for the same
-   * reason and in the same shape.
-   */
-  const [removing, setRemoving] = useState<{ projectPath: string; featureFile: string; taskRef: string } | null>(null)
-  const [removeError, setRemoveError] = useState<string | null>(null)
-  const [removeBusy, setRemoveBusy] = useState(false)
-
-  const confirmRemoveTask = useCallback(async (): Promise<void> => {
-    if (removing === null || removeBusy) return
-    setRemoveBusy(true)
-    setRemoveError(null)
-    try {
-      await removeTask(removing)
-      /* The selection goes with the task. A row the tree no longer draws
-         cannot stay the subject of the centre column, and `runIdFor` would
-         keep resolving it from the run index after the task that named it is
-         gone. */
-      if (
-        selected?.projectPath === removing.projectPath &&
-        selected.featureFile === removing.featureFile &&
-        selected.taskRef === removing.taskRef
-      ) {
-        setSelected(null)
-      }
-      setRemoving(null)
-      reload()
-    } catch (cause) {
-      /* Kept on the dialog, not the page: every refusal this can hit names
-         the task - a run in flight, a ref on two lines, a file that moved -
-         and the dialog is where the human still has the context to read it. */
-      setRemoveError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setRemoveBusy(false)
-    }
-  }, [reload, removeBusy, removing, selected])
-
-  /** What the human typed for a new task file, and how that call is going. */
-  const [newFileText, setNewFileText] = useState("")
-  const [newFileBusy, setNewFileBusy] = useState(false)
-  const [newFileError, setNewFileError] = useState<string | null>(null)
-
-  const createTaskFile = useCallback(
-    async (projectPath: string): Promise<void> => {
-      const text = newFileText.trim()
-      if (text === "" || newFileBusy) return
-      setNewFileBusy(true)
-      setNewFileError(null)
-      try {
-        await draftFeature(projectPath, text)
-        setPanel(null)
-        setNewFileText("")
-        /* The tree is where the new file appears, and nothing else refetches
-           on its own. */
-        reload()
-      } catch (cause) {
-        setNewFileError(cause instanceof Error ? cause.message : String(cause))
-      } finally {
-        setNewFileBusy(false)
-      }
-    },
-    [newFileBusy, newFileText, reload],
-  )
+  /* Two write operations that own their own state, in `src/ui/actions.ts`.
+     They were fourteen `useState` and ten handlers inline here; these two
+     clusters never touched the rest, and a custom hook is what "a service"
+     means in React - state plus the operations on it, behind an interface the
+     component consumes. */
+  const removal = useTaskRemoval(reload, selected, setSelected)
+  const newFile = useNewTaskFile(reload)
 
   const onRemoveProject = useCallback(
     async (project: TreeProject): Promise<void> => {
@@ -710,13 +651,12 @@ export function App() {
             setPanel({ kind: "addTasks", projectPath, featureFile })
           }}
           onRemoveTask={(projectPath, featureFile, taskRef) => {
-            setRemoveError(null)
-            setRemoving({ projectPath, featureFile, taskRef })
+            removal.ask({ projectPath, featureFile, taskRef })
           }}
           onNewTaskFile={(projectPath) => {
             setSelected(null)
-            setNewFileError(null)
-            setNewFileText("")
+            
+            newFile.reset()
             setPanel({ kind: "newTaskFile", projectPath })
           }}
         />
@@ -779,8 +719,8 @@ export function App() {
              and both open the same card. */
           onNewTaskFile={() => {
             setSelected(null)
-            setNewFileError(null)
-            setNewFileText("")
+            
+            newFile.reset()
             setPanel({ kind: "newTaskFile", projectPath: panelProject.path })
           }}
           onRemove={() => onRemoveProject(panelProject)}
@@ -869,43 +809,43 @@ export function App() {
               id="kantan-new-file-text"
               autoFocus
               rows={5}
-              value={newFileText}
+              value={newFile.text}
               onChange={(e) => {
-                setNewFileText(e.target.value)
-                setNewFileError(null)
+                newFile.setText(e.target.value)
+                
               }}
               placeholder="e.g. The importer should survive a crash halfway through a file and pick up where it stopped."
               className="mt-2 w-full resize-y rounded-[12px] border border-edge-strong bg-white p-3 text-[14px] leading-[1.55] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-indigo"
             />
-            {newFileError !== null && (
+            {newFile.error !== null && (
               <p
                 role="alert"
                 className="mt-3 mb-0 rounded-[10px] border border-[#F3C6C9] bg-[#FDF2F3] px-3 py-[10px] text-[13px] leading-[1.5] text-[#D92D3A]"
               >
-                {newFileError}
+                {newFile.error}
               </p>
             )}
             <div className="mt-5 flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                disabled={newFileText.trim() === "" || newFileBusy}
-                onClick={() => void createTaskFile(panel.projectPath)}
+                disabled={newFile.text.trim() === "" || newFile.busy}
+                onClick={() => void newFile.create(panel.projectPath).then((made) => { if (made) setPanel(null) })}
                 className="inline-flex h-12 items-center gap-2 rounded-full border-0 bg-ink px-5 text-[15px] font-[620] text-white disabled:bg-[#D9D9DF] disabled:text-muted-400"
               >
-                {newFileBusy ? "Writing it…" : "Write the task file"}
+                {newFile.busy ? "Writing it…" : "Write the task file"}
               </button>
               <button
                 type="button"
                 onClick={() => {
                   setPanel(null)
-                  setNewFileText("")
-                  setNewFileError(null)
+                  newFile.reset()
+                  
                 }}
                 className="ghost h-12 rounded-full border border-edge-strong bg-white px-5 text-[14px] font-[560] text-ink-deep"
               >
                 Cancel
               </button>
-              {newFileBusy && (
+              {newFile.busy && (
                 <span className="text-[13px] text-muted-500">
                   An agent is reading the repository and drafting the tasks. This usually takes a few seconds.
                 </span>
@@ -1037,7 +977,7 @@ export function App() {
       )}
       </div>
 
-      {removing !== null && (
+      {removal.pending !== null && (
         <div
           data-scrim
           /* `.kr` on the scrim as well as the root: it is `position: fixed`,
@@ -1059,32 +999,31 @@ export function App() {
               id="kantan-remove-task"
               className="m-0 text-[20px] font-[650] tracking-[-.02em]"
             >
-              Remove {removing.taskRef} from {removing.featureFile.split("/").at(-1)}?
+              Remove {removal.pending.taskRef} from {removal.pending.featureFile.split("/").at(-1)}?
             </h2>
             <p
               id="kantan-remove-task-why"
               className="mt-[10px] mb-5 text-[14.5px] leading-[1.55] text-muted-700"
             >
               The line is deleted from{" "}
-              <span className="m font-mono text-[13px] [overflow-wrap:anywhere]">{removing.featureFile}</span> in your
+              <span className="m font-mono text-[13px] [overflow-wrap:anywhere]">{removal.pending.featureFile}</span> in your
               repository, and kantan commits that one file so the change is in your history rather than loose in your
-              working tree. Every other task in the file is left exactly as it is. If {removing.taskRef} has already
+              working tree. Every other task in the file is left exactly as it is. If {removal.pending.taskRef} has already
               been run, its log and its branch are kept.
             </p>
-            {removeError !== null && (
+            {removal.error !== null && (
               <p
                 role="alert"
                 className="mt-0 mb-4 rounded-[10px] border border-[#F3C6C9] bg-[#FDF2F3] px-3 py-[10px] text-[13px] leading-[1.5] text-[#D92D3A]"
               >
-                {removeError}
+                {removal.error}
               </p>
             )}
             <div className="flex flex-wrap justify-end gap-2">
               <button
                 type="button"
                 onClick={() => {
-                  setRemoving(null)
-                  setRemoveError(null)
+                  removal.cancel()
                 }}
                 className="ghost h-11 rounded-full border border-edge-strong bg-white px-[18px] text-[14px] font-[560] text-ink-deep"
               >
@@ -1093,11 +1032,11 @@ export function App() {
               <button
                 type="button"
                 autoFocus
-                disabled={removeBusy}
-                onClick={() => void confirmRemoveTask()}
+                disabled={removal.busy}
+                onClick={() => void removal.confirm()}
                 className="h-11 rounded-full border-0 bg-[#A61B27] px-[18px] text-[14px] font-[620] text-white disabled:opacity-60"
               >
-                {removeBusy ? "Removing…" : `Remove ${removing.taskRef}`}
+                {removal.busy ? "Removing…" : `Remove ${removal.pending.taskRef}`}
               </button>
             </div>
           </div>
