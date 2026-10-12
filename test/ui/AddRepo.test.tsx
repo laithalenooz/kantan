@@ -311,6 +311,8 @@ async function pressEnter(input: HTMLInputElement): Promise<void> {
 
 const PATH_FIELD = 'input[data-addrepo="path"]'
 const CMD_FIELD = 'input[data-addrepo="cmd"]'
+/** The one control allowed to mean "no command", spelled once. */
+const NO_SUITE = "This project has no test suite"
 const ADD_BUTTON = 'button[data-addrepo="add"]'
 const CHECK_BUTTON = 'button[data-addrepo="check"]'
 const PREVIEW = '[data-addrepo="preview"]'
@@ -1074,6 +1076,81 @@ describe("the test command", () => {
        not withdrawn. What an unanswered command costs is the button. */
     expect(addButton().disabled).toBe(true)
     expect(prose()).toContain("Say how to run the tests.")
+  })
+
+  /**
+   * A repository with no suite is the common case, not the exotic one, and
+   * before this it could not be added at all: `ready` wanted a non-empty
+   * command, so the button stayed disabled with nothing the human could do
+   * about it. The user's 2026-10-12 decision is that such a project exists and
+   * the agent verifies its own work.
+   *
+   * The dimension this adds: **what the command field means when it is
+   * empty.** Values: untouched and empty; emptied on purpose; and now, the
+   * opt-out taken. The first two are an unanswered question and must keep
+   * refusing, because `sh -c ""` exits 0 and a blank command would tick every
+   * task as tested with nothing run. Only an explicit control may mean "none",
+   * and it sends `null` - the one spelling `src/projects.ts` accepts.
+   */
+  test("offers to say the project has no suite, and sends `null` rather than a blank", async () => {
+    const drafts: RepoDraft[] = []
+    const { path: startingPath, ...rest } = checked({ onSubmit: (d) => void drafts.push(d) })
+    await render(<Shell startingPath={startingPath} {...rest} />)
+    await pickAccount("personal")
+
+    /* An empty field is still an unanswered question. */
+    expect(addButton().disabled).toBe(true)
+
+    await click(byText("button", NO_SUITE))
+    /* The field goes, rather than sitting empty behind a `$` under a promise
+       about an exit code that will not be read. */
+    expect(maybe(CMD_FIELD)).toBeNull()
+    expect(prose()).toContain("verifies its own work")
+    expect(addButton().disabled).toBe(false)
+
+    await click(addButton())
+    expect(drafts).toHaveLength(1)
+    expect(drafts[0]?.testCmd).toBeNull()
+  })
+
+  test("the opt-out is reversible, and taking it back restores the question", async () => {
+    await render(<api.AddRepo {...props({ path: USABLE_PATH, detection: usable(USABLE_PATH, { testCmd: "bun test", testCmdSource: "package.json" }) })} />)
+    await pickAccount("personal")
+
+    await click(byText("button", NO_SUITE))
+    expect(maybe(CMD_FIELD)).toBeNull()
+
+    await click(byText("button", "Give it a test command"))
+    /* The detection's suggestion is still the suggestion: the opt-out did not
+       answer the question, it declined it, so nothing was typed to preserve. */
+    expect(one<HTMLInputElement>(CMD_FIELD).value).toBe("bun test")
+    expect(addButton().disabled).toBe(false)
+  })
+
+  test("a command typed and then opted out of does not travel with the draft", async () => {
+    const drafts: RepoDraft[] = []
+    const { path: startingPath, ...rest } = checked({ onSubmit: (d) => void drafts.push(d) })
+    await render(<Shell startingPath={startingPath} {...rest} />)
+    await pickAccount("personal")
+    await type(one<HTMLInputElement>(CMD_FIELD), "bun test")
+    await click(byText("button", NO_SUITE))
+
+    await click(addButton())
+    expect(drafts[0]?.testCmd).toBeNull()
+  })
+
+  /** `src/testrun.ts` has nothing to run, and `sh -c ""` exits 0. */
+  test("does not offer to run a command once there is to be none", async () => {
+    await render(
+      <api.AddRepo
+        {...props({ path: USABLE_PATH, detection: usable(USABLE_PATH, { testCmd: "bun test" }), onRunTests: () => {} })}
+      />,
+    )
+    await pickAccount("personal")
+    expect(all("button").map((b) => (b.textContent ?? "").trim())).toContain("Run it once")
+
+    await click(byText("button", NO_SUITE))
+    expect(all("button").map((b) => (b.textContent ?? "").trim())).not.toContain("Run it once")
   })
 
   test("the source chip goes once the value is not what the source said", async () => {

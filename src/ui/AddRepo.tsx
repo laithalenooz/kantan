@@ -168,6 +168,8 @@
 import { useState, useSyncExternalStore, type CSSProperties, type ReactElement, type ReactNode } from "react"
 import { useReducedMotion } from "motion/react"
 
+import { SELF_CHECKED } from "./testcmd.ts"
+
 /* -------------------------------------------------------------------------- */
 /* Props                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -334,8 +336,16 @@ export interface AccountOption {
 export interface RepoDraft {
   /** Exactly what is in the box: not trimmed, not resolved, not expanded. */
   path: string
-  /** Exactly what is in the command field, for the same reason. */
-  testCmd: string
+  /**
+   * Exactly what is in the command field, for the same reason - or `null`
+   * when the human took the opt-out and this project has no suite.
+   *
+   * `null` and not `""`. `src/projects.ts` refuses a blank outright and should:
+   * `sh -c ""` exits 0, so a blank command would tick every task as tested
+   * with nothing run. The empty field and the opt-out are different answers,
+   * and only one of them may reach the store.
+   */
+  testCmd: string | null
   /** Absent is "Not sure", which is the absence of an answer and the key omitted. */
   account?: "personal" | "work"
   /** Only ever the chosen `AccountOption`'s own value. */
@@ -717,6 +727,20 @@ export function AddRepo({
   const [chosenKey, setChosenKey] = useState<string | null>(null)
   /** `null` until the field is touched, which is what lets detection seed it. */
   const [typedCmd, setTypedCmd] = useState<string | null>(null)
+  /**
+   * The human said this project has no suite.
+   *
+   * Separate from `typedCmd` rather than folded into it as `""`: an empty
+   * field is an unanswered question and must keep the button disabled, while
+   * this is an answer. Collapsing them would make a half-deleted command mean
+   * "no suite", which is the one reading that gets work merged on a
+   * verification nobody performed.
+   *
+   * It does not clear `typedCmd`, so taking the opt-out back restores the
+   * question as it stood - including a detection's suggestion, which the
+   * opt-out declined rather than answered.
+   */
+  const [noSuite, setNoSuite] = useState(false)
   const [busy, setBusy] = useState(false)
   const [failure, setFailure] = useState<string | null>(null)
   const [added, setAdded] = useState(false)
@@ -762,12 +786,14 @@ export function AddRepo({
    * within the pass that raises it — including under strict mode's double
    * invoke, where the second pass computes the same answer.
    */
-  const want: 1 | 2 | 3 | 4 = !canProceed ? 1 : chosen === null ? 2 : cmd.trim() === "" ? 3 : 4
+  /** Section 3 is answered by a command **or** by the opt-out. */
+  const commandAnswered = noSuite || cmd.trim() !== ""
+  const want: 1 | 2 | 3 | 4 = !canProceed ? 1 : chosen === null ? 2 : !commandAnswered ? 3 : 4
   const [reached, setReached] = useState<1 | 2 | 3 | 4>(1)
   if (want > reached) setReached(want)
   const reveal = want > reached ? want : reached
 
-  const ready = canProceed && chosen !== null && cmd.trim() !== ""
+  const ready = canProceed && chosen !== null && commandAnswered
   const label = repoLabel(usableDone?.root ?? "")
   const taskFiles = usableDone?.taskFiles ?? []
 
@@ -781,7 +807,9 @@ export function AddRepo({
     try {
       await onSubmit({
         path,
-        testCmd: cmd,
+        /* `null` and not the field's contents: a command typed and then opted
+           out of is not the answer the human gave. */
+        testCmd: noSuite ? null : cmd,
         ...(chosen === "personal" || chosen === "work" ? { account: chosen } : {}),
         ...(chosenOption?.configDir === undefined ? {} : { configDir: chosenOption.configDir }),
       })
@@ -1036,10 +1064,51 @@ export function AddRepo({
               <div data-section="3" className={anim("bf d3")} style={{ ...SECTION, ...SECTION_RULE }}>
                 <span style={{ ...BADGE, background: "#111216", color: "#fff" }}>3</span>
                 <div style={{ minWidth: 0 }}>
-                  <label htmlFor="addrepo-cmd" style={LABEL}>
-                    How do you run the tests?
-                  </label>
-                  <p style={WHY}>kantan decides pass or fail from this command's exit code alone.</p>
+                  {/* A `for` naming an input that is not on screen points at
+                      nothing, so the heading is only a label while the field
+                      exists. The question itself does not change. */}
+                  {noSuite ? (
+                    <span style={{ ...LABEL, display: "block" }}>How do you run the tests?</span>
+                  ) : (
+                    <label htmlFor="addrepo-cmd" style={LABEL}>
+                      How do you run the tests?
+                    </label>
+                  )}
+                  <p style={WHY}>
+                    {noSuite
+                      ? "You have said there is none, so a fresh agent verifies its own work and every run records that nothing outside it checked the result."
+                      : "kantan decides pass or fail from this command's exit code alone."}
+                  </p>
+                  {noSuite ? (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+                      <span
+                        className="m"
+                        style={{
+                          flex: "1 1 260px",
+                          display: "flex",
+                          alignItems: "center",
+                          minHeight: 46,
+                          padding: "0 14px",
+                          borderRadius: 12,
+                          background: "#F4F4F6",
+                          fontSize: 13.5,
+                          color: "#5F6370",
+                          boxSizing: "border-box",
+                        }}
+                      >
+                        {SELF_CHECKED}
+                      </span>
+                      <button
+                        type="button"
+                        data-addrepo="cmd-restore"
+                        onClick={() => setNoSuite(false)}
+                        className={PILL}
+                        style={{ ...PILL_BOX, padding: "0 16px" }}
+                      >
+                        Give it a test command
+                      </button>
+                    </div>
+                  ) : (
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
                     <span className={FIELD_SHELL} style={{ ...FIELD_BOX, flex: "1 1 260px", padding: "0 8px 0 14px" }}>
                       <span className="m" style={{ color: "#8A8F9C" }}>
@@ -1083,7 +1152,30 @@ export function AddRepo({
                       </button>
                     )}
                   </div>
-                  <TestOutcome run={testRun} cmd={cmd} reduced={reduced} />
+                  )}
+                  {!noSuite && (
+                    <button
+                      type="button"
+                      data-addrepo="cmd-none"
+                      onClick={() => setNoSuite(true)}
+                      style={{
+                        marginTop: 10,
+                        border: 0,
+                        padding: 0,
+                        background: "none",
+                        font: "inherit",
+                        fontSize: 13.5,
+                        fontWeight: 560,
+                        color: "#5B5BD6",
+                        cursor: "pointer",
+                        textDecoration: "underline",
+                        textUnderlineOffset: 3,
+                      }}
+                    >
+                      This project has no test suite
+                    </button>
+                  )}
+                  {!noSuite && <TestOutcome run={testRun} cmd={cmd} reduced={reduced} />}
                 </div>
               </div>
             )}

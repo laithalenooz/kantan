@@ -626,19 +626,39 @@ export function Sidebar({
    * `text-[12px]` rather than `text-sm` and `text-xs`, which bundle a
    * line-height of their own that would override this. */
   return (
+    /* `sticky` + `h-dvh`, and the cards scroll inside rather than the column
+       growing.
+
+       The artboard pins "Stop run" with `margin-top:auto` in a column that is
+       exactly one viewport tall, so it sits at the bottom of the *screen*. Ported
+       into a page that scrolls, the same `margin-top:auto` put it at the bottom
+       of the whole document: reported from use as "the stop run button is all the
+       way down, takes too long to scroll to see it", on a run the human was
+       trying to stop. A control for stopping something has to be reachable while
+       it is still running.
+
+       `self-start` matters as much as `sticky`: the row is `items-stretch`, which
+       would stretch this to the row's height and leave `h-dvh` with nothing to
+       do. */
     <aside
       aria-label="Run details"
-      className="flex min-h-full min-w-0 shrink-0 grow basis-[260px] flex-col gap-3.5 border-l border-edge bg-panel px-4 pt-5 pb-7 leading-[normal]"
+      className="sticky top-0 flex h-dvh min-w-0 shrink-0 grow basis-[260px] self-start flex-col gap-3.5 border-l border-edge bg-panel px-4 pt-5 pb-7 leading-[normal]"
     >
-      {/* `bf d2`…`d5` on the four children below: the Blur Fade stagger, with
-          the artboard's own delays, so the rail arrives one card at a time.
-          The classes are `src/ui/artboard.css`'s, which `main.tsx` imports. */}
-      <Phases steps={ladder} reduce={reduce} />
-      <Cost spent={spent} ceilingUsd={ceilingUsd} steps={ladder} reduce={reduce} />
-      <Windows accounts={accounts} notice={notice} reduce={reduce} />
-      {showGrinding && grinding != null && (
-        <Grinding flag={grinding} spent={spent} reduce={reduce} onDismiss={dismiss} />
-      )}
+      {/* `min-h-0` is what lets this shrink below its content and scroll:
+          without it a flex child's `auto` minimum is its content height, the
+          column grows past the viewport, and the footer below leaves the
+          screen again - which is the bug this whole shape exists to fix. */}
+      <div className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto">
+        {/* `bf d2`…`d5` on the four children below: the Blur Fade stagger, with
+            the artboard's own delays, so the rail arrives one card at a time.
+            The classes are `src/ui/artboard.css`'s, which `main.tsx` imports. */}
+        <Phases steps={ladder} reduce={reduce} />
+        <Cost spent={spent} ceilingUsd={ceilingUsd} steps={ladder} reduce={reduce} />
+        <Windows accounts={accounts} notice={notice} reduce={reduce} />
+        {showGrinding && grinding != null && (
+          <Grinding flag={grinding} spent={spent} reduce={reduce} onDismiss={dismiss} />
+        )}
+      </div>
       <Stop onStop={onStop} disabled={stopDisabled} />
     </aside>
   )
@@ -1293,7 +1313,7 @@ function Grinding({
  */
 function Stop({ onStop, disabled }: { onStop?: (() => void) | undefined; disabled: boolean }) {
   return (
-    <div className="bf d5 mt-auto flex flex-col gap-2">
+    <div className="bf d5 flex shrink-0 flex-col gap-2 pt-3.5">
       <button
         type="button"
         onClick={onStop}
