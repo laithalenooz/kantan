@@ -250,3 +250,81 @@ describe("useAction", () => {
     expect(seen.api?.error).toContain("no run selected")
   })
 })
+
+describe("a selection change must not leave the old run on screen", () => {
+  /*
+   * Reported by the Task 25 agent, about a hazard its own guard cannot close:
+   *
+   *   "Enter on T3 makes T3 aria-current, and if the shell keeps rendering T2's
+   *    gate until the next fetch resolves, a bare `a` approves T2's plan. The
+   *    gate must change or unmount at the moment the selection changes, not
+   *    when the fetch lands."
+   *
+   * Clearing inside an effect is too late: effects run after the commit, so
+   * there is one painted frame showing the previous run's plan under the new
+   * run's heading. A keystroke in that frame approves the wrong plan and starts
+   * a real implementation run. So the guarantee has to hold at render time.
+   */
+  class Src {
+    static made: Src[] = []
+    messages: ((e: { data: string }) => void)[] = []
+    closed = false
+    constructor(readonly url: string) {
+      Src.made.push(this)
+    }
+    addEventListener(type: "open" | "error", listener: () => void): void
+    addEventListener(type: "message" | "record", listener: (event: { data: string }) => void): void
+    addEventListener(type: string, listener: (event: { data: string }) => void): void {
+      if (type === "record") this.messages.push(listener)
+    }
+    close(): void {
+      this.closed = true
+    }
+  }
+  const open = (url: string): RecordSource => new Src(url) as unknown as RecordSource
+
+  test("no render ever sees one run's rows under another run's id", async () => {
+    Src.made = []
+    // Every render records which run it was asked for and which run the rows it
+    // was handed actually came from. Row ids are `runId#record:event`.
+    const seen: { asked: string; rowsFrom: string | null }[] = []
+    function Probe({ id }: { id: string }): React.ReactNode {
+      const { view } = useRun(id, open)
+      const first = view?.rows[0]?.id ?? null
+      seen.push({ asked: id, rowsFrom: first === null ? null : (first.split("#")[0] ?? null) })
+      return null
+    }
+
+    await render(<Probe id="r-1" />)
+    await act(async () => {
+      for (const l of Src.made[0]?.messages ?? []) l({ data: JSON.stringify({ kind: "test", exitCode: 0, attempt: 1 }) })
+    })
+    expect(seen.at(-1)).toEqual({ asked: "r-1", rowsFrom: "r-1" })
+
+    await render(<Probe id="r-2" />)
+    const mismatched = seen.filter((s) => s.rowsFrom !== null && s.rowsFrom !== s.asked)
+    expect(mismatched).toEqual([])
+  })
+
+  test("the same holds for the plan the gate renders", async () => {
+    const fetcher = (async (url: string | URL | Request) =>
+      Response.json({ status: "loaded", path: `${String(url).includes("r-1") ? "one" : "two"}.md`, markdown: "#" })) as unknown as typeof fetch
+
+    const seen: { asked: string; planFrom: string | null }[] = []
+    function Probe({ id }: { id: string }): React.ReactNode {
+      const plan = usePlan(id, true, fetcher)
+      seen.push({ asked: id, planFrom: plan !== null && plan.status === "loaded" ? plan.path : null })
+      return null
+    }
+
+    await render(<Probe id="r-1" />)
+    await flush()
+    expect(seen.at(-1)).toEqual({ asked: "r-1", planFrom: "one.md" })
+
+    await render(<Probe id="r-2" />)
+    const mismatched = seen.filter(
+      (s) => s.planFrom !== null && !((s.asked === "r-1" && s.planFrom === "one.md") || (s.asked === "r-2" && s.planFrom === "two.md")),
+    )
+    expect(mismatched).toEqual([])
+  })
+})

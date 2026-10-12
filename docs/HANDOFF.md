@@ -774,6 +774,65 @@ keying on the decision resolves nothing for a question and has to guess which
 phase an approve referred to. The unambiguous signals are a `phase` record
 naming a **different** phase, and `end`. `src/ui/live.ts` uses those.
 
+### What a visual rework of the UI must carry forward (open)
+
+From the Task 25 agent (commit `3881bed`). Each of these is load-bearing, each
+has a test behind it, and several are invisible in a screenshot - so a restyle
+that only checks "does it look like the artboard" will drop them silently.
+
+- **`data-task-row` + `aria-current` on task rows.** A contract between `Tree`
+  and `Gate`, not decoration: the gate's bare-`a` shortcut refuses when focus
+  points at a task the card is not showing, and that check reads these.
+  `test/ui/Gate.test.tsx` renders the **real `Tree`**, so dropping either fails
+  that suite rather than silently allowing a wrong approval. Keep that test
+  rendering the real component.
+- **`bareKeystroke`, exported from `Tree.tsx`, imported by `Gate.tsx`.** The
+  single entry point for any single-letter shortcut. Deliberately not copied: a
+  second copy of a rule about when *not* to fire a destructive shortcut drifts,
+  and it drifts in the expensive direction. It reads `event.key`, never
+  `event.code` - on AZERTY, `code` would approve on the key printed **Q**.
+- **The roving `tabIndex`** (one stop, so Tab leaves the column).
+- **Nested `ul`/`li`, three levels - not `role="tree"`.** A tree is a contract
+  that nodes report `aria-expanded` and arrows open them; nothing in this
+  column expands, so the role would tell a screen-reader user to press
+  ArrowRight on a node that never opens.
+- **`role="log"` + `aria-live="off"`** on the record. `off` is load-bearing:
+  rows are virtualised and the SSE replays from byte 0, so a polite region
+  announces a reconnect as a thousand new events.
+- **`sr-only` state words on phase rows.** Every glyph there is `aria-hidden`,
+  so without them the rail reads as "plan 8s, gate, implement, test" - the
+  sequence with its state removed, which is the one thing it conveys.
+- **Inset focus rings** on rows and the scroller. An outward ring on an
+  absolutely positioned full-width row inside an `overflow-clip` card is
+  clipped at the edges and overlaps its neighbours everywhere else.
+- **`data-motion` attributes** - the reduced-motion probes read them.
+
+### A reduced-motion fallback can pass its own suite and fail the real one
+
+Mutation evidence from the same agent, and the inverse of the usual failure.
+Deleting the `|| live` from the **Stream** row's reduced-motion read:
+
+| run | result |
+|---|---|
+| `bun test test/ui/Stream.test.tsx` | **0 fail** - the mutation survives |
+| `bun run check` (full suite) | **1 fail** |
+
+Run alone, Motion's cached preference happens to agree with that file's stubbed
+query. In the full suite a sibling file initialises the module-level singleton
+first and the cached answer goes stale - the `CLAUDE.md` trap, reproduced. So
+**verify a reduced-motion fallback with the full suite, never a single file.**
+
+Two more probed facts from that work: happy-dom's `getComputedStyle` does
+**not** evaluate `@media (prefers-reduced-motion)`, so a CSS-only guard is
+invisible to every assertion and needs a JS read beside it; and `matchMedia`
+returns a **new** `MediaQueryList` per call and never fires `change`, so
+"preference changed mid-session" needs a stubbed shared query.
+
+The artboard's own `@media (prefers-reduced-motion:reduce){.kr *{animation:none
+!important}}` is a strong second belt but not a replacement: it reaches CSS
+animations only, not Motion springs and not the `requestAnimationFrame`-driven
+cost ticker.
+
 ## Settled: decisions with non-obvious reasons
 
 | Decision | Why it is not the obvious thing |

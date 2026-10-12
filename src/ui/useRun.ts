@@ -84,16 +84,24 @@ export function useRun(
   runId: string | null,
   open?: (url: string) => RecordSource,
 ): { view: RunView | null } {
-  const [view, setView] = useState<RunView | null>(null)
+  // The run the state belongs to is stored *with* it, and the match is checked
+  // during render. Clearing in the effect instead is too late by one painted
+  // frame, and that frame is dangerous rather than untidy: the Task 25 agent
+  // reported that `Enter` on another task moves `aria-current` immediately, so
+  // a bare `a` in that frame approves the plan still on screen - a different
+  // task's plan - and starts a real implementation run on it.
+  const [held, setHeld] = useState<{ runId: string; view: RunView } | null>(null)
 
   useEffect(() => {
-    setView(null)
-    if (runId === null) return
-    const sub = subscribeRun(runId, setView, open)
+    if (runId === null) {
+      setHeld(null)
+      return
+    }
+    const sub = subscribeRun(runId, (view) => setHeld({ runId, view }), open)
     return () => sub.close()
   }, [runId, open])
 
-  return { view }
+  return { view: held !== null && held.runId === runId ? held.view : null }
 }
 
 /**
@@ -106,24 +114,26 @@ export function useRun(
  * this reader guessed by convention.
  */
 export function usePlan(runId: string | null, want: boolean, fetcher: typeof fetch = fetch): PlanSource | null {
-  const [plan, setPlan] = useState<PlanSource | null>(null)
+  // Keyed on the run, and checked during render, for the same reason as
+  // `useRun`: the gate renders whatever this returns, and a plan belonging to
+  // the previously selected task is the exact thing the human is being asked to
+  // approve.
+  const [held, setHeld] = useState<{ runId: string; plan: PlanSource } | null>(null)
 
   useEffect(() => {
-    if (runId === null || !want) {
-      setPlan(null)
-      return
-    }
+    if (runId === null || !want) return
     let live = true
     void (async () => {
       const answer = await fetchPlan(runId, fetcher)
-      if (live) setPlan(answer)
+      if (live) setHeld({ runId, plan: answer })
     })()
     return () => {
       live = false
     }
   }, [runId, want, fetcher])
 
-  return plan
+  if (runId === null || !want) return null
+  return held !== null && held.runId === runId ? held.plan : null
 }
 
 /**
