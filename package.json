@@ -7,6 +7,7 @@
     "server": "bun run src/server.ts",
     "server:dev": "ORCH_DEV=1 bun --watch run src/server.ts",
     "ui": "vite",
+  "build": "vite build",
     "typecheck": "tsc --noEmit",
     "check": "bun run typecheck && bun test"
   },

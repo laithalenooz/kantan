@@ -53,7 +53,11 @@ const NO_MODEL: Ask = async () => {
 }
 
 function serve(opts: Parameters<typeof createServer>[0] = {}): Launch {
-  const l = createServer({ port: 0, ask: NO_MODEL, ...opts })
+  /* `distDir` points at nothing, for the reason `runsDir` is always injected:
+   * the default is the repo's real `dist/`, so without this every test that
+   * loads a page would pass or fail on whether the developer had run `bun run
+   * build`. The build's own route is covered by `test/assets.test.ts`. */
+  const l = createServer({ port: 0, ask: NO_MODEL, distDir: join(tmpdir(), "orch-no-dist"), ...opts })
   launched.push(l)
   return l
 }
@@ -1304,6 +1308,8 @@ test("an id runLogPath refuses becomes a 400, not an unhandled rejection", async
     hosts: new Set(),
     origins: new Set(),
     runsDir: dir,
+    /* No build involved: these two contexts exercise the run-id refusal. */
+    distDir: dir,
     streamPollMs: 2,
     streamKeepAliveMs: 1000,
     runner: null,
@@ -1847,6 +1853,8 @@ test("an id runLogPath refuses is a 4xx and never reaches the machine", async ()
     hosts: new Set(),
     origins: new Set(),
     runsDir: dir,
+    /* No build involved: these two contexts exercise the run-id refusal. */
+    distDir: dir,
     streamPollMs: 2,
     streamKeepAliveMs: 1000,
     runner: fake.runner,

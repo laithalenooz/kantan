@@ -96,6 +96,7 @@ import {
 import { runTestCommand } from "./routes/test"
 import { detectRepoPath } from "./routes/detect"
 import { readAccounts } from "./routes/accounts"
+import { builtIndex, DEFAULT_DIST, readAsset } from "./routes/assets"
 export type { PlanSource } from "./routes/plan"
 import type { FileRead } from "./http/readinside"
 
@@ -146,12 +147,29 @@ const DEFAULT_STREAM_POLL_MS = 50
  */
 const DEFAULT_STREAM_KEEP_ALIVE_MS = 5_000
 
-/** Replaced by the built `dist/` in Task 20. Its job today is to carry the
- * cookie, so it must not carry the token in its body: a page that can read a
- * response would gain exactly what HttpOnly is hiding. */
+/**
+ * What `GET /` answers when there is no `dist/`, which is a fresh clone and the
+ * dev loop - not an error.
+ *
+ * It must not carry the token in its body: a page that can read a response
+ * would gain exactly what HttpOnly is hiding. The cookie rides on the headers
+ * either way, so this page still bootstraps a session even though it has no
+ * script to use one.
+ *
+ * It names the two commands because somebody who sees it has almost certainly
+ * just started the server and is looking at a blank-ish page wondering which
+ * half is missing. Until T1 landed this said "the UI arrives in a later task",
+ * which was true of the code and useless to a reader.
+ */
 const INDEX_STUB = `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>kantan</title></head>
-<body><p>kantan is running. The UI arrives in a later task.</p></body></html>
+<html lang="en"><head><meta charset="utf-8"><title>kantan</title>
+<style>body{font:15px/1.6 ui-sans-serif,system-ui,sans-serif;margin:3rem auto;max-width:34rem;padding:0 1rem;color:#1c1917}
+code{background:#f5f5f4;border-radius:4px;padding:.15em .4em;font-size:.92em}</style></head>
+<body><h1>kantan is running</h1>
+<p>The server is up, but there is no built interface to serve. Either build it once&nbsp;&mdash;</p>
+<p><code>bun run build</code> &nbsp;then reload this page</p>
+<p>&mdash;&nbsp;or run the dev server alongside this one with <code>bun run ui</code> and open the port it prints.</p>
+</body></html>
 `
 
 /**
@@ -164,15 +182,43 @@ const INDEX_STUB = `<!doctype html>
  * Patterns are resolved by `matchRoute`, **after** the guard chain.
  */
 export const ROUTES: Record<string, RouteHandler> = {
-  /** Page load, and where the cookie comes from. */
-  "GET /": (_req, ctx) =>
-    new Response(INDEX_STUB, {
+  /**
+   * Page load, where the cookie comes from, and - since T1 - the built UI.
+   *
+   * The build is read per request rather than once at launch, because `bun
+   * --watch` reloads this module in the same process and a cached `index.html`
+   * would then be whichever build existed at the first load. It is one small
+   * file and `no-store` already means one read per navigation.
+   *
+   * No 404 when there is no build: see `INDEX_STUB`.
+   */
+  "GET /": async (_req, ctx) => {
+    const built = await builtIndex(ctx.distDir)
+    return new Response(built ?? INDEX_STUB, {
       headers: {
         "Content-Type": "text/html; charset=utf-8",
+        /* The HTML names hashed asset files, so a cached copy of it would ask
+           for the previous build's chunks after a rebuild. Hence `no-store`
+           here and `immutable` on the assets - the pair is what makes the
+           hashing worth anything. */
         "Cache-Control": "no-store",
         "Set-Cookie": tokenCookie(ctx),
       },
-    }),
+    })
+  },
+
+  /**
+   * The built UI's own files, and the only route that answers with bytes off
+   * disk that nobody asked kantan to read.
+   *
+   * **Token-guarded like everything else**, which works because `GET /` sets
+   * the cookie on the navigation that pulls these in: the browser stores a
+   * `Set-Cookie` when it processes the response headers, before it parses the
+   * HTML that references them. Exempting them would have been the easy
+   * mistake - it would put a readable file route on this port for any page on
+   * any other localhost port to probe.
+   */
+  "GET /assets/:file": (_req, ctx, params) => readAsset(ctx, params?.file ?? ""),
 
   /** The same bootstrap, reachable through Vite's `/api` proxy. In dev, Vite
    * serves index.html, so the browser never loads our "/" and the cookie has
@@ -375,6 +421,7 @@ export function createServer(opts: ServerOptions = {}): Launch {
     dev,
     devPort,
     runsDir: opts.runsDir ?? defaultRunsDir(),
+    distDir: opts.distDir ?? DEFAULT_DIST,
     streamPollMs: opts.streamPollMs ?? DEFAULT_STREAM_POLL_MS,
     streamKeepAliveMs: opts.streamKeepAliveMs ?? DEFAULT_STREAM_KEEP_ALIVE_MS,
     // `null` rather than left undefined, so the 503 branch in every action is

@@ -230,6 +230,16 @@ export interface ServerOptions {
   /** Where the run logs are. Defaults to `~/.orch/runs`; injectable so a test
    * never reads or writes the developer's own history. */
   runsDir?: string
+  /**
+   * Where the built UI is. Defaults to `<repo>/dist`, which is Vite's
+   * `outDir`; injectable so a test can point at a fixture, or at a directory
+   * that does not exist, without building the real thing first.
+   *
+   * It has a default, unlike `projectsFile`, because unlike a project store a
+   * missing build is not a mistake: a fresh clone has none, and `GET /` says
+   * so rather than failing.
+   */
+  distDir?: string
   /** How often a followed run log is checked for appended bytes. */
   streamPollMs?: number
   /** How often an idle run stream sends a keep-alive comment. */
@@ -299,6 +309,9 @@ export interface RouteContext {
   origins: ReadonlySet<string>
   /** Resolved from `ServerOptions`, so a handler never consults a default. */
   runsDir: string
+  /** Where a built UI would be. Resolved, like `runsDir`: present whether or
+   * not anything is there, and `hasBuiltUI` is what answers that. */
+  distDir: string
   streamPollMs: number
   streamKeepAliveMs: number
   /** `null` when the server was launched without one. Nullable rather than

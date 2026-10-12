@@ -39,7 +39,17 @@ export type FileRead =
   | { ok: false; why: "failed"; message: string }
 
 /**
- * `joined`'s contents as text, if and only if it really sits inside `root`.
+ * The same answer, undecoded.
+ *
+ * Every refusal is shared with `FileRead` - the containment check, the size cap
+ * and the open flags are the same work, and the only difference is whether the
+ * bytes are handed back or run through a decoder. Spelled as the union minus
+ * the success case so a refusal added later lands in both automatically.
+ */
+export type BytesRead = { ok: true; bytes: Uint8Array<ArrayBuffer> } | Exclude<FileRead, { ok: true }>
+
+/**
+ * `joined`'s bytes, if and only if it really sits inside `root`.
  *
  * **The string checks a caller makes on a path are not enough, and this is the
  * function that makes a route safe.** `stat` and `readFile` follow symlinks, so
@@ -72,7 +82,7 @@ export type FileRead =
  * *renders*, not about what that agent can reach - and a hard-linked file is a
  * thing a real repository can contain.
  */
-export async function readInside(root: string, joined: string, maxBytes: number): Promise<FileRead> {
+export async function readBytesInside(root: string, joined: string, maxBytes: number): Promise<BytesRead> {
   let real: string
   try {
     real = await realpath(joined)
@@ -114,10 +124,14 @@ export async function readInside(root: string, joined: string, maxBytes: number)
       total += bytesRead
     }
     if (total > maxBytes) return { ok: false, why: "too-large", size: null }
-    // Not `utf8`: a decoder that substitutes U+FFFD would show a human mangled
-    // prose and let them approve it, and would put a replacement character into
-    // a task's text, so invalid bytes refuse instead.
-    return { ok: true, text: new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(buffer.subarray(0, total)) }
+    // Copied into an exactly-sized array rather than handed back as a
+    // `subarray`: a view would keep the whole `maxBytes + 1` buffer alive
+    // behind a few hundred bytes of asset, and the caller may hold it as a
+    // response body for as long as the request lasts. The copy also pins the
+    // backing store to a real `ArrayBuffer`, which is what `BodyInit` takes.
+    const bytes = new Uint8Array(total)
+    bytes.set(buffer.subarray(0, total))
+    return { ok: true, bytes }
   } catch (cause) {
     return { ok: false, why: "failed", message: (cause as Error).message }
   } finally {
@@ -132,4 +146,26 @@ export async function readInside(root: string, joined: string, maxBytes: number)
  * this is called, so there is nothing left for a link to hide behind. */
 export function inside(path: string, root: string): boolean {
   return path === root || path.startsWith(root + sep)
+}
+
+/**
+ * `joined`'s contents as **text**, with every guarantee above plus one.
+ *
+ * Not `utf8`: a decoder that substitutes U+FFFD would show a human mangled
+ * prose and let them approve it, and would put a replacement character into a
+ * task's text, so invalid bytes refuse as `failed` instead.
+ *
+ * Split from `readBytesInside` when `GET /assets/:file` arrived: a `.woff2` is
+ * not UTF-8 and a fatal decoder is exactly right for a plan and exactly wrong
+ * for a font. The alternative was a `binary` flag on one function, which makes
+ * the return type depend on an argument and puts two policies behind one name.
+ */
+export async function readInside(root: string, joined: string, maxBytes: number): Promise<FileRead> {
+  const read = await readBytesInside(root, joined, maxBytes)
+  if (!read.ok) return read
+  try {
+    return { ok: true, text: new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(read.bytes) }
+  } catch (cause) {
+    return { ok: false, why: "failed", message: (cause as Error).message }
+  }
 }
