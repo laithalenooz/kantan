@@ -428,7 +428,7 @@ function syntheticLog(count: number): StreamRow[] {
         out.push(eventRow(id, { kind: "parse_error", line: '{"type":"assistant","mess', error: "Unexpected end of JSON input" }, { at: when }))
         break
       case 5:
-        out.push(eventRow(id, { kind: "rate_limit", status: "allowed", utilization: 41 }, { at: when }))
+        out.push(eventRow(id, { kind: "rate_limit", status: "allowed", utilization: 0.41, resetsAt: undefined }, { at: when }))
         break
       case 6:
         out.push({ id, at: when, tests: { exitCode: i % 3 === 0 ? 0 : 1, attempt: 1 + (i % 5), summary: "10 passing, 1 failing", output: "✕ map.test.ts › warns once per dropped field" } })
@@ -606,6 +606,40 @@ describe("an unknown event is never hidden and never an alarm", () => {
       expect(mounted.row("u")?.textContent).toContain(JSON.stringify(raw, null, 2) ?? String(raw))
     })
   }
+
+  test("its raw JSON is somewhere a person can select it", async () => {
+    /*
+     * Probed in headless Chrome, because no DOM assertion can see a selection:
+     * with this panel nested inside the row's `<button>`, as the artboard
+     * draws it, a drag across the JSON selected **zero** characters and the
+     * mouse-up collapsed the row. Text inside a button is not selectable in
+     * Chrome, and is not in Firefox either.
+     *
+     * That is the whole point of this row lost. `system/vcs_state_changed` is
+     * a real event this version does not understand, and "shown as it arrived"
+     * means nothing if the thing shown cannot be copied into a bug report.
+     *
+     * So the panel lives after the button, not in it. This is the DOM-visible
+     * half of that — the half a later artboard-fidelity pass would otherwise
+     * undo without noticing what it cost.
+     */
+    const mounted = await mount(
+      <api.Stream rows={[eventRow("u", { kind: "unknown", raw: { type: "system", subtype: "vcs_state_changed" } })]} />,
+    )
+    const button = mounted.row("u")?.querySelector("button")
+    if (button instanceof HTMLElement) await click(button)
+
+    const row = mounted.row("u")
+    const panel = [...(row?.querySelectorAll("span") ?? [])].find((el) =>
+      (el.textContent ?? "").includes('"vcs_state_changed"'),
+    )
+    expect(panel).toBeDefined()
+    expect(panel?.closest("button")).toBeNull()
+
+    /* And it is still inside the element the virtualizer measures, or every
+     * row below it would sit at the wrong offset while this one is open. */
+    expect(row?.contains(panel ?? null)).toBe(true)
+  })
 
   test("it is drawn as a question, not a failure", async () => {
     const mounted = await mount(<api.Stream rows={[eventRow("u", { kind: "unknown", raw: { type: "tool_progress_v2" } })]} />)
@@ -794,9 +828,53 @@ describe("a rate-limit row reads the figure the way it arrives", () => {
   for (const [utilization, expected] of windows) {
     test(`${String(utilization)} reads as "${expected}"`, async () => {
       const mounted = await mount(
-        <api.Stream rows={[eventRow("l", { kind: "rate_limit", status: "allowed", utilization })]} />,
+        <api.Stream rows={[eventRow("l", { kind: "rate_limit", status: "allowed", utilization, resetsAt: undefined })]} />,
       )
       expect(mounted.row("l")?.textContent).toContain(expected)
+    })
+  }
+
+  test("a reset time is read as seconds, and shown the way the rail shows it", async () => {
+    /*
+     * `resetsAt` is epoch **seconds**, and reading it as milliseconds is the
+     * kind of mistake that never looks like one: 1,791,744,000 milliseconds is
+     * the 21st of January 1970, which still prints a perfectly plausible time
+     * of day. So this asserts the wall clock of a known instant rather than
+     * merely that something time-shaped appeared.
+     *
+     * The expectation comes from `Sidebar`'s `formatResetTime`, which this row
+     * now calls rather than reimplements — the same field is on screen twice,
+     * and one formatter is what stops the two from disagreeing.
+     */
+    const seconds = Math.floor(Date.UTC(2026, 9, 11, 18, 40, 0) / 1000)
+    const expected = new Date(seconds * 1000).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    })
+
+    const mounted = await mount(
+      <api.Stream rows={[eventRow("l", { kind: "rate_limit", status: "allowed", utilization: 0.41, resetsAt: seconds })]} />,
+    )
+    expect(mounted.row("l")?.textContent).toContain(`resets ${expected}`)
+  })
+
+  /*
+   * What cannot be a reset time says nothing. `src/stream.ts` admits any
+   * number, so zero and negatives reach here, and both render as a confident
+   * hour on the 1st of January 1970.
+   */
+  for (const [name, resetsAt] of [
+    ["absent", undefined],
+    ["zero", 0],
+    ["negative", -1],
+    ["not a number", Number.NaN],
+  ] as const) {
+    test(`a reset time that is ${name} is left unsaid`, async () => {
+      const mounted = await mount(
+        <api.Stream rows={[eventRow("l", { kind: "rate_limit", status: "allowed", utilization: 0.41, resetsAt })]} />,
+      )
+      expect(mounted.row("l")?.textContent).not.toContain("resets")
     })
   }
 
@@ -809,7 +887,7 @@ describe("a rate-limit row reads the figure the way it arrives", () => {
      * every weekly window as an hourly one.
      */
     const mounted = await mount(
-      <api.Stream rows={[eventRow("l", { kind: "rate_limit", status: "allowed", utilization: 0.88 })]} />,
+      <api.Stream rows={[eventRow("l", { kind: "rate_limit", status: "allowed", utilization: 0.88, resetsAt: undefined })]} />,
     )
     const text = mounted.row("l")?.textContent ?? ""
     expect(text).toContain("88% of the window used")
@@ -1141,6 +1219,8 @@ describe("only new rows animate", () => {
 
 describe("every event kind draws something", () => {
   const at = Date.UTC(2026, 9, 11, 17, 55, 41)
+  /** A window reset, in the epoch **seconds** `src/stream.ts` carries. */
+  const RESETS_AT = Math.floor(Date.UTC(2026, 9, 11, 18, 40, 0) / 1000)
   const samples: [string, StreamRow][] = [
     ["init", eventRow("1", { kind: "init", cwd: "/home/you/code/your-app", tools: 18, skills: 4, sessionId: "8e7b9ce0" }, { at })],
     ["text", eventRow("2", { kind: "text", text: "I will drop unknown fields." }, { at })],
@@ -1156,9 +1236,9 @@ describe("every event kind draws something", () => {
     ["tool_result", eventRow("11", { kind: "tool_result", toolUseId: "t", content: "10 passing", isError: false }, { at })],
     ["tool_result, empty", eventRow("12", { kind: "tool_result", toolUseId: "t", content: "", isError: false }, { at })],
     ["tool_result, error", eventRow("13", { kind: "tool_result", toolUseId: "t", content: "ENOENT", isError: true }, { at })],
-    ["rate_limit", eventRow("14", { kind: "rate_limit", status: "allowed", utilization: 41 }, { at })],
-    ["rate_limit, no utilization", eventRow("15", { kind: "rate_limit", status: "allowed_warning", utilization: undefined }, { at })],
-    ["rate_limit, no status", eventRow("16", { kind: "rate_limit", status: "", utilization: 0 }, { at })],
+    ["rate_limit", eventRow("14", { kind: "rate_limit", status: "allowed", utilization: 0.41, resetsAt: RESETS_AT }, { at })],
+    ["rate_limit, no utilization", eventRow("15", { kind: "rate_limit", status: "allowed_warning", utilization: undefined, resetsAt: undefined }, { at })],
+    ["rate_limit, no status", eventRow("16", { kind: "rate_limit", status: "", utilization: 0, resetsAt: undefined }, { at })],
     ["result, success", eventRow("17", { kind: "result", subtype: "success", isError: false, costUsd: 0.0046, numTurns: 7, text: "Done.", permissionDenials: [] }, { at })],
     ["result, denials", eventRow("18", { kind: "result", subtype: "success", isError: false, costUsd: 0.0046, numTurns: 7, text: "Done.", permissionDenials: [{ tool: "Bash" }] }, { at })],
     ["unknown", eventRow("19", { kind: "unknown", raw: { type: "future" } }, { at })],

@@ -39,6 +39,8 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react"
 
 import type { Event } from "../stream"
+/* The rail already formats this exact field. See the `rate_limit` row. */
+import { formatResetTime } from "./Sidebar.tsx"
 
 // --- The rows a run record can hold ----------------------------------------
 
@@ -353,6 +355,7 @@ export function clock(at: number): string {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
 
+
 /** A string field of an unknown tool input, or `undefined` if it is not one. */
 function field(input: unknown, key: string): string | undefined {
   if (typeof input !== "object" || input === null || Array.isArray(input)) return undefined
@@ -408,28 +411,28 @@ function Prose({ children, open }: { children: ReactNode; open: boolean }) {
 }
 
 /**
- * The body column of a row that expands: the line that is always there, and
- * under it the part that only appears when the row is open.
+ * What an expanded row reveals, indented to line up with the body column.
  *
- * `Main.dc.html` draws it on the unrecognised event — `display:flex;
- * flex-direction:column;gap:6px;min-width:0` — and the expanded panel is a
- * child of the body cell, not a band under the row, so it lines up with the
- * text it belongs to rather than with the gutter.
+ * 106px is that column's own offset — 16 padding + 22 icon + 10 gap + 58 label
+ * + 10 gap — so this sits under the text it belongs to rather than under the
+ * gutter, which is where `Main.dc.html` puts an unrecognised event's raw JSON
+ * and `Return.dc.html` a failing suite's output.
+ *
+ * ## Why it is not *in* that column, which is where the artboards draw it
+ *
+ * Because an expandable row is a `<button>`, and **text inside a button cannot
+ * be selected**. Probed in headless Chrome against this very panel: a drag
+ * across the raw JSON of an unrecognised event selected zero characters, and
+ * the mouse-up collapsed the row. So nesting it cost exactly the thing the
+ * `unknown` row exists for — a `system/vcs_state_changed` nobody can copy out
+ * is not much better than one that was never shown.
+ *
+ * The artboards are static HTML and could not have discovered this. The cost
+ * of the departure is a few pixels of vertical space and a panel outside the
+ * row's hover tint; the cost of following them is an uncopyable record.
  */
-function Body({ head, detail, open }: { head: ReactNode; detail: ReactNode; open: boolean }) {
-  /* Closed, the head *is* the cell: the column wrapper would be a span with one
-   * child, laying out identically and costing a DOM node on every row of a log
-   * that reaches thousands. It would also be a second element holding exactly
-   * the row's text, which is one more thing between a value and the grid track
-   * that has to let it wrap. */
-  if (!open) return <>{head}</>
-
-  return (
-    <span className="flex min-w-0 flex-col gap-1.5">
-      {head}
-      {detail}
-    </span>
-  )
+function Detail({ children }: { children: ReactNode }) {
+  return <div className="pt-1 pr-4 pb-3.5 pl-[106px]">{children}</div>
 }
 
 /**
@@ -871,9 +874,14 @@ export function viewFor(row: StreamRow, open: boolean): View {
                 who read it, and neither needs a tick to be believed. */}
             <span className="text-[12.5px] text-muted-500">read by kantan</span>
           </span>
-          {open && output ? <Pre text={output} tone={exitCode === 0 ? undefined : "fail"} /> : null}
         </span>
       ),
+      panel:
+        output === undefined || output === "" ? undefined : (
+          <Detail>
+            <Pre text={output} tone={exitCode === 0 ? undefined : "fail"} />
+          </Detail>
+        ),
     }
   }
 
@@ -943,7 +951,11 @@ export function viewFor(row: StreamRow, open: boolean): View {
       return {
         ...view,
         expandable: true,
-        body: <Body head={view.body} detail={<ToolInput input={event.input} />} open={open} />,
+        panel: (
+          <Detail>
+            <ToolInput input={event.input} />
+          </Detail>
+        ),
       }
     }
 
@@ -975,7 +987,8 @@ export function viewFor(row: StreamRow, open: boolean): View {
       }
     }
 
-    case "rate_limit":
+    case "rate_limit": {
+      const resetsAt = formatResetTime(event.resetsAt)
       return {
         label: "limit",
         icon: "clock",
@@ -1005,9 +1018,23 @@ export function viewFor(row: StreamRow, open: boolean): View {
             {event.utilization === undefined || !Number.isFinite(event.utilization)
               ? " · the window's utilisation was not reported"
               : ` · ${Math.round(event.utilization * 100)}% of the window used`}
+            {/*
+             * "· resets 18:40", the last clause of the artboard's limit row.
+             *
+             * Formatted by the rail's own `formatResetTime`, imported rather
+             * than copied. It is the same `resetsAt`, in the same epoch
+             * seconds, shown twice on one screen; two formatters would be two
+             * chances to disagree about one number — and the one this row
+             * would have got wrong is already named in that function's
+             * comment, which rejects zero and negatives because "18:40 and
+             * 01:00 on 1 Jan 1970 are equally confident and only one of them
+             * is true".
+             */}
+            {resetsAt === undefined ? null : ` · resets ${resetsAt}`}
           </span>
         ),
       }
+    }
 
     case "result":
       return resultView(event, row.errors, open)
@@ -1022,17 +1049,16 @@ export function viewFor(row: StreamRow, open: boolean): View {
         iconClass: "text-muted-400",
         expandable: true,
         body: (
-          <Body
-            open={open}
-            head={
-              <span className="block min-w-0">
-                <NewBadge />
-                <span className="m font-mono text-[12.5px] wrap-anywhere">{discriminator(event.raw)}</span>
-                <span className="text-muted-500"> · shown as it arrived</span>
-              </span>
-            }
-            detail={<Pre text={json(event.raw, 2)} />}
-          />
+          <span className="block min-w-0">
+            <NewBadge />
+            <span className="m font-mono text-[12.5px] wrap-anywhere">{discriminator(event.raw)}</span>
+            <span className="text-muted-500"> · shown as it arrived</span>
+          </span>
+        ),
+        panel: (
+          <Detail>
+            <Pre text={json(event.raw, 2)} />
+          </Detail>
         ),
       }
 
@@ -1046,21 +1072,16 @@ export function viewFor(row: StreamRow, open: boolean): View {
         iconClass: "text-muted-300",
         expandable: true,
         body: (
-          <Body
-            open={open}
-            head={
-              <span className="block min-w-0 text-muted-500">
-                One line wasn't JSON, so it's kept as plain text.
-                <span className="m font-mono text-[12.5px]"> {group(event.line.length)} characters</span>
-              </span>
-            }
-            detail={
-              <>
-                <Pre text={event.line === "" ? "(the line was empty)" : event.line} />
-                <span className="block text-[12.5px] text-muted-500">The parser said: {event.error}</span>
-              </>
-            }
-          />
+          <span className="block min-w-0 text-muted-500">
+            One line wasn't JSON, so it's kept as plain text.
+            <span className="m font-mono text-[12.5px]"> {group(event.line.length)} characters</span>
+          </span>
+        ),
+        panel: (
+          <Detail>
+            <Pre text={event.line === "" ? "(the line was empty)" : event.line} />
+            <span className="mt-1.5 block text-[12.5px] text-muted-500">The parser said: {event.error}</span>
+          </Detail>
         ),
       }
   }
@@ -1120,12 +1141,20 @@ export interface RowProps {
  * it is the normal case: rows are virtualized, so one scrolls out mid-fade
  * whenever the log moves, and the run stream replays from byte 0 on reconnect.
  *
- * **A CSS animation is covered by the reduced-motion guards; a JS one is not.**
- * `tokens.css` kills every CSS animation under `prefers-reduced-motion`, and
- * `artboard.css` adds the artboards' own `.kr *{animation:none!important}` on
- * top. Neither can reach a Motion spring, which is why that path needed a
- * hand-rolled gate — kept below as well, because a class that is never added
- * cannot animate at all, which is stronger than one that is overridden.
+ * **A CSS animation is covered by the stylesheet's reduced-motion guards; a JS
+ * one is not.** `tokens.css` cuts every CSS animation to `0.01ms` under
+ * `prefers-reduced-motion` — which ends it rather than stopping it starting —
+ * and `artboard.css` adds the artboards' own `animation:none!important`,
+ * scoped to `.kr, .kr *` and so live only while `App.tsx`'s root carries `kr`,
+ * which today it does. Neither can reach a Motion spring.
+ *
+ * None of that is the gate, though. The gate is `Stream`'s: under `reduce` it
+ * passes `enter={false}`, so the class below is never added at all — stronger
+ * than either stylesheet guard, because it does not depend on a stylesheet
+ * loading or on a root keeping a class. Probed in headless Chrome under
+ * emulated `reduce`: no row carries `bf` and `document.getAnimations()` is 0,
+ * against 2 running `kfade` animations for the same two arrivals without the
+ * preference.
  *
  * **Motion's reduced-motion answer is a module-level singleton** initialised by
  * the first call anywhere in the process, and `CLAUDE.md` records it answering
@@ -1133,9 +1162,10 @@ export interface RowProps {
  * another chance to initialise it early for everyone else.
  *
  * What does not change: **which** rows animate. The class is added only when
- * `enter` is true, and `enter` is `Stream`'s answer keyed on the row id — so a
- * row that has been drawn before stays still, on a reconnect and on the way
- * back up the log. That contract is the component's, not the animation's.
+ * `enter` is true, and `enter` is `Stream`'s answer — an id it has never drawn,
+ * and no reduced-motion preference. So a row that has been drawn before stays
+ * still, on a reconnect and on the way back up the log. That contract is the
+ * component's, not the animation's.
  */
 const STAGGER_CLASSES = ["", "d1", "d2", "d3", "d4", "d5", "d6", "d7", "d8", "d9"] as const
 

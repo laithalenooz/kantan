@@ -207,6 +207,11 @@ function usePrefersReducedMotion(): boolean {
 function Footer({ children }: { children: ReactNode }) {
   if (children === undefined || children === null) return null
   if (typeof children !== "string" && typeof children !== "number") return <>{children}</>
+  /* Blank is not a state. `footerFor` ends in `view.waiting.detail ?? …` and
+   * `detail` is a string the server wrote, so an empty one reaches here — and
+   * an empty pill is a bordered sliver that says a run is in some condition
+   * without saying which. Nothing is the honest drawing of nothing. */
+  if (typeof children === "string" && children.trim() === "") return null
 
   return (
     <div className="flex items-center gap-3 border-t border-panel-2 px-4 py-3.5">
