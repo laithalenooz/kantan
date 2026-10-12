@@ -98,6 +98,155 @@ The line is matched literally, so:
   commit message. It belongs in your message to me and nowhere else.`
 
 /**
+ * The four clauses that change when a project has no test command.
+ *
+ * A project may have `testCmd: null`, and then the agent verifies its own work
+ * (the user's decision, 2026-10-12). Three of the prompts below assert
+ * something that is **false** for such a project - that the orchestrator runs a
+ * test command and branches on its exit code - and a prompt that lies about who
+ * checks the work is the most expensive drift there is here: the agent is told
+ * a safety net exists and stops short of checking itself, which is the one
+ * thing it was asked to do.
+ *
+ * This is the same judgement `RETIRED` in `src/projects.ts` records, where a
+ * whole field was removed rather than leave two prompt lines untrue. So the
+ * claim is a function of the project, not a constant.
+ *
+ * They are small on purpose. Everything else in each prompt holds either way -
+ * including the rule that the agent never touches the backlog file, which did
+ * not change: what changed is *why* the server may tick, not who ticks.
+ */
+
+/** Why a plan must not include a step that ticks the box. */
+function whoTicks(testCmd: string | null): string {
+  return testCmd === null
+    ? `The orchestrator records the task as done itself. This project has no test command,
+  so a separate turn at the end will ask you to verify your own work and the task is
+  recorded on that answer; a plan step that ticks the box would mark it done before
+  anything at all had checked it.`
+    : `The orchestrator records the task as done
+  itself, and only after it has run the project's test command and seen it pass by exit
+  code. A plan step that ticks the box would mark the task done on a failing build.`
+}
+
+/**
+ * Who checks the work, in the implement prompt's "leave the backlog alone" rule.
+ *
+ * Each branch carries its own closing sentence and its own line wrapping, which
+ * looks like duplication and is not: the prompts are hard-wrapped and what the
+ * source shows is what the agent receives, so a shared tail would re-wrap
+ * differently after each clause. Owning the whole paragraph is what lets the
+ * with-command branch stay **byte-identical** to what it has always been, which
+ * `test/prompts.test.ts`'s inline snapshot of this prompt pins.
+ */
+function whoVerifies(testCmd: string | null): string {
+  return testCmd === null
+    ? `The orchestrator records the task itself, and this
+  project has no test command: a separate turn at the end will ask you to verify your own
+  work, and the task is recorded on that answer. Nothing outside this conversation checks
+  it. Editing that file can only put the backlog out of step with what was actually
+  checked.`
+    : `The orchestrator runs the project's test command
+  itself and records the outcome from the exit code; it never takes an agent's word for a
+  passing build. Editing that file can only put the backlog out of step with what was
+  actually verified.`
+}
+
+/**
+ * How to work. With a command, TDD unconditionally - the suite is there and the
+ * server will run it. Without one, the repo may genuinely have no runner, and
+ * the derived allowlist grants no shell but git (`src/permissions.ts`), so
+ * "watch it fail" can be an instruction the agent cannot carry out. Telling it
+ * to do the impossible spends a turn on permission denials.
+ */
+function tddRule(testCmd: string | null): string {
+  return testCmd === null
+    ? `Use \`superpowers:test-driven-development\` as far as this repo allows: where there is any
+way to run a test here, write the failing test first, watch it fail, then the smallest code
+that makes it pass. Where there is not, keep each change small and check it before moving on.`
+    : `Use \`superpowers:test-driven-development\` for every change: the failing test first,
+watch it fail, then the smallest code that makes it pass.`
+}
+
+/** The mid-sentence clause in `answerPrompt` and `resumePrompt`. */
+function checkYourWork(testCmd: string | null): string {
+  return testCmd === null
+    ? `check your work by whatever means this repo gives you`
+    : `run the suite yourself to check`
+}
+
+/**
+ * The self-check turn: what a project with no test command gets **instead of**
+ * the server running a suite.
+ *
+ * This is the user's 2026-10-12 decision in the only form that can carry it -
+ * words an agent reads. It deliberately reports through the **existing**
+ * sentinel: `CLAUDE.md` says that string is load-bearing and must not be
+ * "improved", so `ORCH: done` means "I checked it and it is right" and
+ * `ORCH: blocked <reason>` means "I could not confirm it", with no second
+ * vocabulary to keep in step.
+ *
+ * Two things in the wording are load-bearing rather than tone.
+ *
+ * **It says nothing else will check the work.** That is true, and it is what
+ * makes `blocked` an available answer instead of an admission of failure: an
+ * agent that believes a suite will catch its mistakes has every reason to say
+ * done and move on. The design's rule is "always print the exit code, never
+ * 'looks good'", and the honest extension at this end is to tell the agent
+ * there is no exit code coming.
+ *
+ * **It asks how the work was checked, not whether.** "I verified it" is not a
+ * verification, and that sentence is the only evidence this run will ever carry
+ * - `EndRecord.verifiedBy` records that it was a self-check, and the prose in
+ * the log is all a human has to judge it by.
+ *
+ * It is a separate turn rather than a reading of the implement turn's own
+ * `ORCH: done`, because those mean different things: that one claims the work
+ * is finished, and this one claims it was checked. Collapsing them would make
+ * "the agent verifies" a relabelling of what already happened rather than a
+ * step that occurs.
+ */
+export function selfCheckPrompt({ task, planPath }: { task: TaskSpec; planPath: string }): string {
+  return `The work on ${task.ref} is finished as far as you are concerned. Before kantan records that
+task as done, verify it yourself.
+
+## There is no test command for this project
+
+kantan normally runs the project's own test command and reads the status it returns, and it
+never takes an agent's word for working code. This project has no such command, so that
+check does not exist here: **nothing outside this conversation is going to look at this
+work.** kantan will record in the run log, and in the commit message that ticks the task,
+that it was checked by you and by nothing else.
+
+## Verify it
+
+- Re-read the plan at ${planPath} and confirm every item it lists is actually done, not
+  merely started.
+- Re-read your own changes rather than working from memory of what you meant to write:
+  \`git diff\` and \`git log\` on the branch that is already checked out.
+- Exercise the code if this repo gives you any way to - run it, run a script, run whatever
+  tests exist even though kantan will not.
+- Look for what a suite would have caught: something you referenced and never wrote, an
+  import that does not resolve, a path through the code you never once executed, a case the
+  task names that nothing handles.
+- If you find something wrong, fix it, commit it, and then check it again.
+
+## Then say which it is
+
+- If you have checked it and it is right, say **how you checked** - what you read, what you
+  ran, what you saw - and then end the turn done. Be specific: "I verified it" tells a human
+  nothing, and your sentence is the only evidence this run will carry.
+- If you cannot confirm it, end the turn blocked, naming the one thing you could not
+  establish. Nothing is checking behind you, so a done you are not sure of is worse than a
+  blocked line a human can act on - and a human reads that line within minutes.
+- Leave ${task.featurePath} exactly as it is. kantan records the task itself, on the answer
+  you give here.
+
+${HEADLESS_CONTRACT}
+`
+}
+
+/**
  * The plan phase. One task in, one plan file out, at the path the server
  * dictated. Nothing is implemented and no test is run: the human at the gate
  * reads the plan before any code exists.
@@ -109,7 +258,17 @@ The line is matched literally, so:
  * untested: the arguments here run over many lines rather than one, and the
  * capture's own prompt text was not kept, so this wording is new.
  */
-export function planPrompt({ task, planPath }: { task: TaskSpec; planPath: string }): string {
+export function planPrompt({
+  task,
+  planPath,
+  testCmd,
+}: {
+  task: TaskSpec
+  planPath: string
+  /** `null` when the project has no suite, which changes who verifies the
+   * work; see the clause helpers above. */
+  testCmd: string | null
+}): string {
   return `/superpowers:writing-plans Write an implementation plan for one backlog task, exactly as instructed below.
 
 ## The task
@@ -144,9 +303,7 @@ plan file alongside it.
 - Work in the checkout as you find it. Do not create a worktree, do not create or
   switch branches, and do not run \`superpowers:finishing-a-development-branch\`.
 - Do not include a step that ticks the task's checkbox, or that edits
-  ${task.featurePath} in any other way. The orchestrator records the task as done
-  itself, and only after it has run the project's test command and seen it pass by exit
-  code. A plan step that ticks the box would mark the task done on a failing build.
+  ${task.featurePath} in any other way. ${whoTicks(testCmd)}
 - Write for an engineer who has no context for this codebase and cannot see this
   conversation: the plan file is the whole handoff, so a decision you make here and
   leave unwritten is lost. Where the task leaves a choice open, make the most
@@ -173,7 +330,15 @@ ${HEADLESS_CONTRACT}
  * alone", which also neutralises the tick step that `writing-plans` tends to put
  * into the plan the agent is reading.
  */
-export function implementPrompt({ task, planPath }: { task: TaskSpec; planPath: string }): string {
+export function implementPrompt({
+  task,
+  planPath,
+  testCmd,
+}: {
+  task: TaskSpec
+  planPath: string
+  testCmd: string | null
+}): string {
   return `/superpowers:executing-plans Implement one backlog task from the approved plan named below, exactly as instructed.
 
 ## The plan
@@ -186,8 +351,7 @@ Read it first. You have not seen the conversation that wrote it and cannot ask i
 anything, so that file plus the code are your whole brief. It is the plan for ${task.ref},
 which came from ${task.featurePath}, and reads: ${task.text}
 
-Use \`superpowers:test-driven-development\` for every change: the failing test first,
-watch it fail, then the smallest code that makes it pass.
+${tddRule(testCmd)}
 
 ## Execute it inline, in this conversation, to the end
 
@@ -209,10 +373,7 @@ watch it fail, then the smallest code that makes it pass.
 - Commit as you go, naming the files you changed as a pathspec rather than staging
   everything, because the tree may hold work that is not yours.
 - Leave ${task.featurePath} exactly as it is, and skip any step in the plan that would edit
-  it or change ${task.ref}'s line in it. The orchestrator runs the project's test command
-  itself and records the outcome from the exit code; it never takes an agent's word for a
-  passing build. Editing that file can only put the backlog out of step with what was
-  actually verified.
+  it or change ${task.ref}'s line in it. ${whoVerifies(testCmd)}
 
 ${HEADLESS_CONTRACT}
 `
@@ -333,16 +494,18 @@ ${HEADLESS_CONTRACT}
 export function answerPrompt({
   answer,
   phase,
+  testCmd,
 }: {
   answer: string
   phase: "plan" | "implement"
+  testCmd: string | null
 }): string {
   const next =
     phase === "plan"
       ? `Carry on with the plan at that same path, and nothing else: still no implementation, no
 tests, no branch of your own, and no edit to the backlog file.`
       : `Carry on with the work from where you stopped. Do not start the plan over and do not
-re-run the parts you already finished; continue, run the suite yourself to check, and commit
+re-run the parts you already finished; continue, ${checkYourWork(testCmd)}, and commit
 on the branch that is already checked out.`
 
   return `You asked a question and nobody could answer it at the time, because this conversation runs
@@ -372,7 +535,15 @@ ${HEADLESS_CONTRACT}
  * and a laptop closing look identical from here, and an agent told "you
  * crashed" tends to go looking for the damage.
  */
-export function resumePrompt({ task, planPath }: { task: TaskSpec; planPath: string }): string {
+export function resumePrompt({
+  task,
+  planPath,
+  testCmd,
+}: {
+  task: TaskSpec
+  planPath: string
+  testCmd: string | null
+}): string {
   return `This conversation was interrupted and has just been resumed. Everything you did before is
 still in context, and the files you wrote and the commits you made are still there.
 
@@ -381,7 +552,7 @@ Pick up ${task.ref} from where you stopped, following the plan at ${planPath}.
 - Work out what is already done before changing anything: read the files you were editing and
   check \`git log\` and \`git status\` on the branch that is already checked out.
 - Do not start the plan over, and do not redo a step you had finished.
-- Finish the remaining steps, run the suite yourself to check your work, and commit as you go,
+- Finish the remaining steps, ${checkYourWork(testCmd)}, and commit as you go,
   naming the files you changed as a pathspec.
 - Leave ${task.featurePath} exactly as it is.
 

@@ -2104,3 +2104,140 @@ test("stopping a run whose server died reports it already interrupted", async ()
   const third = await drive(ws, { runId: first.runId, steps: [{ action: "resume" }] })
   expect(third.results[0]).toMatchObject({ state: { kind: "waiting", reason: "gate" } })
 }, 120_000)
+
+// ---------------------------------------------------------------------------
+// A project with no test command: the agent self-checks
+// ---------------------------------------------------------------------------
+// The user's decision, 2026-10-12. Exercised against the fake binary like
+// everything else here, so it costs nothing to run.
+//
+// What must hold throughout: **nothing claims a verification it did not
+// observe.** A self-checked run finishes, ticks and commits, and every durable
+// trace of it says it was checked by the agent and by nothing else.
+
+test("with no test command the agent is asked to self-check, and done finishes the run", async () => {
+  const ws = await workspace("selfcheck-done")
+  const implement = await fixture(ws, "implement-done", "built it\n\nORCH: done")
+  const selfCheck = await fixture(ws, "selfcheck-done", "I read the diff and ran it\n\nORCH: done")
+  // Three turns, and the third is the point: the self-check is its own turn,
+  // not a relabelling of the implement turn's own `ORCH: done`. Those two
+  // claims are different - "the work is finished" and "I checked it" - and
+  // collapsing them would make "the agent verifies" a thing that never happens.
+  await script(ws, [{ fixture: PLAN_FIXTURE }, { fixture: implement }, { fixture: selfCheck }])
+
+  const out = await drive(ws, {
+    project: project(ws, { testCmd: null }),
+    steps: [{ action: "start" }, { action: "approve" }],
+  })
+  expect(out.results[1]).toMatchObject({ state: { kind: "done" } })
+
+  const records = await runLog(ws, out.runId)
+  // **No `test` record.** `TestRecord.exitCode` is a required number whose
+  // whole meaning is "a command ran and exited N", and every reader draws a
+  // green pass from a 0. Writing one here would be the over-claim this feature
+  // is forbidden from making, so the absence is the assertion.
+  expect(records.filter((r) => r["kind"] === "test")).toEqual([])
+  expect(records.at(-1)).toMatchObject({
+    kind: "end",
+    state: "done",
+    verifiedBy: "self-check",
+  })
+
+  // The self-check ran in the test phase, so the UI's phase rail still has a
+  // step there rather than skipping from implement to done.
+  const testPhases = phases(records).filter((r) => r["phase"] === "test")
+  expect(testPhases.length).toBeGreaterThan(0)
+
+  // The prompt it was actually sent, read off the fake binary's own stdin log.
+  const prompt = promptOf((await turns(ws))[2] ?? {})
+  expect(prompt).toContain("no test command")
+  expect(prompt).toMatch(/how you checked/i)
+
+  // It still ticks, still commits on the task branch, still comes home.
+  const branch = String(out.results[0]?.["branch"])
+  expect(await git(ws.repo, ["show", `${branch}:${ws.featurePath}`])).toContain("- [x] T1")
+  expect(await git(ws.repo, ["branch", "--show-current"])).toBe("main\n")
+  expect(await lockExists(ws)).toBe(false)
+}, 240_000)
+
+test("the tick commit for a self-checked run does not claim a command was run", async () => {
+  const ws = await workspace("selfcheck-commit")
+  const implement = await fixture(ws, "implement-done", "ORCH: done")
+  const selfCheck = await fixture(ws, "selfcheck-done", "ORCH: done")
+  await script(ws, [{ fixture: PLAN_FIXTURE }, { fixture: implement }, { fixture: selfCheck }])
+
+  const out = await drive(ws, {
+    project: project(ws, { testCmd: null }),
+    steps: [{ action: "start" }, { action: "approve" }],
+  })
+  const branch = String(out.results[0]?.["branch"])
+  const body = await git(ws.repo, ["log", "-1", "--format=%B", branch])
+
+  // This sentence is durable in the user's git history, and the old one -
+  // `kantan ran "<cmd>" and it exited 0` - cannot be written for a run where
+  // nothing was run. The failure mode to avoid is literal: `JSON.stringify` of
+  // a null command yields `kantan ran null and it exited 0`, which is both
+  // false and absurd.
+  expect(body).not.toContain("exited 0")
+  expect(body).not.toContain("null")
+  expect(body).toMatch(/no test command/i)
+  // It names who did check, so someone reading `git log` in six months knows
+  // what this tick rests on.
+  expect(body).toMatch(/agent/i)
+  expect(body).toContain(out.runId)
+}, 240_000)
+
+test("a self-check that cannot confirm parks the run for a human instead of finishing", async () => {
+  const ws = await workspace("selfcheck-blocked")
+  const implement = await fixture(ws, "implement-done", "ORCH: done")
+  const blocked = await fixture(
+    ws,
+    "selfcheck-blocked",
+    "ORCH: blocked the importer needs a fixture I cannot generate here",
+  )
+  await script(ws, [{ fixture: PLAN_FIXTURE }, { fixture: implement }, { fixture: blocked }])
+
+  const out = await drive(ws, {
+    project: project(ws, { testCmd: null }),
+    steps: [{ action: "start" }, { action: "approve" }],
+  })
+
+  // The whole value of routing this through the existing sentinel: `blocked`
+  // already means "a human reads this and replies", so a self-check that fails
+  // needs no new machinery.
+  expect(out.results[1]).toMatchObject({
+    state: { kind: "waiting", reason: "blocked" },
+  })
+  const records = await runLog(ws, out.runId)
+  expect(records.some((r) => r["kind"] === "end")).toBe(false)
+
+  // And nothing was ticked or committed on a run that was never verified.
+  const branch = String(out.results[0]?.["branch"])
+  expect(await git(ws.repo, ["show", `${branch}:${ws.featurePath}`])).toContain("- [ ] T1")
+  expect(await git(ws.repo, ["log", "--oneline", branch])).not.toContain("tick T1")
+}, 240_000)
+
+test("a project WITH a test command still records that the command verified it", async () => {
+  // The other half of the absence policy: `verifiedBy` is written on every
+  // `done` run, command runs included. If it were written only for self-checks,
+  // absence could not keep meaning "a log older than this field" - it would
+  // also mean "a run whose tests passed", and the two readings cannot share one
+  // silence.
+  const ws = await workspace("selfcheck-control")
+  const implement = await fixture(ws, "implement-done", "ORCH: done")
+  await script(ws, [{ fixture: PLAN_FIXTURE }, { fixture: implement }])
+
+  const out = await drive(ws, { steps: [{ action: "start" }, { action: "approve" }] })
+  expect(out.results[1]).toMatchObject({ state: { kind: "done" } })
+
+  const records = await runLog(ws, out.runId)
+  expect(records.at(-1)).toMatchObject({ kind: "end", state: "done", verifiedBy: "test-command" })
+  // Unchanged: the test record and the exit code are still there.
+  expect(records.filter((r) => r["kind"] === "test")).toMatchObject([
+    { kind: "test", exitCode: 0, attempt: 1 },
+  ])
+  // And its commit message still quotes the command and the exit code.
+  const branch = String(out.results[0]?.["branch"])
+  const body = await git(ws.repo, ["log", "-1", "--format=%B", branch])
+  expect(body).toContain("exited 0")
+}, 240_000)

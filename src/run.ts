@@ -25,12 +25,13 @@ import {
   planPrompt,
   refinePrompt,
   resumePrompt,
+  selfCheckPrompt,
 } from "./prompts"
 import type { TaskSpec } from "./prompts"
 import { loadProjects } from "./projects"
 import type { Effort, Project } from "./projects"
 import { createRunLog, openRunLog, replay, runLogPath } from "./runlog"
-import type { PhaseRecord, RunHeader, RunLog, RunPhase, WaitReason } from "./runlog"
+import type { PhaseRecord, RunHeader, RunLog, RunPhase, Verification, WaitReason } from "./runlog"
 import { phaseOutcome } from "./sentinel"
 import type { Outcome, ResultEvent } from "./sentinel"
 import { spawnPhase } from "./spawn"
@@ -741,7 +742,9 @@ export async function startRun(options: StartRunOptions): Promise<RunResult> {
     }
     active.set(runId, run)
     keepLock = true
-    return await drive(run, () => planTurn(run, planPrompt({ task, planPath }), false))
+    return await drive(run, () =>
+      planTurn(run, planPrompt({ task, planPath, testCmd: project.testCmd }), false),
+    )
   } finally {
     // Every refusal from step 2 onward, and every fault before the run is
     // registered. A lock held past one of those names a live pid that nothing
@@ -1354,7 +1357,7 @@ export async function approveGate(options: ActionOptions): Promise<RunResult> {
     run.signatures = []
     return await implementLoop(run, {
       phase: "implement",
-      prompt: implementPrompt({ task: run.taskSpec, planPath: run.planPath }),
+      prompt: implementPrompt({ task: run.taskSpec, planPath: run.planPath, testCmd: run.project.testCmd }),
       spawn: "fresh",
     })
   })
@@ -1420,9 +1423,31 @@ async function implementLoop(run: ActiveRun, first: ImplementTurn | null): Promi
       if (parked !== null) return parked
     }
 
+    // No test command: the agent verifies its own work (the user's decision,
+    // 2026-10-12). `agentTurn` is reused rather than reimplemented, because it
+    // already means exactly the right thing for all four outcomes - `ORCH: done`
+    // returns null and the work is accepted, `blocked` and a question park for a
+    // human, and a CLI error fails the run. That is also why there is no second
+    // sentinel: CLAUDE.md says that string is load-bearing, and the parse is
+    // unchanged.
+    //
+    // It is a **separate turn**, not a reading of the implement turn's own
+    // `ORCH: done`. Those two claims differ - "the work is finished" and "I
+    // checked it" - and collapsing them would make "the agent verifies" a
+    // relabelling of what already happened rather than a step that occurs.
+    //
+    // There is no ladder here and cannot be: escalation is driven by a failure
+    // signature, and without a suite there is nothing to hash. A self-check that
+    // cannot confirm parks for a human, which is the honest end of the road.
+    if (run.project.testCmd === null) {
+      const parked = await selfCheck(run)
+      if (parked !== null) return parked
+      return await finish(run, "self-check")
+    }
+
     const verified = await verify(run)
     if (verified.kind === "unrunnable") return await fail(run, verified.why)
-    if (verified.kind === "passed") return await finish(run)
+    if (verified.kind === "passed") return await finish(run, "test-command")
 
     next = await afterFailure(run, verified)
     if (next === null) {
@@ -1571,6 +1596,48 @@ type Verified =
   | { kind: "failed"; signature: string; outcome: TestOutcome }
   /** The project is misconfigured rather than failing. */
   | { kind: "unrunnable"; why: string }
+
+/**
+ * What a project with no test command gets instead of the server running a
+ * suite: one turn asking the agent to verify its own work.
+ *
+ * Returns `null` when the agent answered `ORCH: done` - the work is accepted -
+ * and a `RunResult` when the run stopped instead, which `agentTurn` has already
+ * recorded and parked correctly.
+ *
+ * **This is a weaker guarantee than the exit code, and deliberately not
+ * disguised as a stronger one.** Design §3.3's rule is that verification from
+ * outside the agent cannot be talked out of, and this has no outside. So the
+ * one thing that holds is that nothing downstream claims otherwise: no `test`
+ * record is written, `EndRecord.verifiedBy` says `self-check`, and the tick's
+ * commit message says a command was never run.
+ *
+ * A `test` record is **not** written, and the absence is the point.
+ * `TestRecord.exitCode` is a required number whose entire meaning is "a command
+ * ran and exited N", and every reader of it draws a pass from a 0 -
+ * `src/ui/live.ts`, `Row.tsx`'s green chip, the tree's `exit 0` label. Writing
+ * `exitCode: 0` would therefore be the over-claim this feature is forbidden to
+ * make, in the one place where it would look most official. Making `exitCode`
+ * optional was rejected for the mirror reason: those readers would print
+ * "exit undefined".
+ *
+ * The phase is still `test`, so the UI's phase rail has a step where the
+ * checking happened rather than jumping from implement to done - and a run
+ * interrupted here resumes through `continueFrom`'s existing `test` case, which
+ * re-sends this turn. No new `RunPhase` member, which would have made every
+ * exhaustive switch over phases a compile error in files other agents hold.
+ */
+async function selfCheck(run: ActiveRun): Promise<RunResult | null> {
+  return await agentTurn(run, {
+    phase: "test",
+    prompt: selfCheckPrompt({ task: run.taskSpec, planPath: run.planPath }),
+    // The live implement process, which is what makes this cheap: the agent
+    // already has the whole implementation in context, so the check is a turn
+    // and not a cold read of its own diff. After a restart `run.session` is
+    // null and `agentTurn` resumes the conversation by id instead.
+    spawn: "reuse",
+  })
+}
 
 /**
  * Runs the project's `testCmd` and records what it did.
@@ -1808,17 +1875,23 @@ function testOutputFor(outcome: TestOutcome): string {
  * checkout to base, then write the `end` record last so the warnings the
  * previous steps raised are in it.
  */
-async function finish(run: ActiveRun): Promise<RunResult> {
+async function finish(run: ActiveRun, verifiedBy: Verification): Promise<RunResult> {
   await closeSession(run)
   // A stop that landed while the suite was running: the tests passed, but
   // nobody asked kantan to write to the backlog and move the checkout after
   // the human pressed stop. The resumed run re-runs them and ticks then.
   if (stopping(run)) return await interrupted(run, "test")
-  await tickCheckbox(run)
+  await tickCheckbox(run, verifiedBy)
   await goHome(run)
   await run.log.append({
     kind: "end",
     state: "done",
+    // **How**, not just that. Written on every `done` run, the
+    // `test-command` ones included, and that is the load-bearing half: if it
+    // were recorded only for self-checks, absence could not keep meaning "a log
+    // older than this field" - it would also mean "a run whose tests passed",
+    // and one silence cannot carry both readings. See `EndRecord.verifiedBy`.
+    verifiedBy,
     costUsd: run.spent,
     // In their own field rather than squeezed into `why`, which is documented
     // as why a run *failed*. A done run can still have things a human needs to
@@ -1829,6 +1902,61 @@ async function finish(run: ActiveRun): Promise<RunResult> {
   const out = result(run, { kind: "done" })
   await retire(run)
   return out
+}
+
+/**
+ * What actually verified this run, in one clause, for a warning a human reads.
+ *
+ * The old wording was "the tests passed", which is false on the self-check path
+ * and false in the direction that matters: a human reading it would believe a
+ * suite had run.
+ */
+function whatVerified(run: ActiveRun, verifiedBy: Verification): string {
+  return verifiedBy === "self-check"
+    ? `the agent reported ${run.taskSpec.ref} verified`
+    : "the tests passed"
+}
+
+/**
+ * The subject line of the tick commit.
+ *
+ * The self-check case says so **in the subject**, not only the body, because
+ * `git log --oneline` shows nothing else - and this is the one line a human
+ * scanning six months of history will actually read. A subject that looked
+ * identical to a tested run's would make the distinction this whole feature
+ * exists for invisible exactly where it is most likely to be looked for.
+ */
+function tickSubject(run: ActiveRun, verifiedBy: Verification): string {
+  return verifiedBy === "self-check"
+    ? `chore: tick ${run.taskSpec.ref} in ${run.featureRel} (self-checked, untested)`
+    : `chore: tick ${run.taskSpec.ref} in ${run.featureRel}`
+}
+
+/**
+ * The body of the tick commit: a **durable claim in the user's git history**,
+ * which is why it is written out rather than assembled from fragments.
+ *
+ * The tested sentence is unchanged, and is the sentence this project is built
+ * around: kantan ran a command, the command exited 0, and that is why the box
+ * is ticked. It quotes the command so the claim is checkable.
+ *
+ * The self-checked sentence cannot borrow any of that. There is no command to
+ * quote and no exit code to report, and the naive edit here - leaving the old
+ * string in place - commits `kantan ran null and it exited 0`, which is both
+ * false and nonsense. So it says plainly what happened and what it rests on:
+ * nothing outside the agent looked at this work. A human who later finds a bug
+ * under this commit needs to know that immediately, and `git log` is where they
+ * will be standing.
+ */
+function tickBody(run: ActiveRun, verifiedBy: Verification): string {
+  if (verifiedBy === "self-check") {
+    return (
+      `This project has no test command, so kantan ran nothing. The agent was asked to verify ` +
+      `its own work and reported it finished, and ${run.taskSpec.ref} is ticked on that word alone - ` +
+      `nothing outside the agent checked it. Run ${run.runId}.`
+    )
+  }
+  return `kantan ran ${JSON.stringify(run.project.testCmd)} and it exited 0, so ${run.taskSpec.ref} is done. Run ${run.runId}.`
 }
 
 /**
@@ -1852,7 +1980,7 @@ async function finish(run: ActiveRun): Promise<RunResult> {
  * return or be carried onto base, which is exactly what design §3.6 wants
  * avoided.
  */
-async function tickCheckbox(run: ActiveRun): Promise<void> {
+async function tickCheckbox(run: ActiveRun, verifiedBy: Verification): Promise<void> {
   let written: boolean
   try {
     const tick = await tickTaskInFile(run.feature, run.taskSpec.ref)
@@ -1861,7 +1989,7 @@ async function tickCheckbox(run: ActiveRun): Promise<void> {
   } catch (e) {
     // An error on an unchanged file comes through without the file's path.
     run.warnings.push(
-      `the tests passed but ${run.taskSpec.ref} could not be ticked in ${run.feature.path}: ${(e as Error).message}`,
+      `${whatVerified(run, verifiedBy)} but ${run.taskSpec.ref} could not be ticked in ${run.feature.path}: ${(e as Error).message}`,
     )
     return
   }
@@ -1876,9 +2004,9 @@ async function tickCheckbox(run: ActiveRun): Promise<void> {
   const committed = await gitSays(run.repo.root, [
     "commit",
     "-m",
-    `chore: tick ${run.taskSpec.ref} in ${run.featureRel}`,
+    tickSubject(run, verifiedBy),
     "-m",
-    `kantan ran ${JSON.stringify(run.project.testCmd)} and it exited 0, so ${run.taskSpec.ref} is done. Run ${run.runId}.`,
+    tickBody(run, verifiedBy),
     "--",
     run.featureRel,
   ])
@@ -2265,11 +2393,11 @@ export async function answerQuestion(
   const phase = run.phase
   return await drive(run, async () => {
     if (phase === "plan") {
-      return await planTurn(run, answerPrompt({ answer: options.answer, phase: "plan" }), true)
+      return await planTurn(run, answerPrompt({ answer: options.answer, phase: "plan", testCmd: run.project.testCmd }), true)
     }
     return await implementLoop(run, {
       phase,
-      prompt: answerPrompt({ answer: options.answer, phase: "implement" }),
+      prompt: answerPrompt({ answer: options.answer, phase: "implement", testCmd: run.project.testCmd }),
       spawn: "respawn",
     })
   })
@@ -2406,15 +2534,22 @@ async function continueFrom(run: ActiveRun): Promise<RunResult> {
       // is what `resumePrompt` exists for.
       return await planTurn(
         run,
-        planPrompt({ task: run.taskSpec, planPath: run.planPath }),
+        planPrompt({ task: run.taskSpec, planPath: run.planPath, testCmd: run.project.testCmd }),
         true,
       )
     case "gate":
       return await park(run, "gate", "gate", run.planPath)
     case "test":
-      // The tests were running when it died, and nothing recorded their
-      // outcome, so they run again. No agent turn: the conversation is
-      // untouched and re-sending one would cost a turn to say nothing.
+      // The verification was in flight when it died and nothing recorded its
+      // outcome, so it happens again. With a test command that means no agent
+      // turn at all - the conversation is untouched and re-sending one would
+      // cost a turn to say nothing - and `implementLoop` re-runs the suite.
+      //
+      // With **no** test command the same `null` is right for a different
+      // reason: `implementLoop`'s self-check branch re-sends the self-check
+      // turn, which is the thing that was interrupted. `agentTurn` resumes the
+      // implement conversation by id, since `run.session` is null after a
+      // restart, so the agent still has its own implementation in context.
       return await implementLoop(run, null)
     case "implement":
     case "refine":
@@ -2429,13 +2564,13 @@ async function continueFrom(run: ActiveRun): Promise<RunResult> {
       if (!run.implementStarted) {
         return await implementLoop(run, {
           phase: "implement",
-          prompt: implementPrompt({ task: run.taskSpec, planPath: run.planPath }),
+          prompt: implementPrompt({ task: run.taskSpec, planPath: run.planPath, testCmd: run.project.testCmd }),
           spawn: "fresh",
         })
       }
       return await implementLoop(run, {
         phase: run.phase,
-        prompt: resumePrompt({ task: run.taskSpec, planPath: run.planPath }),
+        prompt: resumePrompt({ task: run.taskSpec, planPath: run.planPath, testCmd: run.project.testCmd }),
         spawn: "respawn",
       })
   }

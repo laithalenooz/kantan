@@ -1,5 +1,13 @@
 import { expect, test } from "bun:test"
-import { feedbackPrompt, implementPrompt, planPrompt, type TaskSpec } from "../src/prompts"
+import {
+  answerPrompt,
+  feedbackPrompt,
+  implementPrompt,
+  planPrompt,
+  resumePrompt,
+  selfCheckPrompt,
+  type TaskSpec,
+} from "../src/prompts"
 import { BLOCKED, DONE, phaseOutcome } from "../src/sentinel"
 
 const task: TaskSpec = {
@@ -12,8 +20,10 @@ const task: TaskSpec = {
  * nothing here derives either. */
 const planPath = "docs/plans/2026-10-11-t1-slugger.md"
 
-const plan = planPrompt({ task, planPath })
-const implement = implementPrompt({ task, planPath })
+// The product path: a project that does have a test command. The no-command
+// variants are built in the section at the foot of this file.
+const plan = planPrompt({ task, planPath, testCmd: "npm test" })
+const implement = implementPrompt({ task, planPath, testCmd: "npm test" })
 const feedback = feedbackPrompt({
   planPath,
   feedback: "Step 3 reads the file twice. Collapse it, and say what happens on a CRLF file.",
@@ -60,12 +70,12 @@ test("the plan prompt says the dictated path overrides the skill's own conventio
 
 test("a plan path with a space in the slug survives intact", () => {
   const spaced = "docs/plans/2026-10-11-t2 two words.md"
-  expect(planPrompt({ task, planPath: spaced })).toContain(spaced)
+  expect(planPrompt({ task, planPath: spaced, testCmd: "npm test" })).toContain(spaced)
 })
 
 test("a plan path with unicode in the slug survives intact", () => {
   const unicode = "docs/plans/2026-10-11-café-résumé-日本語.md"
-  expect(planPrompt({ task, planPath: unicode })).toContain(unicode)
+  expect(planPrompt({ task, planPath: unicode, testCmd: "npm test" })).toContain(unicode)
 })
 
 test("the plan prompt states the task ref, its text and the feature file", () => {
@@ -518,4 +528,119 @@ test("the feedback prompt is unchanged", () => {
       commit message. It belongs in your message to me and nowhere else.
     "
   `)
+})
+
+// --- A project with no test command ----------------------------------------
+// The user's decision, 2026-10-12: if no test command is set, the agent
+// verifies based on their implementation. These prompts are the one place that
+// decision becomes words an agent reads, and three of the existing four assert
+// something that is simply **false** for such a project - that the orchestrator
+// runs a test command and reads its exit code. A prompt that lies about who
+// checks the work is the most expensive kind of drift in this codebase, which
+// is `RETIRED`'s precedent in src/projects.ts: a whole field was removed rather
+// than leave two prompt lines untrue.
+
+const noCmd = { task, planPath, testCmd: null } as const
+const withCmd = { task, planPath, testCmd: "npm test" } as const
+
+const selfCheck = selfCheckPrompt(noCmd)
+
+test("the self-check prompt dictates exactly the two lines the parser accepts", () => {
+  // The whole point of routing the self-check through the existing sentinel:
+  // CLAUDE.md says that string is load-bearing and must not be "improved", so
+  // there is no second sentinel and the parser is unchanged. Both lines go back
+  // through the real parser, as they do for every other prompt.
+  const dictated = dictatedSentinelLines(selfCheck)
+  expect(dictated).toHaveLength(2)
+  const [doneLine = "", blockedLine = ""] = dictated
+
+  expect(doneLine).toBe(DONE)
+  expect(phaseOutcome({ subtype: "success", is_error: false, result: `Checked it.\n\n${doneLine}` })).toEqual({
+    state: "done",
+  })
+  expect(blockedLine.startsWith(`${BLOCKED} `)).toBe(true)
+})
+
+test("the self-check prompt tells the agent nothing else will check the work", () => {
+  // The honest framing, and it is what makes `ORCH: blocked` an available
+  // answer rather than an admission of failure. An agent that believes a suite
+  // will catch its mistakes has every reason to say done and move on.
+  expect(flat(selfCheck)).toMatch(/no test command/i)
+  expect(flat(selfCheck)).toMatch(/nothing outside/i)
+})
+
+test("the self-check prompt asks the agent to say how it checked", () => {
+  // That sentence is the only evidence the run will ever carry, so the prompt
+  // has to ask for it explicitly: "I verified it" is not a verification.
+  expect(flat(selfCheck)).toMatch(/how you checked/i)
+})
+
+test("the self-check prompt offers blocked as the answer when it cannot confirm", () => {
+  expect(flat(selfCheck)).toMatch(/cannot confirm/i)
+})
+
+test("the self-check prompt does not claim a test command ran", () => {
+  // The assertion that would have caught a copy-paste from `refinePrompt`.
+  expect(flat(selfCheck)).not.toMatch(/exit(ed)? \d|exit code/i)
+  expect(flat(selfCheck)).not.toMatch(/the test command just ran/i)
+})
+
+/**
+ * Every prompt that has to change its story when a project has no test
+ * command, paired with the claim that becomes false.
+ *
+ * A matrix, because this is CLAUDE.md's skipping guard in prompt form: the
+ * dimension is "does this project have a test command", and a prompt that
+ * forgets to read it tells the agent the server will run a suite that does not
+ * exist. The agent then leaves the work for a check that never comes.
+ */
+type Built = { task: TaskSpec; planPath: string; testCmd: string | null }
+
+const CLAIMANTS = [
+  // The phrase each prompt uses **with** a command is carried per row rather
+  // than shared, because they do not all make the same claim: plan and
+  // implement name the test command outright, while resume only tells the agent
+  // to run the suite. A blanket /test command/ assertion passes for two of them
+  // and silently asserts nothing about the third.
+  ["plan", (o: Built) => planPrompt(o), /test command/i],
+  ["implement", (o: Built) => implementPrompt(o), /test command/i],
+  ["resume", (o: Built) => resumePrompt(o), /run the suite yourself/i],
+] as const
+
+for (const [name, build, claims] of CLAIMANTS) {
+  test(`the ${name} prompt claims a test command only when there is one`, () => {
+    // With a command the wording is unchanged - that path is the product and
+    // must not regress.
+    expect(flat(build(withCmd)), `${name} with a command`).toMatch(claims)
+
+    // Without one, no promise that anything outside the agent will run a suite
+    // or read an exit code. This is the direction that fails quietly: the agent
+    // is told a safety net exists, so it stops short of checking its own work.
+    const out = flat(build(noCmd))
+    expect(out, `${name} with none`).not.toMatch(/runs the project's test command/i)
+    expect(out, `${name} with none`).not.toMatch(/seen it pass by exit code/i)
+    expect(out, `${name} with none`).not.toMatch(/run the suite yourself/i)
+  })
+}
+
+test("the answer prompt stops promising a suite when there is none", () => {
+  // `answerPrompt`'s implement branch tells the agent to "run the suite
+  // yourself to check". Harmless-looking, and it is the sentence that sends an
+  // agent looking for a runner the project does not have.
+  const withSuite = flat(answerPrompt({ answer: "use the second one", phase: "implement", testCmd: "npm test" }))
+  const without = flat(answerPrompt({ answer: "use the second one", phase: "implement", testCmd: null }))
+
+  expect(withSuite).toMatch(/run the suite yourself/i)
+  expect(without).not.toMatch(/run the suite yourself/i)
+  // The human's words still arrive verbatim either way.
+  expect(without).toContain("use the second one")
+})
+
+test("a no-command prompt still forbids the agent touching the backlog file", () => {
+  // The rule survives the rewording. The server is still the only writer of
+  // task state - what changed is *why* it may tick, not who ticks.
+  for (const [name, build] of CLAIMANTS) {
+    expect(flat(build(noCmd)), name).toContain(task.featurePath)
+  }
+  expect(flat(selfCheck)).toContain(task.featurePath)
 })
