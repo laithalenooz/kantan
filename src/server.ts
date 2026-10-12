@@ -8,7 +8,15 @@ import type { Task } from "./backlog"
 import { draftFeature, type Draft } from "./draft"
 import { listFeatureFiles } from "./featurefile"
 import { requireUsableRepo, taskBranchName } from "./git"
-import { addProject, defaults, loadProjects, projectIdentity, removeProject } from "./projects"
+import {
+  addProject,
+  defaults,
+  loadProjects,
+  projectIdentity,
+  removeProject,
+  updateProject,
+} from "./projects"
+import type { Edited } from "./projects"
 import type { Project } from "./projects"
 import { indexRuns, taskKey } from "./runindex"
 import type { TaskStatus } from "./runindex"
@@ -453,6 +461,12 @@ export const ROUTES: Record<string, RouteHandler> = {
    * for good. A `DELETE`, and therefore Origin-guarded like every other
    * acting method - `checkRequest` keys on "not GET or HEAD", not on POST. */
   "DELETE /api/projects": (req, ctx) => removeRegistration(req, ctx),
+
+  /** Changing a project's settings, which nothing could do either: the account
+   * a project bills to was fixed at registration, because registering again is
+   * refused rather than replacing a record wholesale. A **partial** update, for
+   * that same reason - see `editProject`. */
+  "PATCH /api/projects": (req, ctx) => editProject(req, ctx),
 
   /** Turning a sentence into a task file, which is otherwise hand-written. */
   "POST /api/features": (req, ctx) => draftFeatureFile(req, ctx),
@@ -1741,6 +1755,25 @@ const PROJECT_KEYS = ["path", "testCmd", "account", "configDir"] as const
  * "remove this much of the project" and then ignore the rest of it.
  */
 const REMOVE_KEYS = ["path"] as const
+/**
+ * The fields an edit may change.
+ *
+ * Longer than `PROJECT_KEYS` by `budgetUsd`, and that is not an oversight: the
+ * registration dialog offers three fields and takes the design's default for
+ * the ceiling, while an edit is where a ceiling is changed - it is one of the
+ * fields a second trip through that dialog used to reset, which is why
+ * re-registering is refused at all.
+ *
+ * Still far short of every field a `Project` has. The models, the efforts,
+ * `allowedTools`, `permissionMode` and `reportPath` are edited in
+ * `projects.json`, a file people hand-edit and read in diffs, and a key this
+ * list does not carry is a 400 naming the keys it does - never a silent drop.
+ */
+const EDITABLE_KEYS = ["testCmd", "account", "configDir", "budgetUsd"] as const
+/** The identity, plus what may change. Derived rather than listed again, so the
+ * body's allowlist and the set of keys the handler reads cannot drift: `path`
+ * is taken as the record to edit and is never one of the changes. */
+const EDIT_KEYS: readonly string[] = ["path", ...EDITABLE_KEYS]
 const FEATURE_KEYS = ["projectPath", "text"] as const
 
 async function startRun(req: Request, ctx: RouteContext): Promise<Response> {
@@ -2084,6 +2117,97 @@ async function removeRegistration(req: Request, ctx: RouteContext): Promise<Resp
     return refuse(404, `${path} is not registered in ${projectsFile}, so there was nothing to remove. Its run logs, if it has any, were not touched either.`)
   }
   return Response.json({ ok: true })
+}
+
+/**
+ * Changes some of a project's settings, leaving the rest alone.
+ *
+ * **Partial, and that is the whole design of this route.** `registerProject`
+ * refuses a re-register with a 409 because `addProject` replaces a record
+ * wholesale: a second trip through a three-field dialog would reset a
+ * `budgetUsd` or an `allowedTools` list that was tuned by hand, and the store
+ * is the one piece of state no repository can rebuild. So only the keys the
+ * body carries are forwarded, `src/projects.ts` merges them onto the stored
+ * record, and nothing here rebuilds one through `defaults()` - which would
+ * reintroduce precisely the loss that 409 exists to prevent.
+ *
+ * **`path` is the identity and is not editable here.** It is what every start
+ * request and every run log keys on, so moving it is a remove plus an add: two
+ * decisions, where a human can see both halves. The allowlist has no second key
+ * that could name a new one.
+ *
+ * **No git, unlike registration**, and the asymmetry is the point.
+ * `requireUsableRepo` decides whether a *new* path is a repository kantan can
+ * run in; an edit names a record that already exists, and re-checking the repo
+ * would make a project whose checkout has been deleted impossible to fix and
+ * impossible to repoint - which is one of the two things a user asked for.
+ *
+ * **It is allowed while a run is in flight**, where a removal is refused. A
+ * removal breaks the lookup every action on that run makes; an edit cannot,
+ * because `path` cannot change and `held()` hands back the run the machine
+ * already registered rather than re-reading the store for it. The one cost
+ * worth naming is `configDir`: a run that is rehydrated after a restart takes
+ * the edited record, and `--resume` would then look for its session in a
+ * different CLI profile and meet "No conversation found". That is reversible
+ * with one PATCH back, it is invisible to any liveness check - the run it bites
+ * is an interrupted one, which is by definition not live - and refusing every
+ * edit while a project has unfinished runs would block the ordinary case of
+ * fixing a typo in `testCmd` while a plan waits at the gate.
+ */
+async function editProject(req: Request, ctx: RouteContext): Promise<Response> {
+  const projectsFile = ctx.projectsFile
+  if (projectsFile === null) return noStore("edit a project")
+
+  const body = await readBody(req)
+  if ("refused" in body) return body.refused
+  const parsed = parseBody(body.text, EDIT_KEYS)
+  if ("refused" in parsed) return parsed.refused
+
+  const named = nonEmptyString(parsed.fields["path"])
+  if (named === null) {
+    return badBody(EDIT_KEYS, "an edit names the project by the repo path it is registered under, which must be a non-empty string")
+  }
+  let path: string
+  try {
+    // The store's own rule for which record a path names, run here as well as
+    // inside the write: it is what keeps this route's 404 quoting the spelling
+    // the store uses, and what keeps it agreeing with the removal beside it.
+    path = projectIdentity(named)
+  } catch (cause) {
+    return refuse(400, (cause as Error).message)
+  }
+
+  // The keys that were **sent**, not every key this route knows: an absent key
+  // has to mean "leave it alone", and a `changes` object filled with
+  // `undefined` for the rest would be a wholesale replacement wearing a
+  // partial update's clothes. `in` rather than an undefined check, because the
+  // question is which keys the body carried.
+  const changes: Record<string, unknown> = {}
+  for (const key of EDITABLE_KEYS) {
+    if (key in parsed.fields) changes[key] = parsed.fields[key]
+  }
+
+  let edited: Edited
+  try {
+    edited = await updateProject(projectsFile, path, changes)
+  } catch (cause) {
+    // A damaged store, answered as registration and removal answer it.
+    console.error(`PATCH /api/projects: ${projectsFile} cannot be read:`, cause)
+    return refuse(500, (cause as Error).message)
+  }
+  if (!edited.ok) {
+    // Two different mistakes with two different fixes, which is why the store
+    // tags them rather than throwing one exception for both: a 404 means
+    // register it first, a 400 means that value cannot be stored - and the
+    // store's own prose names the field, as it does on registration.
+    return edited.why === "not-registered"
+      ? refuse(404, `${path} is not registered in ${projectsFile}, so there is nothing to edit. Register it first; kantan only stores settings for repos it was told about.`)
+      : refuse(400, edited.message)
+  }
+  // The stored record, as registration answers one: the merge is what the
+  // caller cannot predict, and `path` in it is the identity every later
+  // request keys on.
+  return Response.json({ ok: true, project: edited.project })
 }
 
 /**

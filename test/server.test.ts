@@ -2872,6 +2872,255 @@ test("a removed project's run logs are left on disk, because nothing can rebuild
 })
 
 // ---------------------------------------------------------------------------
+// 12c. Editing a project
+// ---------------------------------------------------------------------------
+
+// The other half of the same report: a project's Claude account could not be
+// changed after registering it. Registering again is refused with a 409 whose
+// message is the reason this has to be a **partial** update - `addProject`
+// replaces a record wholesale, so a second trip through a three-field dialog
+// would reset a budget or an allowlist tuned by hand. A PATCH that rebuilt the
+// record through `defaults()` would reintroduce exactly that, so the case that
+// matters most here is the one that tunes a field by hand, changes another, and
+// looks for the first one afterwards.
+
+const EDIT = "PATCH /api/projects"
+
+function edit(l: Launch, body: unknown): Promise<{ status: number; headers: Headers; body: string }> {
+  return call(l, { path: REGISTER_PATH, method: "PATCH", body: JSON.stringify(body) })
+}
+
+/** A store holding one record, written as a hand edit writes it: through the
+ * store's own API, with fields no dialog offers already tuned. */
+async function tunedStore(path: string): Promise<{ l: Launch; store: string; record: Project }> {
+  const store = await storeFile()
+  const record: Project = {
+    ...defaults({ path, testCmd: "npm test" }),
+    allowedTools: ["Read", "Edit", "Bash(npm test)"],
+    planModel: "claude-opus-5-5-thinking",
+    planEffort: "max",
+    implementEffort: "xhigh",
+    budgetUsd: 93.5,
+    reportPath: "build/junit.xml",
+  }
+  await addProject(store, record)
+  return { l: serve({ runsDir: await runsDir(), projectsFile: store }), store, record }
+}
+
+test("an edit is a PATCH registered in ROUTES, behind the guards, and not token-exempt", () => {
+  expect(Object.keys(ROUTES)).toContain(EDIT)
+  expect(TOKEN_EXEMPT.has(EDIT)).toBe(false)
+  expect([...TOKEN_EXEMPT].sort()).toEqual(["GET /", "GET /api/session"])
+})
+
+test("an edit changes the field it names and leaves a hand-tuned record alone", async () => {
+  const repo = await cleanRepo()
+  const { l, store, record } = await tunedStore(repo)
+
+  const res = await edit(l, { path: repo, testCmd: "flutter test" })
+  expect(res.status).toBe(200)
+  // The stored record comes back, so the caller never has to guess what the
+  // merge did - `path` included, which is the identity every start request and
+  // every run log keys on.
+  expect(JSON.parse(res.body)).toEqual({ ok: true, project: { ...record, testCmd: "flutter test" } })
+  // Read back through the store, because the invariant that matters is that
+  // the tool's own write is a record the store will load again.
+  expect(await loadProjects(store)).toEqual([{ ...record, testCmd: "flutter test" }])
+})
+
+test("the account can be changed after registering, which is what nothing could do", async () => {
+  // The user's own words: there was no way to change a project's Claude
+  // account once it was registered. `account` is what the human *called* it
+  // and `configDir` is the profile the runs actually use, so both are here and
+  // neither is derived from the other.
+  const repo = await cleanRepo()
+  const profile = await scratch("orch-profile-")
+  const { l, store } = await tunedStore(repo)
+
+  expect((await edit(l, { path: repo, account: "work", configDir: profile })).status).toBe(200)
+  const stored = (await loadProjects(store))[0]
+  expect(stored?.account).toBe("work")
+  expect(stored?.configDir).toBe(profile)
+
+  // And back to the default profile, which the store spells as an absent
+  // `configDir` and reads a null as.
+  expect((await edit(l, { path: repo, configDir: null })).status).toBe(200)
+  const after = (await loadProjects(store))[0]
+  expect(after?.configDir).toBeUndefined()
+  expect(after?.account).toBe("work")
+})
+
+test("an edit naming only the path writes nothing and answers the record", async () => {
+  // Not a 400: a client cannot send a change this route silently drops - an
+  // unknown key is a 400 - so the only way to name no change is to make none,
+  // and answering the record is more useful than refusing. It must not write,
+  // because this file is hand-edited and read in diffs.
+  const repo = await cleanRepo()
+  const { l, store, record } = await tunedStore(repo)
+  const before = await readFile(store, "utf8")
+
+  const res = await edit(l, { path: repo })
+  expect(res.status).toBe(200)
+  expect(JSON.parse(res.body)).toEqual({ ok: true, project: record })
+  expect(await readFile(store, "utf8")).toBe(before)
+})
+
+test("each project route takes its own keys, not a shared superset", async () => {
+  // `parseBody` refuses an unknown key by naming the keys *this route* takes,
+  // so one shared list would let a DELETE accept `testCmd` and a registration
+  // accept a budget it does not store. Three routes, three lists, proved
+  // against each other.
+  const repo = await cleanRepo()
+  const fresh = await cleanRepo()
+  const { l } = await tunedStore(repo)
+
+  // Registration offers the dialog's three fields and no ceiling.
+  const registered = await register(l, { path: fresh, testCmd: "npm test", budgetUsd: 10 })
+  expect(registered.status).toBe(400)
+  expect(registered.body).toContain("testCmd")
+  expect(registered.body).not.toContain("budgetUsd")
+
+  // An edit is where a ceiling is changed, because that is the field a second
+  // trip through the dialog used to reset.
+  expect((await edit(l, { path: repo, budgetUsd: 10 })).status).toBe(200)
+
+  // A removal takes the path alone.
+  const removal = await remove(l, { path: repo, budgetUsd: 10 })
+  expect(removal.status).toBe(400)
+  expect(removal.body).toContain("path")
+  expect(removal.body).not.toContain("budgetUsd")
+})
+
+test("an edit cannot move a project to another path", async () => {
+  // `path` is the identity, and the route's allowlist has no second key that
+  // could name a new one: changing it is a remove plus an add, and the run
+  // logs reference the old spelling either way.
+  const repo = await cleanRepo()
+  const { l, store, record } = await tunedStore(repo)
+
+  const res = await edit(l, { path: repo, newPath: "/elsewhere" })
+  expect(res.status).toBe(400)
+  expect(res.body).toContain("path")
+  expect(res.body).not.toContain("elsewhere")
+  expect(await loadProjects(store)).toEqual([record])
+})
+
+test("an edit to a path that is not registered is a 404 and writes nothing", async () => {
+  const repo = await cleanRepo()
+  const { l, store, record } = await tunedStore(repo)
+  const res = await edit(l, { path: join(repo, "nope"), testCmd: "x" })
+  expect(res.status).toBe(404)
+  expect(res.body).toContain(store)
+  expect(await loadProjects(store)).toEqual([record])
+})
+
+test("a value the store will not hold is a 4xx with the store's own reason, not a 500", async () => {
+  // The same rule registration follows: `src/projects.ts`'s prose names the
+  // field someone has to fix, it is about a value the human typed into their
+  // own dialog, and quoting it back is the whole diagnosis.
+  const repo = await cleanRepo()
+  const { l, store, record } = await tunedStore(repo)
+  const rows: { body: unknown; names: string; why: string }[] = [
+    { body: { path: repo, testCmd: "" }, names: "testCmd", why: 'an empty command runs as sh -c "" and exits 0, so every task would pass' },
+    { body: { path: repo, testCmd: "  " }, names: "testCmd", why: "whitespace is the same mistake" },
+    { body: { path: repo, testCmd: null }, names: "testCmd", why: "a required field has no spelling for absent" },
+    { body: { path: repo, configDir: "~/.claude-work" }, names: "configDir", why: "the CLI expands no tilde" },
+    { body: { path: repo, account: "billing" }, names: "account", why: "two words or nothing: a third renders as neither chip colour" },
+    { body: { path: repo, account: null }, names: "account", why: "the store has no second spelling for an unsaid account" },
+    { body: { path: repo, budgetUsd: 0 }, names: "budgetUsd", why: "a ceiling that funds nothing" },
+    { body: { path: repo, budgetUsd: "120" }, names: "budgetUsd", why: "the shape a text input produces" },
+  ]
+
+  for (const row of rows) {
+    const res = await edit(l, row.body)
+    expect(res.status, row.why).toBe(400)
+    expect(res.body, row.why).toContain(row.names)
+    expect(await loadProjects(store), row.why).toEqual([record])
+  }
+})
+
+test("a malformed edit body is refused before anything is written", async () => {
+  const repo = await cleanRepo()
+  const { l, store, record } = await tunedStore(repo)
+  const rows: { body?: string; status: number; why: string }[] = [
+    { status: 400, why: "no body names no project" },
+    { body: "", status: 400, why: "nor does an empty one" },
+    { body: "not json", status: 400, why: "the body must parse as JSON" },
+    { body: "null", status: 400, why: "typeof null is object, which is the trap" },
+    { body: "[]", status: 400, why: "an array is not a record" },
+    { body: "{}", status: 400, why: "an object with no path names no project to edit" },
+    { body: JSON.stringify({ path: "" }), status: 400, why: "an empty path names none either" },
+    { body: JSON.stringify({ path: 7 }), status: 400, why: "a number is not a path" },
+    { body: JSON.stringify({ path: "repo", testCmd: "x" }), status: 400, why: "a relative path would name a different record per launch directory" },
+    { body: JSON.stringify({ path: repo, testcmd: "x" }), status: 400, why: "the near-miss spelling, refused by name rather than dropped" },
+    { body: JSON.stringify({ path: repo, allowedTools: ["Read"] }), status: 400, why: "a field the store has but this route does not offer: a 400 naming what it takes, never a silent drop" },
+    { body: JSON.stringify({ path: repo, testCmd: "npm test" }), status: 200, why: "the control: a well-formed edit" },
+  ]
+
+  for (const row of rows) {
+    const res = await call(l, {
+      path: REGISTER_PATH,
+      method: "PATCH",
+      ...(row.body === undefined ? {} : { body: row.body }),
+    })
+    expect(res.status, row.why).toBe(row.status)
+    if (row.status >= 400) expect(await loadProjects(store), row.why).toEqual([record])
+  }
+})
+
+test("a project whose repo has moved can still be edited, because the path is not changing", async () => {
+  // No git here, deliberately, and the asymmetry with registration is the
+  // point: `requireUsableRepo` decides whether a *new* path is a repository
+  // kantan can run in, while an edit names a record that already exists. A
+  // route that re-checked the repo would make a project whose checkout has
+  // gone impossible to fix and impossible to point anywhere else.
+  const gone = join(await scratch("orch-gone-"), "repo")
+  const { l, store } = await tunedStore(gone)
+  expect((await edit(l, { path: gone, testCmd: "flutter test" })).status).toBe(200)
+  expect((await loadProjects(store))[0]?.testCmd).toBe("flutter test")
+})
+
+test("an edit is allowed while a run is in flight, unlike a removal", async () => {
+  // The asymmetry is deliberate. A removal breaks the lookup every action on
+  // that run makes, so it is refused; an edit cannot, because `path` is not
+  // editable and a live run holds the record it started with - `held()`
+  // returns the registered run and never re-reads the store for it. What a
+  // live run would notice is a `configDir` change, and only once it is
+  // rehydrated after a restart, where `--resume` would look for its session in
+  // a different profile. That is a real cost, and the recovery is one PATCH
+  // back; refusing every edit while any run of the project is unfinished would
+  // block the common case - fixing a typo in `testCmd` while a plan sits at
+  // the gate - for a case a liveness check cannot even see.
+  const repo = await cleanRepo()
+  const dir = await runsDir()
+  const store = await storeFile()
+  const live = "88888888-8888-4888-8888-888888888888"
+  const l = serve({ runsDir: dir, projectsFile: store, liveRunIds: () => [live] })
+  await addProject(store, defaults({ path: (await requireUsableRepo(repo)).root, testCmd: "npm test" }))
+  await logNamingProject(dir, live, (await requireUsableRepo(repo)).root)
+
+  expect((await edit(l, { path: repo, testCmd: "flutter test" })).status).toBe(200)
+  // The same project, the same instant: a removal is refused.
+  expect((await remove(l, { path: repo })).status).toBe(409)
+})
+
+test("a server launched without a project store answers 503 on an edit", async () => {
+  const l = serve({ runsDir: await runsDir() })
+  expect((await edit(l, { path: "/repo", testCmd: "x" })).status).toBe(503)
+})
+
+test("a damaged store is a 500 on an edit, forwarding the message that names the file", async () => {
+  const store = await storeFile()
+  await mkdir(dirname(store), { recursive: true })
+  await writeFile(store, '[{ "path": "/repo", oops }]')
+  const l = serve({ runsDir: await runsDir(), projectsFile: store })
+
+  const res = await edit(l, { path: "/repo", testCmd: "npm test" })
+  expect(res.status).toBe(500)
+  expect(res.body).toContain(store)
+})
+
+// ---------------------------------------------------------------------------
 // 13. The project tree
 // ---------------------------------------------------------------------------
 
