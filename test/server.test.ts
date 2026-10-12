@@ -2302,7 +2302,12 @@ test("a project whose repo has moved is unreadable with git's own reason, not a 
   const { status, body } = await getPlan(l, "moved")
   expect(status).toBe(200)
   expect(body.plan?.status).toBe("unreadable")
-  expect(body.plan?.why).toContain("git repository")
+  // The reason is readable and names the path, which is what this test is
+  // about; it is no longer git's own sentence, because a directory that does
+  // not exist now says so before git is asked. "Not a git repository" sent
+  // readers looking for the wrong problem.
+  expect(body.plan?.why).toContain("no directory at")
+  expect(body.plan?.why).toContain(gone)
 })
 
 test("the plan route refuses an unusable run id and 404s a run with no log", async () => {
@@ -2403,23 +2408,32 @@ test("registering a repo writes a record the store itself accepts, and answers i
   expect(res.body).not.toContain(l.token)
 })
 
-test("the Claude account is the configDir, absolute, and an account label is a 400", async () => {
-  // The dialog's "personal" or "work" is a label over a CLI profile directory,
-  // which carries a CLAUDE.md, skills and settings as well as credentials. The
-  // store spells it `configDir`; the UI owns the mapping.
+test("the profile directory and the account are separate fields, and the account is enumerated", async () => {
+  // `configDir` selects a CLI profile - a CLAUDE.md, skills and settings as
+  // well as credentials. `account` is what the human *called* it, and the two
+  // are deliberately not derived from each other: no rule turning
+  // `/home/u/.claude-work` into "work" is anything but a guess about how a
+  // stranger names directories, and design §5 lists a wrong account as a
+  // defect because people bill clients from one of these.
   const repo = await cleanRepo()
   const profile = await scratch("orch-profile-")
   const { l, store } = await withStore()
 
-  const ok = await register(l, { path: repo, testCmd: "npm test", configDir: profile })
+  const ok = await register(l, { path: repo, testCmd: "npm test", configDir: profile, account: "work" })
   expect(ok.status).toBe(201)
   expect((await loadProjects(store))[0]?.configDir).toBe(profile)
+  expect((await loadProjects(store))[0]?.account).toBe("work")
 
+  // Absent is a real answer - "not sure" - and must not become a guess.
+  const quiet = await withStore()
+  expect((await register(quiet.l, { path: await cleanRepo(), testCmd: "npm test" })).status).toBe(201)
+  expect((await loadProjects(quiet.store))[0]?.account).toBeUndefined()
+
+  // Two words or nothing. A third spelling renders as neither chip colour.
   const other = await withStore()
-  const bad = await register(other.l, { path: await cleanRepo(), testCmd: "npm test", account: "personal" })
+  const bad = await register(other.l, { path: await cleanRepo(), testCmd: "npm test", account: "personal account" })
   expect(bad.status).toBe(400)
-  expect(bad.body).toContain("configDir")
-  expect(bad.body).not.toContain("account")
+  expect(bad.body).toContain("account")
   expect(await loadProjects(other.store)).toEqual([])
 })
 
@@ -2446,7 +2460,7 @@ test("the task file the dialog asks for is not a project field, and saying so is
     expect(res.status, key).toBe(400)
     // The keys this route takes, never the key that was sent: that is
     // caller-chosen text in a body a page may be able to read.
-    expect(res.body, key).toContain("path, testCmd, configDir")
+    expect(res.body, key).toContain("path, testCmd, account, configDir")
     expect(res.body, key).not.toContain(key)
   }
   expect(await loadProjects(store)).toEqual([])
@@ -2467,8 +2481,12 @@ test("every repo state kantan cannot run in is refused, with the reason git gave
   await mkdir(inside, { recursive: true })
 
   const rows: [string, string, string][] = [
-    ["a path with nothing at it", join(empty, "nope"), "git repository"],
-    ["a file, not a directory", file, "git repository"],
+    // These two no longer say "git repository", and should not: the problem is
+    // not that the path fails to be a repo, it is that there is nothing there
+    // to be one. A user who typed a home directory that did not exist was sent
+    // looking for a git problem.
+    ["a path with nothing at it", join(empty, "nope"), "no directory at"],
+    ["a file, not a directory", file, "a file, not a directory"],
     ["a directory that is not a repo", empty, "git repository"],
     ["a subdirectory of a repo, which git answers for", inside, "not the root"],
     ["a bare repo, which has no working tree", bare, "bare"],
@@ -2714,11 +2732,12 @@ test("a registered repo comes back as a TreeProject, field for field, with its t
   expect(body.projects).toEqual([
     {
       path: repo,
-      // Required on every project, and `unknown` on every one of them: nothing
-      // in `Project` says personal or work - it carries a `configDir`, which
-      // selects a profile - and a silent default of "personal" is the exact
-      // failure the chip exists to prevent (HANDOFF).
-      account: { kind: "unknown" },
+      // `unknown` because this project states no `account`, and that is never
+      // guessed: a silent default of "personal" is the exact failure the chip
+      // exists to prevent (HANDOFF). The **label** is still a fact we hold -
+      // which profile the runs use - and saying "default profile" beats
+      // "account unknown" on every row of every project, which read like a bug.
+      account: { kind: "unknown", label: "default profile" },
       testCmd: "bun test",
       features: [
         {
@@ -2733,9 +2752,11 @@ test("a registered repo comes back as a TreeProject, field for field, with its t
     },
   ])
   expect(body.runs).toEqual({})
-  // No account label either: the chip's own default is "account unknown", and a
-  // second copy of that sentence here would be a second place for it to drift.
-  expect("label" in (body.projects?.[0]?.account ?? {})).toBe(false)
+  // The label says which profile the runs use, which is a fact; it never says
+  // personal or work, which is a claim only the human can make. That boundary
+  // is the whole point, so it is asserted rather than assumed.
+  expect(body.projects?.[0]?.account?.label).toBe("default profile")
+  expect(body.projects?.[0]?.account?.kind).toBe("unknown")
 })
 
 test("the feature path is the repo-relative string a run header records, which is what the join needs", async () => {

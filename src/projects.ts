@@ -17,6 +17,17 @@ export interface Project {
   testCmd: string
   /** JUnit XML, relative to `path`, for the stall signature. */
   reportPath?: string
+  /**
+   * Which Claude account this project's runs bill to, **as the human said it**.
+   *
+   * Absent means nobody has said. It is deliberately not derived from
+   * `configDir`: that selects a CLI profile, and no rule turning
+   * `/home/u/.claude-work` into "work" is anything but a guess about how a
+   * stranger names their directories. Design §5 lists a wrong account as a
+   * defect because people bill clients from one of these, so the only
+   * trustworthy source is the person who owns the account.
+   */
+  account?: "personal" | "work"
   /** CLAUDE_CONFIG_DIR for this project's runs; absent means the default
    * profile. A profile carries its own CLAUDE.md, skills, plugins and
    * settings, not just credentials, so this is not only about which account. */
@@ -71,6 +82,7 @@ const FIELDS = [
   "path",
   "testCmd",
   "reportPath",
+  "account",
   "configDir",
   "permissionMode",
   "allowedTools",
@@ -113,7 +125,7 @@ const DEFAULTS = {
   implementModel: "claude-sonnet-5-5",
   planEffort: "high",
   implementEffort: "medium",
-} satisfies Omit<Project, "path" | "testCmd" | "reportPath" | "configDir">
+} satisfies Omit<Project, "path" | "testCmd" | "reportPath" | "account" | "configDir">
 
 /**
  * Fills the design's defaults around what the caller supplied, then validates,
@@ -131,6 +143,7 @@ export function defaults(partial: NewProject): Project {
       path: partial.path,
       testCmd: partial.testCmd,
       reportPath: partial.reportPath,
+      account: partial.account,
       configDir: partial.configDir,
       permissionMode: partial.permissionMode ?? DEFAULTS.permissionMode,
       allowedTools: partial.allowedTools ?? DEFAULTS.allowedTools,
@@ -353,6 +366,13 @@ function validateProject(value: unknown, where: string): Project {
     throw new Error(`${where}: reportPath is relative to the repo, so it cannot be ${reportPath}`)
   }
 
+  // Enumerated, not free text: the chip's two colours are the whole point, and
+  // a third spelling would render as neither. Absent stays absent.
+  const account = r.account
+  if (account !== undefined && account !== "personal" && account !== "work") {
+    throw new Error(`${where}: account is "personal" or "work" if given, got ${JSON.stringify(account)}`)
+  }
+
   // CLAUDE_CONFIG_DIR is handed to the child verbatim; nothing expands "~".
   // A relative value would create a profile next to the server's cwd, and the
   // run would start with no CLAUDE.md, no skills and no credentials.
@@ -388,6 +408,7 @@ function validateProject(value: unknown, where: string): Project {
     path,
     testCmd,
     ...(reportPath === undefined ? {} : { reportPath }),
+    ...(account === undefined ? {} : { account }),
     ...(configDir === undefined ? {} : { configDir }),
     permissionMode: mode,
     allowedTools: toolRules(r.allowedTools, "allowedTools", where),

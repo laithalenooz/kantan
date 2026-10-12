@@ -6,7 +6,7 @@ import { Sidebar, sumProcessCost, type AccountWindow } from "./Sidebar.tsx"
 import { Digest, ReturnBand, type DigestSubject } from "./Digest.tsx"
 import { AppBar, Breadcrumb, NeedsYouBand, usePageAttention } from "./Chrome.tsx"
 import { Empty } from "./Empty.tsx"
-import { registerProject, startRun, taskKeyOf, type RunView } from "./live.ts"
+import { draftFeature, registerProject, startRun, taskKeyOf, type RunView } from "./live.ts"
 import { useAction, usePlan, useRun, useTree } from "./useRun.ts"
 import type { RunPhase } from "../runlog.ts"
 import type { AskingPhase } from "./Gate.tsx"
@@ -129,6 +129,11 @@ function countNeedsYou(projects: readonly TreeProject[]): number | undefined {
   return waiting
 }
 
+/** The first registered project that has no task file, or `null`. */
+function emptyProjectOf(projects: readonly TreeProject[]): TreeProject | null {
+  return projects.find((p) => p.features.length === 0) ?? null
+}
+
 /** The line under the log saying what the run is doing, per both artboards. */
 function footerFor(view: RunView | null): string | null {
   if (view === null) return null
@@ -180,6 +185,7 @@ function useNow(): number {
 function AddProject({ onDone, onCancel }: { onDone: () => void; onCancel: () => void }) {
   const [path, setPath] = useState("")
   const [testCmd, setTestCmd] = useState("")
+  const [account, setAccount] = useState<"personal" | "work" | "">("")
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -188,7 +194,11 @@ function AddProject({ onDone, onCancel }: { onDone: () => void; onCancel: () => 
     setBusy(true)
     setError(null)
     try {
-      await registerProject({ path: path.trim(), testCmd: testCmd.trim() })
+      await registerProject({
+        path: path.trim(),
+        testCmd: testCmd.trim(),
+        ...(account === "" ? {} : { account }),
+      })
       onDone()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
@@ -215,6 +225,29 @@ function AddProject({ onDone, onCancel }: { onDone: () => void; onCancel: () => 
           placeholder="npm test"
           className="m mt-1.5 w-full rounded-[10px] border border-edge px-3 py-2 text-[13.5px] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#5B5BD6]" />
 
+        <fieldset className="mt-4 border-0 p-0">
+          <legend className="text-[12.5px] font-semibold text-muted-400">Which Claude account does it bill to?</legend>
+          {/* Asked, never inferred. A rule turning a profile directory into
+              "work" is a guess about how someone names their folders, and
+              billing a client from the wrong account is the defect this chip
+              exists to prevent. "Not sure" is a real answer. */}
+          <div className="mt-2 flex gap-2">
+            {([["personal", "Personal"], ["work", "Work"], ["", "Not sure"]] as const).map(([value, label]) => (
+              <button
+                key={label}
+                type="button"
+                onClick={() => setAccount(value)}
+                aria-pressed={account === value}
+                className={`rounded-full border px-3 py-1.5 text-[12.5px] font-semibold ${
+                  account === value ? "border-ink bg-ink text-white" : "border-edge text-muted-500"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </fieldset>
+
         {error !== null && (
           <p role="alert" className="mt-4 rounded-[10px] border border-[#F3C6C9] bg-[#FDF2F3] px-3 py-2 text-[12.5px] leading-[1.5] text-[#D92D3A]">{error}</p>
         )}
@@ -230,9 +263,70 @@ function AddProject({ onDone, onCancel }: { onDone: () => void; onCancel: () => 
   )
 }
 
+/**
+ * Describing work, which writes the task file kantan runs from.
+ *
+ * Without this the product has a hole in the middle: you register a repo, and
+ * if it has no `docs/features/*.md` the tree shows it with nothing underneath
+ * and no way forward. The entire input is a markdown file, and until now the
+ * only way to get one was to leave, open an editor, and learn the format.
+ */
+function DescribeWork({ projectPath, onDone, onCancel }: { projectPath: string; onDone: (path: string) => void; onCancel: () => void }) {
+  const [text, setText] = useState("")
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const submit = async (e: React.FormEvent): Promise<void> => {
+    e.preventDefault()
+    setBusy(true)
+    setError(null)
+    try {
+      onDone(await draftFeature(projectPath, text.trim()))
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-[#111216]/30 p-6" role="dialog" aria-modal="true" aria-label="Describe the work">
+      <form onSubmit={(e) => void submit(e)} className="w-full max-w-[560px] rounded-[18px] border border-edge bg-white p-6 shadow-lg">
+        <h2 className="text-[19px] font-[650] tracking-[-.015em] text-ink">What do you want done?</h2>
+        <p className="mt-2 text-[13.5px] leading-[1.55] text-muted-500">
+          Describe it the way you would to a teammate. kantan writes a task file into{" "}
+          <span className="m">docs/features/</span> and works through it one task at a time — you can edit the file afterwards.
+        </p>
+
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          required
+          rows={5}
+          autoFocus
+          placeholder="Add CSV export to the reports page, with a test that the file downloads and parses."
+          className="mt-4 w-full resize-y rounded-[12px] border border-edge px-3 py-2.5 text-[13.5px] leading-[1.6] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#5B5BD6]"
+        />
+
+        {error !== null && (
+          <p role="alert" className="mt-4 rounded-[10px] border border-[#F3C6C9] bg-[#FDF2F3] px-3 py-2 text-[12.5px] leading-[1.5] text-[#D92D3A]">{error}</p>
+        )}
+
+        <div className="mt-5 flex items-center justify-end gap-3">
+          <button type="button" onClick={onCancel} className="ghost rounded-full px-4 py-2 text-[13px] font-semibold text-muted-500">Cancel</button>
+          <button type="submit" disabled={busy || text.trim() === ""} className="cta rounded-full bg-ink px-4 py-2 text-[13px] font-semibold text-white disabled:opacity-50">
+            {busy ? "Writing the task file…" : "Write the task file"}
+          </button>
+        </div>
+      </form>
+    </div>
+  )
+}
+
 export function App() {
   const { tree, origin, error: treeError, reload } = useTree()
   const [adding, setAdding] = useState(false)
+  const [describing, setDescribing] = useState<string | null>(null)
   const nowMs = useNow()
   const [selected, setSelected] = useState<TaskId | null>(null)
   const [started, setStarted] = useState<Record<string, string>>({})
@@ -341,7 +435,16 @@ export function App() {
      there is none: 16.25rem of empty grid leaves the centre too narrow for the
      empty state's two-column hero, which then stacks below the fold. */
   const showRail = view !== null && view.ceilingUsd !== null
-  const nothingSelected = treeError === null && tree !== null && projects.length > 0 && selected === null
+  const nothingSelected =
+    treeError === null && tree !== null && projects.length > 0 && selected === null && emptyProjectOf(projects) === null
+  /**
+   * A registered project with no task file at all.
+   *
+   * Shown even with nothing selected, because there is nothing in that project
+   * to select - the tree renders the repo and then stops, which reads as a
+   * broken app rather than as a repo that has not been given any work.
+   */
+  const emptyProject = emptyProjectOf(projects)
   const noProjects = treeError === null && tree !== null && projects.length === 0
 
   const failure = treeError ?? startError ?? actionError
@@ -435,6 +538,25 @@ export function App() {
           <Stream rows={view.rows} maxHeight={atGate ? 520 : 640} footer={footerFor(view)} />
         )}
 
+        {emptyProject !== null && (
+          <div className="m-4 max-w-[560px] rounded-[14px] border border-edge bg-panel px-5 py-5">
+            <h2 className="text-[15px] font-[650] tracking-[-.01em] text-ink">
+              {emptyProject.path.split("/").at(-1)} has no task file yet
+            </h2>
+            <p className="mt-2 text-[13.5px] leading-[1.55] text-muted-500">
+              kantan works through tasks written in <span className="m">docs/features/*.md</span>. Describe what you
+              want and it will write the first one, or add the file yourself and it will appear here.
+            </p>
+            <button
+              type="button"
+              onClick={() => setDescribing(emptyProject.path)}
+              className="cta mt-4 rounded-full bg-ink px-4 py-2 text-[13px] font-semibold text-white"
+            >
+              Describe what you want done
+            </button>
+          </div>
+        )}
+
         {runId === null && task !== null && canStart(task) && (
           <div className="m-4 rounded-[14px] border border-edge bg-panel px-4 py-[18px]">
             <p className="text-[13.5px] leading-[1.55] text-muted-500">
@@ -469,6 +591,17 @@ export function App() {
       </div>
       )}
       </div>
+
+      {describing !== null && (
+        <DescribeWork
+          projectPath={describing}
+          onDone={() => {
+            setDescribing(null)
+            reload()
+          }}
+          onCancel={() => setDescribing(null)}
+        />
+      )}
 
       {adding && (
         <AddProject

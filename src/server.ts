@@ -1,10 +1,11 @@
 import { randomBytes, timingSafeEqual } from "node:crypto"
 import { constants } from "node:fs"
-import { open, realpath, stat } from "node:fs/promises"
-import { isAbsolute, relative, resolve, sep } from "node:path"
+import { mkdir, open, realpath, stat, writeFile } from "node:fs/promises"
+import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path"
 import type { Server } from "bun"
 import { parseFeature } from "./backlog"
 import type { Task } from "./backlog"
+import { draftFeature, type Draft } from "./draft"
 import { listFeatureFiles } from "./featurefile"
 import { requireUsableRepo, taskBranchName } from "./git"
 import { addProject, defaults, loadProjects } from "./projects"
@@ -446,6 +447,9 @@ export const ROUTES: Record<string, RouteHandler> = {
    * and what nothing wrote until now: `projects.json` was read everywhere and
    * written by nobody. */
   "POST /api/projects": (req, ctx) => registerProject(req, ctx),
+
+  /** Turning a sentence into a task file, which is otherwise hand-written. */
+  "POST /api/features": (req, ctx) => draftFeatureFile(req, ctx),
 }
 
 /**
@@ -1297,7 +1301,7 @@ async function readProjects(ctx: RouteContext): Promise<Response> {
     warnings.push(...read.warnings)
     projects.push({
       path: project.path,
-      account: accountOf(),
+      account: accountOf(project),
       testCmd: project.testCmd,
       features: read.features,
     })
@@ -1330,18 +1334,28 @@ async function readProjects(ctx: RouteContext): Promise<Response> {
 }
 
 /**
- * Which Claude account a project's runs bill to: `unknown`, always.
+ * Which Claude account a project's runs bill to.
  *
- * Not an oversight. Nothing in `Project` says "personal" or "work" - it carries
- * a `configDir`, which selects a CLI profile - so the reading is not the
- * server's to make, and design §5 lists a wrong account as a defect because
- * people bill clients from one of these. A silent default of "personal" is the
- * one failure the chip exists to prevent (HANDOFF). No `label` either: the
- * component's own default is "account unknown", and a second copy of that
- * sentence here would be a second place for it to drift.
+ * `Project.account` is the only source, because it is the only one the human
+ * actually stated. Still never derived from `configDir`: that selects a CLI
+ * profile, and no rule turning `/home/u/.claude-work` into "work" is anything
+ * but a guess about how a stranger names their directories. Design §5 lists a
+ * wrong account as a defect because people bill clients from one of these.
+ *
+ * What changed is the **unstated** case. It used to return bare `unknown`,
+ * which the tree renders as "account unknown" on every row of every project -
+ * true, and useless, and it reads like a bug. We cannot say personal or work
+ * without being told, but we can say which profile the runs use, which is a
+ * fact we hold: the default profile, or the directory `configDir` names. That
+ * is strictly more informative and still claims nothing about whose money it
+ * is.
  */
-function accountOf(): Account {
-  return { kind: "unknown" }
+function accountOf(project: Project): Account {
+  if (project.account !== undefined) return { kind: project.account }
+  return {
+    kind: "unknown",
+    label: project.configDir === undefined ? "default profile" : (basename(project.configDir) || project.configDir),
+  }
 }
 
 /**
@@ -1711,7 +1725,8 @@ const NO_KEYS: readonly string[] = []
  * The task file the dialog also asks for is **not** a project field: it names a
  * run, and it reaches `POST /api/runs` as `featureFile`.
  */
-const PROJECT_KEYS = ["path", "testCmd", "configDir"] as const
+const PROJECT_KEYS = ["path", "testCmd", "account", "configDir"] as const
+const FEATURE_KEYS = ["projectPath", "text"] as const
 
 async function startRun(req: Request, ctx: RouteContext): Promise<Response> {
   const runner = ctx.runner
@@ -1909,6 +1924,7 @@ async function registerProject(req: Request, ctx: RouteContext): Promise<Respons
     return badBody(PROJECT_KEYS, "a project is a repo path and the command that tests it, each a non-empty string")
   }
   const configDir = parsed.fields["configDir"]
+  const account = parsed.fields["account"]
 
   let project: Project
   try {
@@ -1921,6 +1937,9 @@ async function registerProject(req: Request, ctx: RouteContext): Promise<Respons
       // throw it may produce is the 400 below. `null` reads as absent there,
       // which is the store's own spelling of "the default profile".
       ...(configDir === undefined ? {} : { configDir: configDir as string }),
+      // Same reasoning as `configDir`: whether it is one of the two words is
+      // `defaults()`'s judgement, and its throw is the 400 below.
+      ...(account === undefined ? {} : { account: account as "personal" | "work" }),
     })
   } catch (cause) {
     return refuse(400, (cause as Error).message)
@@ -1973,6 +1992,82 @@ async function registerProject(req: Request, ctx: RouteContext): Promise<Respons
   // symlinked spelling, a trailing slash - and it is the identity every start
   // request and every run log keys on, so the caller is told what it is.
   return Response.json({ ok: true, project: record }, { status: 201 })
+}
+
+/**
+ * Drafts `docs/features/<slug>.md` from a description, and writes it.
+ *
+ * This closes the only gap between registering a repository and having
+ * something to run. kantan's whole input is a markdown task file, and until
+ * now the UI could show you a project with no task file and offer nothing -
+ * you had to leave, open an editor, and learn the format. `src/draft.ts` was
+ * built for exactly this (design §3.5.1) and nothing called it.
+ *
+ * Three things this route owns, which the drafting module deliberately does
+ * not:
+ *
+ * - **Where it goes.** `draftFeature` returns a repo-relative path from a
+ *   regex slug of the title it generated, never from the model's own words, so
+ *   the model cannot steer the write out of `docs/features/`. This resolves
+ *   that against the registered project's root and refuses anything that
+ *   escapes it anyway, because a defence that is only in the other file is one
+ *   edit away from gone.
+ * - **Not clobbering.** An existing file is a 409, not an overwrite. The whole
+ *   point of the file is that a human curates it; a draft that silently
+ *   replaced one would destroy the backlog it was asked to add to.
+ * - **Spending money.** This calls the CLI on Haiku. It is one short
+ *   single-turn call, and it is additive - design §3.5.1 says to delete the
+ *   call rather than debug it under pressure - but it is still a spend the
+ *   caller should know about, which is why the failure says which model it was.
+ */
+async function draftFeatureFile(req: Request, ctx: RouteContext): Promise<Response> {
+  const projectsFile = ctx.projectsFile
+  if (projectsFile === null) return noStore()
+
+  const body = await readBody(req)
+  if ("refused" in body) return body.refused
+  const parsed = parseBody(body.text, FEATURE_KEYS)
+  if ("refused" in parsed) return parsed.refused
+
+  const projectPath = nonEmptyString(parsed.fields["projectPath"])
+  const text = nonEmptyString(parsed.fields["text"])
+  if (projectPath === null || text === null) {
+    return badBody(FEATURE_KEYS, "a draft needs the project it belongs to and a description of the work, each a non-empty string")
+  }
+
+  const registered = await loadProjects(projectsFile)
+  const project = registered.find((p) => p.path === projectPath)
+  // Keyed on the stored spelling, as every other lookup is: a path that is not
+  // in the store is not a project this server will write into.
+  if (project === undefined) return refuse(404, "refused: that project is not registered")
+
+  let draft: Draft
+  try {
+    draft = await draftFeature(text)
+  } catch (cause) {
+    // The model's failures are the caller's to read: an empty reply, a title
+    // that slugs to nothing, a draft its own parser cannot round-trip.
+    return refuse(502, `the draft could not be written: ${(cause as Error).message}`)
+  }
+
+  const target = resolve(project.path, draft.path)
+  if (!inside(target, project.path)) {
+    return refuse(500, "refused: the drafted path escaped the project, which should be impossible")
+  }
+
+  try {
+    await mkdir(dirname(target), { recursive: true })
+    // `wx`: create, and fail if it is already there. Not a stat-then-write,
+    // which races against anything else writing the same slug.
+    await writeFile(target, draft.markdown, { flag: "wx" })
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "EEXIST") {
+      return refuse(409, `${draft.path} already exists in this project, so nothing was written. Open it and add the task by hand, or describe the work differently so it drafts under another name.`)
+    }
+    throw cause
+  }
+
+  return Response.json({ ok: true, path: draft.path, tasks: draft.feature.tasks.length }, { status: 201 })
 }
 
 export function createServer(opts: ServerOptions = {}): Launch {

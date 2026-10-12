@@ -505,6 +505,33 @@ export function taskKeyOf(id: { projectPath: string; featureFile: string; taskRe
 }
 
 /**
+ * Sends a request, and re-opens the session once if the token has gone stale.
+ *
+ * The token is minted per launch, so **restarting the server invalidates every
+ * open tab**: the cookie the page is holding names a token that no longer
+ * exists, and every request 401s until someone reloads. The refusal even tells
+ * them to load `http://127.0.0.1:3100/`, which in dev is the wrong port - Vite
+ * is serving the page.
+ *
+ * Nothing about that is the user's problem to solve, and a developer tool gets
+ * restarted constantly. One retry after re-opening the session makes it
+ * invisible.
+ *
+ * Exactly one retry, and only on 401. A second would turn a genuinely
+ * unauthorised state into a loop, and retrying another status would re-send a
+ * POST the server may already have acted on.
+ */
+async function withSession(
+  fetcher: typeof fetch,
+  send: (f: typeof fetch) => Promise<Response>,
+): Promise<Response> {
+  const first = await send(fetcher)
+  if (first.status !== 401) return first
+  await fetcher(`${API}/session`, { cache: "no-store" })
+  return await send(fetcher)
+}
+
+/**
  * Where requests go.
  *
  * Relative, so the browser sends them to the page's own origin and Vite's
@@ -540,7 +567,7 @@ export async function openSession(fetcher: typeof fetch = fetch): Promise<Sessio
 }
 
 export async function fetchTree(fetcher: typeof fetch = fetch): Promise<TreePayload> {
-  const res = await fetcher(`${API}/projects`, { cache: "no-store" })
+  const res = await withSession(fetcher, (f) => f(`${API}/projects`, { cache: "no-store" }))
   if (!res.ok) throw new Error(`the project tree could not be read: ${res.status} ${await text(res)}`)
   return (await res.json()) as TreePayload
 }
@@ -554,7 +581,7 @@ export async function fetchTree(fetcher: typeof fetch = fetch): Promise<TreePayl
  * a body worth reading, and anything else is this function's problem to report.
  */
 export async function fetchPlan(runId: string, fetcher: typeof fetch = fetch): Promise<PlanSource> {
-  const res = await fetcher(`${API}/runs/${encodeURIComponent(runId)}/plan`, { cache: "no-store" })
+  const res = await withSession(fetcher, (f) => f(`${API}/runs/${encodeURIComponent(runId)}/plan`, { cache: "no-store" }))
   if (!res.ok) return { status: "unreadable", path: "", why: `the server refused: ${res.status} ${await text(res)}` }
   return (await res.json()) as PlanSource
 }
@@ -571,11 +598,13 @@ export async function startRun(
   task: { projectPath: string; featureFile: string; taskRef: string },
   fetcher: typeof fetch = fetch,
 ): Promise<string> {
-  const res = await fetcher(`${API}/runs`, {
-    method: "POST",
-    cache: "no-store",
-    body: JSON.stringify({ projectPath: task.projectPath, featureFile: task.featureFile, taskRef: task.taskRef }),
-  })
+  const res = await withSession(fetcher, (f) =>
+    f(`${API}/runs`, {
+      method: "POST",
+      cache: "no-store",
+      body: JSON.stringify({ projectPath: task.projectPath, featureFile: task.featureFile, taskRef: task.taskRef }),
+    }),
+  )
   if (!res.ok) throw new Error(`the run could not be started: ${res.status} ${await text(res)}`)
   const answer = (await res.json()) as { runId?: unknown }
   // The id is what the stream, the plan and every action are keyed by, so a
@@ -595,18 +624,52 @@ export async function startRun(
  * a worktree is refused here rather than failing later inside a run.
  */
 export async function registerProject(
-  project: { path: string; testCmd: string },
+  project: { path: string; testCmd: string; account?: "personal" | "work" },
   fetcher: typeof fetch = fetch,
 ): Promise<void> {
-  const res = await fetcher(`${API}/projects`, {
+  const res = await withSession(fetcher, (f) =>
+    f(`${API}/projects`, {
     method: "POST",
     cache: "no-store",
-    body: JSON.stringify({ path: project.path, testCmd: project.testCmd }),
-  })
+    body: JSON.stringify({
+      path: project.path,
+      testCmd: project.testCmd,
+      // Omitted rather than sent as null: the route checks the body's keys
+      // against a fixed list, and "not sure" is the absence of an answer.
+      ...(project.account === undefined ? {} : { account: project.account }),
+    }),
+    }),
+  )
   // 201, because the record now exists. Anything else carries the server's own
   // sentence about what is wrong with the path, which is the whole value of
   // this call failing — the user has to be told which part to fix.
   if (!res.ok) throw new Error(`that repository could not be added: ${res.status} ${await text(res)}`)
+}
+
+/**
+ * Turns a sentence into `docs/features/<slug>.md` in the project.
+ *
+ * The only path from "I registered my repo" to "I have something to run"
+ * without leaving for a text editor. Answers the repo-relative path it wrote.
+ */
+export async function draftFeature(
+  projectPath: string,
+  text: string,
+  fetcher: typeof fetch = fetch,
+): Promise<string> {
+  const res = await withSession(fetcher, (f) =>
+    f(`${API}/features`, {
+      method: "POST",
+      cache: "no-store",
+      body: JSON.stringify({ projectPath, text }),
+    }),
+  )
+  if (!res.ok) throw new Error(`${res.status} ${await text2(res)}`)
+  const answer = (await res.json()) as { path?: unknown }
+  if (typeof answer.path !== "string" || answer.path === "") {
+    throw new Error("the file was written but the server did not say where")
+  }
+  return answer.path
 }
 
 /** The actions, design §4.4. POST, never GET: see the header of `src/server.ts`. */
@@ -628,12 +691,18 @@ export async function act(runId: string, action: Action, fetcher: typeof fetch =
         ? JSON.stringify({ budgetUsd: action.budgetUsd })
         : ""
 
-  const res = await fetcher(`${API}/runs/${encodeURIComponent(runId)}/${action.kind}`, {
-    method: "POST",
-    cache: "no-store",
-    ...(body === "" ? {} : { body }),
-  })
+  const res = await withSession(fetcher, (f) =>
+    f(`${API}/runs/${encodeURIComponent(runId)}/${action.kind}`, {
+      method: "POST",
+      cache: "no-store",
+      ...(body === "" ? {} : { body }),
+    }),
+  )
   if (!res.ok) throw new Error(`${action.kind} was refused: ${res.status} ${await text(res)}`)
+}
+
+async function text2(res: Response): Promise<string> {
+  return await text(res)
 }
 
 async function text(res: Response): Promise<string> {

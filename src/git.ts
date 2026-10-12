@@ -35,9 +35,9 @@
  */
 
 import { createHash, randomUUID } from "node:crypto"
-import { link, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises"
+import { link, readFile, realpath, rename, stat, unlink, writeFile } from "node:fs/promises"
 import { hostname } from "node:os"
-import { basename, isAbsolute, join, normalize } from "node:path"
+import { basename, dirname, isAbsolute, join, normalize, sep } from "node:path"
 
 export interface Repo {
   /** The repo root as git reports it, so two symlinked spellings of one repo
@@ -83,6 +83,15 @@ export const BRANCH_PREFIX = "orch/"
  *   than this one.
  */
 export async function requireUsableRepo(path: string): Promise<Repo> {
+  // Before git runs at all. `git -C /nope` fails with "cannot change to
+  // '/nope'" wrapped in our own "is not a usable git repository", which sends
+  // the reader looking for the wrong problem - they go checking whether the
+  // directory is a repo when it is not a directory. Observed in real use: a
+  // user typed a home directory that did not exist and got a sentence about
+  // git.
+  const missing = await whatIsWrongWithThePath(path)
+  if (missing !== null) throw new Error(missing)
+
   const probe = await runGit(path, [
     "rev-parse",
     "--path-format=absolute",
@@ -1070,4 +1079,41 @@ function count(n: number, noun: string): string {
 
 function isErrno(e: unknown, code: string): boolean {
   return typeof e === "object" && e !== null && (e as { code?: unknown }).code === code
+}
+
+/**
+ * Why `path` is not somewhere a repository could be, or `null` if it might be.
+ *
+ * Names the **deepest part of the path that does exist**, because that is the
+ * sentence that finds a typo. "There is no directory at
+ * /home/laithalenooz/projects/app" leaves someone staring at a path that looks
+ * right; "the deepest part that exists is /home" points straight at the
+ * username. Costs one `stat` per ancestor on a path that has already failed,
+ * which is a case nobody is in a hurry during.
+ */
+async function whatIsWrongWithThePath(path: string): Promise<string | null> {
+  try {
+    const found = await stat(path)
+    if (found.isDirectory()) return null
+    return `${path} is a file, not a directory, so it cannot be a repository. Register the directory that contains your project.`
+  } catch {
+    // Falls through to the walk below.
+  }
+
+  let deepest = path
+  for (;;) {
+    const parent = dirname(deepest)
+    if (parent === deepest) break
+    deepest = parent
+    try {
+      if ((await stat(deepest)).isDirectory()) break
+    } catch {
+      continue
+    }
+  }
+  const hint =
+    deepest === path || deepest === sep
+      ? ""
+      : ` The deepest part of that path which does exist is ${deepest} - check the spelling of what comes after it.`
+  return `there is no directory at ${path}.${hint}`
 }

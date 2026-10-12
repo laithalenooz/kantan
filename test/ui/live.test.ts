@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { act, foldRun, startRun, subscribeRun, taskKeyOf, type RunView } from "../../src/ui/live"
+import { act, fetchTree, foldRun, startRun, subscribeRun, taskKeyOf, type RunView } from "../../src/ui/live"
 import { sumProcessCost } from "../../src/ui/Sidebar"
 import type { RunRecord } from "../../src/runlog"
 
@@ -622,5 +622,55 @@ describe("the end of a stream", () => {
     source.emit(header())
     source.emit({ kind: "phase", phase: "implement", state: "running", sessionId: "s" })
     expect(source.closed).toBe(false)
+  })
+})
+
+describe("a server restart must not strand the open tab", () => {
+  test("a 401 re-opens the session and retries once", async () => {
+    /*
+     * The token is minted per launch, so restarting the server invalidates
+     * every tab holding the old cookie — and a developer tool gets restarted
+     * constantly. The refusal even tells the user to load 127.0.0.1:3100,
+     * which in dev is the wrong port.
+     */
+    const calls: string[] = []
+    let authed = false
+    const fetcher = (async (url: string | URL | Request) => {
+      const u = String(url)
+      calls.push(u)
+      if (u.endsWith("/session")) {
+        authed = true
+        return Response.json({ ok: true, dev: true, origin: "http://127.0.0.1:3100" })
+      }
+      if (!authed) return new Response(JSON.stringify({ error: "refused: no valid orch_token cookie" }), { status: 401 })
+      return Response.json({ ok: true, projects: [], runs: {}, warnings: [] })
+    }) as unknown as typeof fetch
+
+    const tree = await fetchTree(fetcher)
+    expect(tree.projects).toEqual([])
+    expect(calls).toEqual(["/api/projects", "/api/session", "/api/projects"])
+  })
+
+  test("it retries exactly once, so a real 401 does not loop", async () => {
+    let n = 0
+    const fetcher = (async (url: string | URL | Request) => {
+      const u = String(url)
+      if (u.endsWith("/session")) return Response.json({ ok: true })
+      n += 1
+      return new Response("refused", { status: 401 })
+    }) as unknown as typeof fetch
+    await expect(fetchTree(fetcher)).rejects.toThrow("401")
+    expect(n).toBe(2)
+  })
+
+  test("a non-401 failure is not retried, because a POST may already have acted", async () => {
+    let n = 0
+    const fetcher = (async (url: string | URL | Request) => {
+      if (String(url).endsWith("/session")) return Response.json({ ok: true })
+      n += 1
+      return new Response("refused: dirty", { status: 409 })
+    }) as unknown as typeof fetch
+    await expect(act("r-1", { kind: "approve" }, fetcher)).rejects.toThrow("409")
+    expect(n).toBe(1)
   })
 })
