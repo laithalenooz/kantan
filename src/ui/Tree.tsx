@@ -295,10 +295,20 @@ function usePrefersReducedMotion(): boolean {
  * the cascade picks, and the column renders either way. An unstyled `.ic`
  * would be an invisible icon, which is the expensive direction to be wrong in.
  *
- * `artboard.css` puts its rules in `@layer components`, which Tailwind orders
- * *before* `utilities`, so a Tailwind utility still wins where the two differ -
- * which is how `size-3` keeps a 12px icon 12px against `.ic`'s 16px default.
- * Presentation attributes on an element lose to both, as they should.
+ * `artboard.css` puts its rules in `@layer components`, and Tailwind declares
+ * `@layer theme, base, components, utilities`, so a Tailwind utility beats an
+ * artboard class **regardless of specificity**. That is how `size-3` keeps a
+ * 12px icon 12px against `.ic`'s 16px default, and presentation attributes on
+ * the element lose to both, as they should.
+ *
+ * It also means **the Tailwind hover twin is the half that works, and is not
+ * redundant**. Verified against the stylesheet Vite compiles: `.trow:hover`
+ * sets `background:#EFEFF2` in `components`, and a row's own `bg-transparent`
+ * - `bg-white` on the selected one - sits in `utilities` and wins, so `.trow`
+ * alone would never show a hover. `hover:bg-[#EFEFF2]` is what paints it, and
+ * `.ghost`/`hover:bg-[#F6F6F8]` on the `+` button are the same story. Delete
+ * either `hover:` utility and the hover silently stops; the artboard class
+ * carries the design's vocabulary, not the effect.
  */
 const SPIN = "spin kantan-spin"
 const PULSE = "pulse kantan-pulse"
