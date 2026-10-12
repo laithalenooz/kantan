@@ -626,40 +626,43 @@ export function Sidebar({
    * `text-[12px]` rather than `text-sm` and `text-xs`, which bundle a
    * line-height of their own that would override this. */
   return (
-    /* `sticky` + `h-dvh`, and the cards scroll inside rather than the column
-       growing.
-
-       The artboard pins "Stop run" with `margin-top:auto` in a column that is
-       exactly one viewport tall, so it sits at the bottom of the *screen*. Ported
-       into a page that scrolls, the same `margin-top:auto` put it at the bottom
-       of the whole document: reported from use as "the stop run button is all the
-       way down, takes too long to scroll to see it", on a run the human was
-       trying to stop. A control for stopping something has to be reachable while
-       it is still running.
-
-       `self-start` matters as much as `sticky`: the row is `items-stretch`, which
-       would stretch this to the row's height and leave `h-dvh` with nothing to
-       do. */
     <aside
       aria-label="Run details"
-      className="sticky top-0 flex h-dvh min-w-0 shrink-0 grow basis-[260px] self-start flex-col gap-3.5 border-l border-edge bg-panel px-4 pt-5 pb-7 leading-[normal]"
+      className="flex min-h-full min-w-0 shrink-0 grow basis-[260px] flex-col border-l border-edge bg-panel px-4 leading-[normal]"
     >
-      {/* `min-h-0` is what lets this shrink below its content and scroll:
-          without it a flex child's `auto` minimum is its content height, the
-          column grows past the viewport, and the footer below leaves the
-          screen again - which is the bug this whole shape exists to fix. */}
-      <div className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto">
-        {/* `bf d2`…`d5` on the four children below: the Blur Fade stagger, with
-            the artboard's own delays, so the rail arrives one card at a time.
-            The classes are `src/ui/artboard.css`'s, which `main.tsx` imports. */}
-        <Phases steps={ladder} reduce={reduce} />
-        <Cost spent={spent} ceilingUsd={ceilingUsd} steps={ladder} reduce={reduce} />
-        <Windows accounts={accounts} notice={notice} reduce={reduce} />
-        {showGrinding && grinding != null && (
-          <Grinding flag={grinding} spent={spent} reduce={reduce} onDismiss={dismiss} />
-        )}
+      {/* Everything the rail holds, in one box that follows the scroll.
+
+          The artboard pins "Stop run" with `margin-top:auto` in a column exactly
+          one viewport tall, so it sits at the bottom of the *screen*. The row
+          here is `items-stretch` and the centre column can be 8795px tall
+          (measured, on a gate with a long plan), so the same `margin-top:auto`
+          put Stop 8795px down the page - reported from use as "all the way down,
+          takes too long to scroll to see it", by someone trying to stop a run.
+
+          `max-h-dvh` and not `h-dvh`: forcing the full viewport height makes the
+          box start below the 56px app bar and end 56px below the fold, which put
+          Stop back off-screen at 1200px tall (measured: top 1223, viewport
+          1200). Capping instead lets the box be as tall as its own cards, which
+          is shorter than the viewport in every real state - and a band between
+          the bar and the columns then costs nothing, where a hard-coded offset
+          would have been wrong the moment one appeared. */}
+      <div className="sticky top-0 flex max-h-dvh flex-col gap-3.5 pt-5 pb-7">
+        {/* `min-h-0` is what lets this shrink below its content and scroll:
+            without it a flex child's `auto` minimum is its content height, so
+            the box would grow past `max-h-dvh` and take the footer with it. */}
+        <div className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto">
+          {/* `bf d2`…`d5` on the four children below: the Blur Fade stagger, with
+              the artboard's own delays, so the rail arrives one card at a time.
+              The classes are `src/ui/artboard.css`'s, which `main.tsx` imports. */}
+          <Phases steps={ladder} reduce={reduce} />
+          <Cost spent={spent} ceilingUsd={ceilingUsd} steps={ladder} reduce={reduce} />
+          <Windows accounts={accounts} notice={notice} reduce={reduce} />
+          {showGrinding && grinding != null && (
+            <Grinding flag={grinding} spent={spent} reduce={reduce} onDismiss={dismiss} />
+          )}
+        </div>
+        <Stop onStop={onStop} disabled={stopDisabled} />
       </div>
-      <Stop onStop={onStop} disabled={stopDisabled} />
     </aside>
   )
 }

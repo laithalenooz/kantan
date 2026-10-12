@@ -672,7 +672,17 @@ export function App() {
         className="relative flex min-w-0 flex-[999_1_560px] flex-col px-[clamp(16px,3vw,44px)] pt-6 pb-12"
       >
         <div className="dots pointer-events-none absolute inset-0" aria-hidden="true" />
-        <div className="relative flex min-w-0 flex-col">
+        {/* The artboard's own wrapper, verbatim: `position:relative;
+            max-width:920px; margin:0 auto` around the *whole* centre column
+            (`Main.dc.html:152`), not around one card inside it.
+
+            It was on the gate alone and without the centring, which is what
+            put a measured band of dead space down the right of the gate while
+            its siblings ran wider - reported from use. Two different content
+            widths in one column also means the breadcrumb, the gate and the
+            run record do not share a left edge, and that misalignment is what
+            reads as "off" before anyone can name a number. */}
+        <div className="relative mx-auto flex w-full min-w-0 max-w-[920px] flex-col">
         {project !== null && selected !== null && (
           <Breadcrumb
             project={project.path.split("/").at(-1) ?? project.path}
@@ -737,11 +747,7 @@ export function App() {
 
         {startPanel !== null && <StartPanel {...startPanel} />}
 
-        {gate !== null && (
-          <div className="w-full max-w-[920px]">
-            <Gate {...gate} />
-          </div>
-        )}
+        {gate !== null && <Gate {...gate} />}
 
         {/* Keyed by run, as Stream's rows are: the entrance is keyed on entry
             ids and a replayed log must reconcile rather than re-animate. */}
