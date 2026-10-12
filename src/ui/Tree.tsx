@@ -277,11 +277,51 @@ function usePrefersReducedMotion(): boolean {
 }
 
 /**
+ * The artboard's own class vocabulary, from `src/ui/artboard.css`.
+ *
+ * `Main.dc.html` is a reference implementation rather than a picture: its one
+ * `<style>` block hand-writes every effect it describes, and that block is now
+ * `artboard.css` under these names. Writing the names here is what makes this
+ * column share one stylesheet with the rest of the app instead of re-deriving
+ * the same keyframes per region.
+ *
+ * **Every artboard name is emitted beside the equivalent it replaces, never
+ * alone.** `main.tsx` imports `artboard.css` today, but `main.tsx` is not this
+ * file's to edit and this component is rendered by tests and specimens that do
+ * not load it at all - so `m` rides with `font-mono`, `ic` with the explicit
+ * stroke attributes, `trow`/`ghost` with their Tailwind `hover:` twin, and
+ * `spin`/`pulse` with `kantan-spin`/`kantan-pulse` and the keyframes below.
+ * Each pair declares the same thing, so the result is identical whichever half
+ * the cascade picks, and the column renders either way. An unstyled `.ic`
+ * would be an invisible icon, which is the expensive direction to be wrong in.
+ *
+ * `artboard.css` puts its rules in `@layer components`, which Tailwind orders
+ * *before* `utilities`, so a Tailwind utility still wins where the two differ -
+ * which is how `size-3` keeps a 12px icon 12px against `.ic`'s 16px default.
+ * Presentation attributes on an element lose to both, as they should.
+ */
+const SPIN = "spin kantan-spin"
+const PULSE = "pulse kantan-pulse"
+
+/** The entrance fade, with the artboard's stagger. `.d1`-`.d9` only hold on an
+ * element that already carries `.bf`, because the `animation` shorthand resets
+ * `animation-delay` and `artboard.css` declares `.bf` first for that reason. */
+function blurFade(index: number): string {
+  return `bf d${Math.min(index + 1, 9)}`
+}
+
+/**
  * The two keyframes the design names, which `tokens.css` does not carry.
  *
  * Rendered once by `Tree`, so a `StateGlyph` used outside a tree needs these
  * two keyframes in scope to animate. The reduced-motion guard is repeated here
  * rather than left to `tokens.css`, so the component is correct on its own.
+ *
+ * It animates the `kantan-` half of each pair above. The artboard half is
+ * guarded instead by `artboard.css`'s own `.kr` rule and by `tokens.css`'s
+ * blanket one - but neither is what this column relies on: `StateGlyph` reads
+ * the preference in JS and emits *neither* class, which is the only guard
+ * `bun test` can see, since happy-dom does not evaluate the media feature.
  */
 const MOTION_CSS = `
 @keyframes kantan-spin{to{transform:rotate(360deg)}}
@@ -334,7 +374,7 @@ export function StateGlyph({
           aria-hidden
           data-motion={reduce ? "static" : "animated"}
           viewBox="0 0 24 24"
-          className={`${reduce ? "" : "kantan-spin "}${ICON}`}
+          className={`${reduce ? "" : `${SPIN} `}${ICON}`}
         >
           <circle cx="12" cy="12" r="9" fill="none" stroke="#DCDCF6" strokeWidth="3" />
           <path
@@ -351,7 +391,7 @@ export function StateGlyph({
         <span
           aria-hidden
           data-motion={reduce ? "static" : "animated"}
-          className={`${reduce ? "" : "kantan-pulse "}size-[14px] shrink-0 rounded-full bg-attention`}
+          className={`${reduce ? "" : `${PULSE} `}size-[14px] shrink-0 rounded-full bg-attention`}
         />
       )
     case "passed":
@@ -403,7 +443,7 @@ export function StateGlyph({
         <svg
           aria-hidden
           viewBox="0 0 24 24"
-          className={`text-[#0E7C86] ${ICON}`}
+          className={`ic text-[#0E7C86] ${ICON}`}
           fill="none"
           stroke="currentColor"
           strokeWidth="2"
@@ -421,7 +461,7 @@ export function StateGlyph({
         <svg
           aria-hidden
           viewBox="0 0 24 24"
-          className={`text-[#64748B] ${ICON}`}
+          className={`ic text-[#64748B] ${ICON}`}
           fill="none"
           stroke="currentColor"
           strokeWidth="2"
@@ -446,10 +486,14 @@ export function StateGlyph({
           <svg
             aria-hidden
             viewBox="0 0 24 24"
-            className="size-[11px] shrink-0"
+            className="ic size-[11px] shrink-0"
             fill="none"
             stroke="currentColor"
             strokeWidth="2.5"
+            /* Inline, because `.ic` sets `stroke-width:2` and any CSS beats a
+               presentation attribute. The artboard writes this one inline for
+               the same reason: the loop is the only 2.5 in the set. */
+            style={{ strokeWidth: 2.5 }}
             strokeLinecap="round"
             strokeLinejoin="round"
           >
@@ -490,7 +534,7 @@ export function StateLabel({
     exitCode === undefined ? null : (
       <>
         {" · "}
-        <span className="font-mono">exit {exitCode}</span>
+        <span className="m font-mono">exit {exitCode}</span>
       </>
     )
   switch (state) {
@@ -653,6 +697,21 @@ const LINE = {
  */
 const ARBITRARY = "min-w-0 [overflow-wrap:anywhere]"
 
+/**
+ * The artboard's baseline leading, which is the browser's `normal`.
+ *
+ * Tailwind's preflight sets `html{line-height:1.5}`, and the artboard sets
+ * nothing - so every line in this column was 1.5 where the design wanted
+ * `normal` (about 1.3). Measured against `Main.dc.html`: the PROJECTS eyebrow
+ * stood 17.3px tall against the artboard's 15.0, and the repo name 20px
+ * against 18.
+ *
+ * Declared once on the column, so the few places that *do* name a leading -
+ * the task row's 1.35 and the empty state's 1.55, both from the artboard -
+ * still win on specificity order inside it.
+ */
+const LEADING = "leading-[normal]"
+
 export interface TreeProps {
   projects: TreeProject[]
   /** The task the rest of the screen is about. Compared on the whole triple. */
@@ -728,6 +787,7 @@ export function Tree({
   const eyebrow = "text-[11.5px] font-semibold uppercase tracking-[.07em] text-muted-400"
   const ids = useId()
   const column = useRef<HTMLElement | null>(null)
+  const reduce = usePrefersReducedMotion()
 
   /**
    * The tree's single tab stop: the task the rest of the screen is about, or
@@ -859,7 +919,7 @@ export function Tree({
     return (
       <aside
         aria-label="Projects and tasks"
-        className="box-border basis-72 grow border-r border-edge bg-panel px-[18px] pt-4 pb-7"
+        className={`box-border basis-72 grow border-r border-edge bg-panel px-[18px] pt-4 pb-7 ${LEADING}`}
       >
         <span className={`block ${eyebrow}`}>Projects</span>
         <p className="mt-[14px] rounded-[14px] border-[1.5px] border-dashed border-[#D9DAE0] px-4 py-[18px] text-[13.5px] leading-[1.55] text-muted-500">
@@ -875,7 +935,7 @@ export function Tree({
       ref={column}
       onKeyDown={onColumnKeyDown}
       aria-label="Projects and tasks"
-      className="box-border basis-72 grow border-r border-edge bg-panel px-[10px] pt-4 pb-7"
+      className={`box-border basis-72 grow border-r border-edge bg-panel px-[10px] pt-4 pb-7 ${LEADING}`}
     >
       {/* The two keyframes the design names and `tokens.css` does not carry.
           Rendered here, once, because this file may not edit the token layer. */}
@@ -890,9 +950,9 @@ export function Tree({
             type="button"
             aria-label="Add a repository"
             onClick={onAddProject}
-            className="grid size-[30px] place-items-center rounded-[9px] border border-edge-soft bg-white text-muted-900 hover:bg-[#F6F6F8] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo"
+            className="ghost grid size-[30px] place-items-center rounded-[9px] border border-edge-soft bg-white text-muted-900 hover:bg-[#F6F6F8] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo"
           >
-            <svg aria-hidden viewBox="0 0 24 24" className="size-[15px]" {...LINE}>
+            <svg aria-hidden viewBox="0 0 24 24" className="ic size-[15px]" {...LINE}>
               <path d="M5 12h14" />
               <path d="M12 5v14" />
             </svg>
@@ -909,6 +969,11 @@ export function Tree({
             key={project.path}
             project={project}
             first={index === 0}
+            order={index}
+            /* The entrance fade is the one motion in this column that is not a
+               glyph, so it is read here once and handed down rather than
+               subscribed to per block. */
+            reduce={reduce}
             idPrefix={`${ids}-p${index}`}
             selected={selected}
             stop={stop}
@@ -923,6 +988,8 @@ export function Tree({
 function ProjectBlock({
   project,
   first,
+  order,
+  reduce,
   idPrefix,
   selected,
   stop,
@@ -930,6 +997,10 @@ function ProjectBlock({
 }: {
   project: TreeProject
   first: boolean
+  /** Position in the column, which is the artboard's `.d1`-`.d9` stagger step. */
+  order: number
+  /** Does this person want less movement? Read once by `Tree`. */
+  reduce: boolean
   idPrefix: string
   selected?: TaskId | null
   stop: TaskId | null
@@ -937,14 +1008,18 @@ function ProjectBlock({
 }): ReactElement {
   const repoId = `${idPrefix}-repo`
   return (
-    <li className={first ? undefined : "mt-[6px] border-t border-[#ECECEF]"}>
-      <div className="flex items-start gap-2 px-[10px] pt-[14px] pb-[2px]">
-        <svg aria-hidden viewBox="0 0 24 24" className="mt-[2px] size-4 shrink-0 text-muted-400" {...LINE}>
+    <li
+      className={`${reduce ? "" : `${blurFade(order)} `}${first ? "" : "mt-[6px] border-t border-[#ECECEF]"}`.trim()}
+    >
+      <div className="flex items-center gap-2 px-[10px] pt-[14px] pb-[2px]">
+        <svg aria-hidden viewBox="0 0 24 24" className="ic size-4 shrink-0 text-muted-400" {...LINE}>
           <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
         </svg>
         {/* The repo's own directory name. `title` carries the whole path, which
-            is longer than this column and is not what the design shows. */}
-        <span id={repoId} data-repo title={project.path} className={`${ARBITRARY} text-sm font-[620]`}>
+            is longer than this column and is not what the design shows.
+            `text-[14px]` rather than `text-sm`, because the Tailwind step
+            carries a 20px leading where the artboard's 14px line box is 18. */}
+        <span id={repoId} data-repo title={project.path} className={`${ARBITRARY} text-[14px] font-[620]`}>
           {repoName(project.path)}
         </span>
         <AccountChip account={project.account} />
@@ -952,7 +1027,7 @@ function ProjectBlock({
 
       <div
         data-test-cmd
-        className={`${ARBITRARY} pr-[10px] pb-[6px] pl-[34px] font-mono text-xs text-muted-400`}
+        className={`${ARBITRARY} m pr-[10px] pb-[6px] pl-[34px] font-mono text-xs text-muted-400`}
       >
         $ {project.testCmd}
       </div>
@@ -963,9 +1038,9 @@ function ProjectBlock({
           return (
             <li key={feature.path}>
               <div
-                className={`flex items-start gap-[6px] ${index === 0 ? "pt-[6px]" : "pt-[10px]"} pr-[10px] pb-[4px] pl-[14px] font-mono text-xs text-muted-500`}
+                className={`m flex items-center gap-[6px] ${index === 0 ? "pt-[6px]" : "pt-[10px]"} pr-[10px] pb-[4px] pl-[14px] font-mono text-xs text-muted-500`}
               >
-                <svg aria-hidden viewBox="0 0 24 24" className="mt-[3px] size-[13px] shrink-0" {...LINE}>
+                <svg aria-hidden viewBox="0 0 24 24" className="ic size-[13px] shrink-0" {...LINE}>
                   <path d="m6 9 6 6 6-6" />
                 </svg>
                 <span id={pathId} data-feature-path className={ARBITRARY}>
@@ -1026,7 +1101,7 @@ function AccountChip({ account }: { account: Account }): ReactElement {
           : `runs as ${label}`
       }
     >
-      <svg aria-hidden viewBox="0 0 24 24" className="size-3 shrink-0" {...LINE}>
+      <svg aria-hidden viewBox="0 0 24 24" className="ic size-3 shrink-0" {...LINE}>
         {account.kind === "personal" ? (
           <>
             <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
@@ -1077,11 +1152,32 @@ function TaskRow({
         ? "shadow-[0_0_0_1px_#CFD0F7,0_4px_14px_-6px_rgba(91,91,214,.4)]"
         : "shadow-[0_0_0_1px_#E2E2E7,0_4px_14px_-6px_rgba(17,18,22,.18)]"
 
+  /**
+   * `items-center`, which is a guess about input and so is enumerated.
+   *
+   * The dimension is **how many lines the task text wraps to**, which CSS
+   * cannot read and the artboard answers by hand: `Main.dc.html` sets
+   * `align-items:center` on eight of its nine rows and `align-items:start`
+   * (with 10px padding and a `margin-top:1px` on each cell) only on the one
+   * row whose text runs to six lines.
+   *
+   * | Lines | Artboard | `center` | `start` |
+   * |---|---|---|---|
+   * | 1 (six of nine rows) | centre | exact | glyph, ref and label sit ~5px high in a 44px row |
+   * | 2 (two rows) | centre | exact | ~9px high |
+   * | 6+ (one row) | start | glyph floats to the middle of the block | exact |
+   *
+   * So `center` is wrong on the rare row and right on the common one, and the
+   * cost is a glyph beside the middle of a paragraph rather than its first
+   * line - legible either way. `start` is wrong on nearly every row, and its
+   * cost is the whole column reading as top-heavy, which is what it did
+   * before this change.
+   */
   const shape =
-    "grid w-full min-h-[44px] grid-cols-[18px_22px_minmax(0,1fr)_auto] items-start gap-2 rounded-[10px] py-2 pr-[10px] pl-[14px] text-left text-[13.5px] leading-[1.35]"
+    "grid w-full min-h-[44px] grid-cols-[18px_22px_minmax(0,1fr)_auto] items-center gap-2 rounded-[10px] py-2 pr-[10px] pl-[14px] text-left text-[13.5px] leading-[1.35]"
   const look = isSelected
     ? `bg-white font-[560] text-ink ${ring}`
-    : "bg-transparent text-ink-deep hover:bg-[#EFEFF2]"
+    : "trow bg-transparent text-ink-deep hover:bg-[#EFEFF2]"
 
   const body = (
     <>
@@ -1089,7 +1185,7 @@ function TaskRow({
         <StateGlyph state={mark} />
       </span>
       <span
-        className={`mt-[1px] font-mono text-[11.5px] ${isSelected ? "font-normal" : ""} text-muted-400`}
+        className={`m font-mono text-[11.5px] ${isSelected ? "font-normal" : ""} text-muted-400`}
       >
         {task.ref}
       </span>
@@ -1107,7 +1203,7 @@ function TaskRow({
           </span>
         ) : null}
       </span>
-      <span data-state-label className="mt-[1px] shrink-0 justify-self-end">
+      <span data-state-label className="shrink-0 justify-self-end">
         <StateLabel state={state} exitCode={task.run?.exitCode} count={task.run?.testAttempts} />
         {task.ref === null ? (
           <span className="text-[11.5px] text-muted-400" title="A run is addressed by its ref. Add one, like T4, to run this line.">

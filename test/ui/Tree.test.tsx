@@ -295,18 +295,28 @@ describe("the nine state glyphs", () => {
     }
   })
 
+  /**
+   * Both halves of each motion class are asserted, because the component emits
+   * both: `spin`/`pulse` are `src/ui/artboard.css`'s own names, and
+   * `kantan-spin`/`kantan-pulse` are the keyframes `Tree` renders itself. They
+   * declare the same animation, so the glyph moves whichever stylesheet the
+   * page ends up with - and listing all four here is what keeps a later edit
+   * from quietly dropping the half that is load-bearing that day.
+   */
+  const MOTION_CLASSES = new Set(["spin", "pulse", "kantan-spin", "kantan-pulse"])
+
   test("only needs-you pulses, and only running spins", () => {
     const animated = new Map<TaskState, string[]>()
     for (const state of TASK_STATES) {
       const host = render(<StateGlyph state={state} count={6} />)
       const classes = [...host.querySelectorAll("*"), only(host)]
         .flatMap((el) => (el.getAttribute("class") ?? "").split(/\s+/))
-        .filter((c) => c === "kantan-pulse" || c === "kantan-spin")
-      if (classes.length > 0) animated.set(state, [...new Set(classes)])
+        .filter((c) => MOTION_CLASSES.has(c))
+      if (classes.length > 0) animated.set(state, [...new Set(classes)].sort())
     }
     expect(Object.fromEntries(animated)).toEqual({
-      running: ["kantan-spin"],
-      "needs-you": ["kantan-pulse"],
+      running: ["kantan-spin", "spin"],
+      "needs-you": ["kantan-pulse", "pulse"],
     })
   })
 
@@ -864,6 +874,85 @@ describe("the states, in a row", () => {
     expect(pulsing[0] && textOf(pulsing[0])).toContain("Needs you")
     expect(spinning.map((r) => textOf(r).slice(0, 2))).toEqual(["T1"])
     expect(spinning[0] && textOf(spinning[0])).toContain("×6")
+  })
+
+  /**
+   * The artboard is a *reference implementation*, not a picture:
+   * `docs/design/Main.dc.html` is plain HTML whose one `<style>` block
+   * hand-writes every effect, and `src/ui/artboard.css` is that block
+   * extracted under the same names. So "does the column match the design" has
+   * a literal answer - does it carry the design's own classes - and this is it.
+   *
+   * It asserts *presence beside* the Tailwind equivalent, never instead of it.
+   * `main.tsx` imports `artboard.css` today, but `main.tsx` is not this
+   * component's to edit, and an `.ic` with no stylesheet behind it is an
+   * invisible icon. Each pair declares the same thing, so either half renders
+   * the column; the pair is what makes that true in both worlds.
+   */
+  test("the column carries the artboard's own class names", () => {
+    const host = render(<Tree projects={projects()} onAddProject={() => {}} />)
+    const classesOf = (el: Element | null): string[] =>
+      (el?.getAttribute("class") ?? "").split(/\s+/).filter(Boolean)
+
+    // `.m` is Geist Mono, and rides with Tailwind's `font-mono`.
+    for (const mono of [...host.querySelectorAll("[data-test-cmd]")]) {
+      expect(classesOf(mono)).toContain("m")
+      expect(classesOf(mono)).toContain("font-mono")
+    }
+
+    // `.ic` is the 16px line-icon preset: the explicit stroke attributes stay
+    // beneath it, so an un-imported artboard.css still draws the icon.
+    const icons = [...host.querySelectorAll("svg.ic")]
+    expect(icons.length).toBeGreaterThan(4)
+    for (const icon of icons) {
+      expect(icon.getAttribute("fill")).toBe("none")
+      expect(icon.getAttribute("stroke")).toBe("currentColor")
+    }
+
+    // `.trow` is the artboard's tree-row hover; the selected row has neither,
+    // because the artboard gives the current row no hover at all.
+    const unselected = rows(host).filter((r) => r.getAttribute("aria-current") !== "true")
+    expect(unselected.length).toBeGreaterThan(0)
+    for (const row of unselected) expect(classesOf(row)).toContain("trow")
+
+    // `.ghost` is the artboard's ghost button, which is what `+` is.
+    expect(classesOf(host.querySelector('button[aria-label="Add a repository"]'))).toContain("ghost")
+
+    // `.bf` + the `.d1`-`.d9` ladder: one step per project, in column order.
+    expect([...host.querySelectorAll("li.bf")].map((el) => classesOf(el).find((c) => /^d\d+$/.test(c)))).toEqual([
+      "d1",
+      "d2",
+      "d3",
+    ])
+  })
+
+  /**
+   * The row's one guess about input, as a matrix rather than a sample.
+   *
+   * The dimension is how many lines the task text wraps to, which CSS cannot
+   * read. `Main.dc.html` answers it by hand - `align-items:center` on eight of
+   * its nine rows, `align-items:start` on the single six-line one - so a
+   * component that renders arbitrary backlog text has to pick one for all.
+   * `center` is the artboard's own answer for every row whose text fits in one
+   * or two lines, which is every row in this fixture but one.
+   */
+  test("rows centre their glyph, ref and label, as eight of the artboard's nine do", () => {
+    const host = render(<Tree projects={projects()} />)
+    const all = rows(host)
+    expect(all.length).toBe(9)
+    for (const row of all) {
+      const classes = row.getAttribute("class") ?? ""
+      expect(classes).toContain("items-center")
+      expect(classes).not.toContain("items-start")
+      // The grid itself: the `minmax(0,1fr)` text track is what lets a long
+      // task wrap instead of forcing the row wider than the column.
+      expect(classes).toContain("grid-cols-[18px_22px_minmax(0,1fr)_auto]")
+      expect(classes).toContain("min-h-[44px]")
+    }
+    // No cell may re-introduce the top nudge the start-aligned variant needed.
+    for (const cell of host.querySelectorAll("[data-glyph], [data-state-label]")) {
+      expect(cell.getAttribute("class") ?? "").not.toContain("mt-[1px]")
+    }
   })
 
   test("a task whose branch name could not be derived says so", () => {
@@ -1511,7 +1600,10 @@ describe("reduced motion holds the glyphs still", () => {
     const moving = [...host.querySelectorAll("[data-motion]")]
     expect(moving.length).toBeGreaterThan(0)
     expect(moving.map((el) => el.getAttribute("data-motion"))).toEqual(moving.map(() => "static"))
-    expect(host.querySelectorAll(".kantan-pulse, .kantan-spin").length).toBe(0)
+    expect(host.querySelectorAll(".pulse, .spin, .kantan-pulse, .kantan-spin").length).toBe(0)
+    /* The entrance fade is motion too, and `artboard.css` guards it only under
+     * a `.kr` root this component does not own. So `Tree` drops `.bf` itself. */
+    expect(host.querySelectorAll(".bf").length).toBe(0)
   })
 
   test("and without the preference they really do move", async () => {
@@ -1520,8 +1612,9 @@ describe("reduced motion holds the glyphs still", () => {
     const moving = [...host.querySelectorAll("[data-motion]")]
     expect(moving.length).toBeGreaterThan(0)
     expect(moving.map((el) => el.getAttribute("data-motion"))).toEqual(moving.map(() => "animated"))
-    expect(host.querySelectorAll(".kantan-pulse").length).toBe(1)
-    expect(host.querySelectorAll(".kantan-spin").length).toBe(1)
+    expect(host.querySelectorAll(".pulse.kantan-pulse").length).toBe(1)
+    expect(host.querySelectorAll(".spin.kantan-spin").length).toBe(1)
+    expect(host.querySelectorAll(".bf").length).toBe(3)
   })
 
   /*
@@ -1560,15 +1653,16 @@ describe("reduced motion holds the glyphs still", () => {
 
     try {
       const host = await mount(<Tree projects={projects()} />)
-      expect(host.querySelectorAll(".kantan-spin").length).toBe(1)
+      expect(host.querySelectorAll(".spin.kantan-spin").length).toBe(1)
       expect(listeners.size).toBeGreaterThan(0)
 
       await act(async () => {
         matches = true
         for (const cb of [...listeners]) cb()
       })
-      expect(host.querySelectorAll(".kantan-spin").length).toBe(0)
-      expect(host.querySelectorAll(".kantan-pulse").length).toBe(0)
+      expect(host.querySelectorAll(".spin, .kantan-spin").length).toBe(0)
+      expect(host.querySelectorAll(".pulse, .kantan-pulse").length).toBe(0)
+      expect(host.querySelectorAll(".bf").length).toBe(0)
     } finally {
       Object.defineProperty(window, "matchMedia", {
         configurable: true,
