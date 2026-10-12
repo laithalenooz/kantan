@@ -154,6 +154,40 @@ google-chrome --headless --disable-gpu --no-sandbox --window-size=1440,900 \
 
 A passing suite says the nodes exist. It does not say they are laid out, visible, or legible.
 
+## A duplicate React key took the whole machine down, twice
+
+`bun test test/ui/ProjectPanel.test.tsx` killed two editor sessions before anyone looked at
+*why*. It was not load, and not a leak: 16 GB with 12 GB free at idle, no OOM line in `dmesg`.
+
+A single `act()` render of a radio list holding two options with the **same React key** never
+returns. Measured: React's "Encountered two children with the same key" warning, then 90 seconds
+of silence until `timeout` killed it, with the process growing until a 3 GB cgroup cap killed it
+first. Uncapped, that is the WSL2 VM, and the VM takes the agent session with it.
+
+The key was `option.kind` on a list of accounts, and two accounts can read `work` while billing to
+different folders — which is the entire point of `configDir`. So the collision is not exotic; it
+is what the feature produces.
+
+Two rules follow:
+
+**Run an unfamiliar suite inside a cap.** A runaway test cannot then take anything else with it,
+and the cgroup's kill is itself the diagnosis:
+
+```bash
+systemd-run --user --scope -q -p MemoryMax=3G -p MemorySwapMax=0 --collect \
+  timeout -s KILL 240 bun test <file>
+```
+
+**A React `key` is an identity claim, so it needs the same enumeration a skipping guard does.**
+`optionId` in `src/ui/ProjectPanel.tsx` keys on `(kind, configDir)` and says why at length.
+`docs/probes/account-key-collision.ts` reruns the hang with no kantan code involved.
+
+Corollary, and the reason this cost two sessions rather than one: *the symptom appeared in the
+tool that ran the tests, not in the tests*. A session dying mid-command looks like an environment
+problem, and every instinct says to go read `free -h` and `.wslconfig`. Both were fine. Bound the
+suspect process first — the cap turns "my machine died" into "this test allocated without bound",
+which is a fact about the code.
+
 ## Scratch directories must be keyed on the pid
 
 Several agents run `bun run check` at once, so a test helper that does
