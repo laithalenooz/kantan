@@ -993,12 +993,25 @@ describe("`a` approves, and the one letter that does is the one that must not fi
   })
 })
 
-describe("a keystroke aimed at a task the screen is no longer about", () => {
+describe("a keystroke raised on a task row never approves", () => {
   /*
-   * `j` moves focus without selecting, so focus can sit on one task while the
-   * gate still shows another's plan. Approving then would implement a plan the
-   * human has stopped looking at. Both approval keystrokes refuse on a row that
-   * is not `aria-current`, which costs one Enter.
+   * `j` moves focus without selecting, so focus can sit on a task while the
+   * gate shows another one's plan. Approving then implements a plan the human
+   * has stopped looking at.
+   *
+   * The rule is **any** task row, not merely one that is not `aria-current`,
+   * and the stricter form is the point. `aria-current` only says which row the
+   * tree believes is selected; it says nothing about whether the gate beside it
+   * has caught up. Press Enter on T3 and T3 becomes current immediately, while
+   * the card still holds T2's plan until a fetch resolves - so the narrower
+   * rule would approve T2 from a row marked T3, and would be correct only for
+   * as long as the shell happened to re-render in time. A guard that depends on
+   * another file's timing is not a guard.
+   *
+   * What it costs: someone who walks the tree with `j` and presses `a` without
+   * leaving the row gets nothing, and has to Tab or click. One keystroke,
+   * against an implementation run on the wrong plan. The Approve button is on
+   * screen the whole time with the key printed on it.
    *
    * The real tree is rendered rather than a stand-in row, because the thing
    * being tested is that the two columns agree on the contract.
@@ -1040,29 +1053,57 @@ describe("a keystroke aimed at a task the screen is no longer about", () => {
     return { ...mounted, current, other }
   }
 
-  test("`a` on another task's row refuses; on the current one it approves", async () => {
+  test("`a` refuses on every row, the selected one included", async () => {
     const calls: string[] = []
-    const { current, other } = await screen(() => calls.push("approve"))
+    const { host, current, other } = await screen(() => calls.push("approve"))
 
-    await act(async () => {
-      other.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true, cancelable: true }))
-    })
-    expect(calls).toEqual([])
+    for (const row of [other, current]) {
+      await act(async () => {
+        row.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true, cancelable: true }))
+      })
+      expect(calls).toEqual([])
+    }
 
+    /* The control, in the same render: the shortcut does work, and the rule
+     * above is about where the keystroke came from. */
     await act(async () => {
-      current.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true, cancelable: true }))
+      host.ownerDocument.body.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "a", bubbles: true, cancelable: true }),
+      )
     })
     expect(calls).toEqual(["approve"])
   })
 
   test("the chord refuses there too, since the hazard is the same", async () => {
     const calls: string[] = []
-    const { current, other } = await screen(() => calls.push("approve"))
+    const { host, current, other } = await screen(() => calls.push("approve"))
 
     await pressSubmitChord(other)
     expect(calls).toEqual([])
-
     await pressSubmitChord(current)
+    expect(calls).toEqual([])
+
+    await pressSubmitChord(host.ownerDocument.body)
+    expect(calls).toEqual(["approve"])
+  })
+
+  test("a row that is not a task is not a task row", async () => {
+    /* The rule keys on the row, not on the tree: the column's other controls
+     * carry no task identity, so nothing about them is ambiguous. */
+    const calls: string[] = []
+    const { host } = await render(
+      <>
+        <Tree projects={PROJECTS} selected={SELECTED} onSelect={() => {}} onAddProject={() => {}} />
+        <Gate {...gateProps({ onApprove: () => calls.push("approve") })} />
+      </>,
+    )
+    const add = [...host.querySelectorAll<HTMLElement>("button")].find(
+      (b) => (b.getAttribute("aria-label") ?? "").toLowerCase().includes("repositor"),
+    )
+    expect(add).toBeDefined()
+    await act(async () => {
+      add?.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true, cancelable: true }))
+    })
     expect(calls).toEqual(["approve"])
   })
 })

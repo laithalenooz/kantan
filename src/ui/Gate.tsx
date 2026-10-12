@@ -73,7 +73,7 @@ import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore }
  * act would drift from this one - and the direction it drifted in would be the
  * expensive one. The dependency is one-way: the tree knows nothing about the
  * gate. */
-import { bareKeystroke, isTypingSurface, pointsAtAnotherTask } from "./Tree.tsx"
+import { bareKeystroke, isTypingSurface, pointsAtATask } from "./Tree.tsx"
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react"
 import Markdown from "react-markdown"
 import type { Components } from "react-markdown"
@@ -1176,9 +1176,11 @@ export function Gate(props: GateProps) {
        * clearing the box. Refusing costs a click, approving costs a run. */
       if (reply.trim() !== "") return
       /* `j` moves focus through the tree without selecting, so focus can sit on
-       * a task the gate is not showing. Approving from there would approve a
-       * plan the human has stopped looking at; Enter first costs one keystroke. */
-      if (pointsAtAnotherTask(target)) return
+       * a task the gate is not showing - and `aria-current` cannot tell us
+       * whether this card has caught up with the selection, only what the tree
+       * thinks. So no keystroke raised on a task row approves, selected or not.
+       * It costs a Tab; the alternative costs a run on the wrong plan. */
+      if (pointsAtATask(target)) return
       if (chord && isTypingSurface(target)) return
       event.preventDefault()
       approve()

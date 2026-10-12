@@ -665,22 +665,33 @@ export function isTypingSurface(target: EventTarget | null): boolean {
 }
 
 /**
- * Does this keystroke come from a task other than the one the screen is about?
+ * Is this keystroke raised on a task row?
  *
  * The hazard it exists for: `j` moves focus without selecting, so focus can sit
  * on T3 while the gate still shows T2's plan. A bare `a` then would approve T2,
- * a plan the human has stopped looking at. So an approval keystroke raised on a
- * row that is not `aria-current` is refused — the human presses Enter first,
- * which costs one keystroke, against a wrong implementation run.
+ * a plan the human has stopped looking at.
  *
- * This is the one DOM-level contract between the tree and the gate: a task row
- * is `[data-task-row]`, and exactly one of them carries `aria-current="true"`.
+ * It asks about **any** row rather than only one that is not `aria-current`,
+ * and the stricter question is the point. `aria-current` says which row the
+ * tree believes is selected. It says nothing about whether the gate beside it
+ * has caught up — press Enter on T3 and T3 is current at once, while the card
+ * holds T2's plan until a fetch resolves. The narrower rule would approve T2
+ * from a row marked T3, and would be right only for as long as the shell
+ * happened to re-render in time. **A guard that depends on another file's
+ * timing is not a guard**, so this one does not.
+ *
+ * The costs are not symmetric. Refusing here costs one Tab, or one click on a
+ * button that is on screen with its key printed on it. Approving here costs an
+ * implementation run on a plan nobody agreed to, plus the branch and the review
+ * it drags behind it.
+ *
+ * This is the one DOM-level contract between the tree and the gate, and it is
+ * now a single attribute: a task row is `[data-task-row]`. Nothing else in the
+ * column carries a task identity, so nothing else is ambiguous.
  */
-export function pointsAtAnotherTask(target: EventTarget | null): boolean {
+export function pointsAtATask(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false
-  const row = target.closest("[data-task-row]")
-  if (row === null) return false
-  return row.getAttribute("aria-current") !== "true"
+  return target.closest("[data-task-row]") !== null
 }
 
 // --- The column -------------------------------------------------------------

@@ -213,6 +213,27 @@ function setPrefersReduce(value: boolean): void {
 }
 
 /**
+ * Set the preference **without telling anyone**, which is the state the trap
+ * actually occurs in.
+ *
+ * Motion's answer is a module-level singleton that it keeps current from a
+ * `change` listener, so `setPrefersReduce` above also repairs Motion. That
+ * makes the component's own live read redundant *in this harness*, and a test
+ * that only ever uses it cannot tell whether the component reads the query or
+ * merely asks Motion: deleting `|| live` from `usePrefersReducedMotion` leaves
+ * every such test passing when this file runs alone, and is caught only in a
+ * full run, where a sibling file initialised Motion first (measured).
+ *
+ * Changing the value silently reproduces that sibling: Motion stays on its
+ * stale answer, and only a component that reads `matches` for itself on mount
+ * can be right. So the assertion is about the component, not about Motion, and
+ * it no longer depends on which files ran before it.
+ */
+function setPrefersReduceBehindMotionsBack(value: boolean): void {
+  prefersReduce = value
+}
+
+/**
  * Whether this file is the one that put the document there.
  *
  * `bun test` runs every file in one process, `register()` throws on a second
@@ -1162,7 +1183,16 @@ describe("only new rows animate", () => {
   })
 
   test("reduced motion stops the fade, which MotionConfig alone does not", async () => {
-    setPrefersReduce(true)
+    /*
+     * Motion is left holding a stale `false` on purpose: the preference is set
+     * without firing `change`, so its cached singleton cannot be the thing that
+     * gets this right. Only the component's own read of the media query can.
+     * Without that first line this test passes with `|| live` deleted whenever
+     * the file runs alone.
+     */
+    setPrefersReduce(false)
+    await mount(<api.motion.div data-warm-motion animate={{ opacity: 1 }} />)
+    setPrefersReduceBehindMotionsBack(true)
 
     const rows = syntheticLog(20)
     const mounted = await mount(
