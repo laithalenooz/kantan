@@ -988,6 +988,31 @@ reading as plain text, `Passed · exit 0`. An agent reading Main alone concluded
 right by luck: Main does not draw the chip at all. When an artboard is silent,
 check the others before reading the silence as a decision.
 
+### The SSE client MUST honour `eof`, or every finished run is a reconnect loop
+
+Reported by the user as "the page keeps refreshing". Measured: **9 requests to
+`/api/runs/:id/stream` in 25 seconds**, one every ~3s, for a run that had
+already finished.
+
+Two correct behaviours that compose into a loop:
+
+- The **server** closes a stream once it has replayed the `end` record, rather
+  than holding a poller and a file descriptor open for the life of the process.
+  That is deliberate and right: browsing history opens finished runs, so the
+  alternative accumulates silently in ordinary use.
+- **`EventSource` reconnects on any closed connection.** Also right: a dropped
+  connection is exactly what its retry is for.
+
+So the server sends an `eof` frame *before* closing, and says why in its own
+comment: *"a stream that merely drops is indistinguishable from a dropped
+connection, which EventSource is right to retry."* The first version of
+`subscribeRun` listened only for `record` and ignored it.
+
+The distinction is the whole point, so do not "simplify" it: **close on the
+frame, never on the disconnect.** A read that fails mid-stream deliberately
+sends no `eof`, and that case must keep retrying or a live run is stranded.
+Both directions are tested, and the fix is mutation-checked.
+
 ## Settled: decisions with non-obvious reasons
 
 | Decision | Why it is not the obvious thing |

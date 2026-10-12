@@ -625,7 +625,7 @@ async function text(res: Response): Promise<string> {
 /** What an `EventSource` has to provide. Narrowed so a test can supply one. */
 export interface RecordSource {
   addEventListener(type: "open" | "error", listener: () => void): void
-  addEventListener(type: "message" | "record", listener: (event: { data: string }) => void): void
+  addEventListener(type: "message" | "record" | "eof", listener: (event: { data: string }) => void): void
   close(): void
 }
 
@@ -655,6 +655,27 @@ export function subscribeRun(
 
   source.addEventListener("open", () => {
     records = []
+  })
+
+  /**
+   * The server saying the run is over, so stop reconnecting.
+   *
+   * Without this the UI hammers the endpoint forever on any finished run.
+   * `EventSource` reconnects on **any** closed connection, and the server
+   * deliberately closes a stream once it has replayed the `end` record rather
+   * than holding a poller and a file descriptor open for the life of the
+   * process - which is the common case, because browsing history opens
+   * finished runs. The two behaviours together are an infinite loop: replay the
+   * whole log, close, reconnect, replay, close.
+   *
+   * So the server sends `eof` first and says why in its own comment: "a stream
+   * that merely drops is indistinguishable from a dropped connection, which
+   * EventSource is right to retry". A read that fails mid-stream deliberately
+   * gets **no** `eof`, and that case must keep retrying - so this closes on the
+   * frame, never on the disconnect.
+   */
+  source.addEventListener("eof", () => {
+    source.close()
   })
 
   source.addEventListener("record", (event: { data: string }) => {

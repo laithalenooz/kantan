@@ -247,11 +247,13 @@ class FakeSource {
   closed = false
   url = ""
 
+  eofs: (() => void)[] = []
   addEventListener(type: "open" | "error", listener: () => void): void
-  addEventListener(type: "message" | "record", listener: (event: { data: string }) => void): void
+  addEventListener(type: "message" | "record" | "eof", listener: (event: { data: string }) => void): void
   addEventListener(type: string, listener: (event: { data: string }) => void): void {
     if (type === "open") this.opens.push(listener as () => void)
     if (type === "record") this.messages.push(listener)
+    if (type === "eof") this.eofs.push(listener as () => void)
   }
   close(): void {
     this.closed = true
@@ -264,6 +266,9 @@ class FakeSource {
   }
   emitRaw(data: string): void {
     for (const l of this.messages) l({ data })
+  }
+  eof(): void {
+    for (const l of this.eofs) l()
   }
 }
 
@@ -578,5 +583,44 @@ describe("how long each phase took", () => {
       { kind: "phase", phase: "implement", state: "running", sessionId: "s2", at: t + 5_000 } as RunRecord,
     ])
     expect(view.phases.find((p) => p.phase === "plan")?.startedAtMs).toBeUndefined()
+  })
+})
+
+describe("the end of a stream", () => {
+  const drive2 = (): { source: FakeSource; views: RunView[] } => {
+    const source = new FakeSource()
+    const views: RunView[] = []
+    subscribeRun(RUN, (v) => views.push(v), () => source)
+    return { source, views }
+  }
+
+  test("an eof frame closes the source, so EventSource stops reconnecting", () => {
+    /*
+     * The bug this pins: the server closes a stream once it has replayed the
+     * `end` record, rather than holding a poller open for every finished run
+     * someone browses to. EventSource reconnects on any closed connection. So
+     * without honouring `eof`, every finished run became an infinite loop —
+     * replay the whole log, close, reconnect — which is what the user saw as
+     * the page refreshing over and over.
+     */
+    const { source } = drive2()
+    source.open()
+    source.emit(header())
+    source.emit({ kind: "end", state: "done", costUsd: 0.5 })
+    expect(source.closed).toBe(false)
+    source.eof()
+    expect(source.closed).toBe(true)
+  })
+
+  test("a stream that merely drops is NOT closed, because that one must retry", () => {
+    // The server sends no `eof` when a read fails mid-stream: the client
+    // cannot act on the reason, and a dropped connection is exactly what
+    // EventSource's retry is for. Closing on the disconnect instead of on the
+    // frame would strand a live run.
+    const { source } = drive2()
+    source.open()
+    source.emit(header())
+    source.emit({ kind: "phase", phase: "implement", state: "running", sessionId: "s" })
+    expect(source.closed).toBe(false)
   })
 })
