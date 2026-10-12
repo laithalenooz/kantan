@@ -756,6 +756,14 @@ export interface TreeProps {
   onSelectProject?: (path: string) => void
   /** The project the rest of the screen is about, when it is a project. */
   selectedProject?: string | null
+  /**
+   * Replaces the account chip, so a caller can make it interactive.
+   *
+   * The design hangs the account switch off the chip - click it, choose, be
+   * asked to confirm. The chip stays a plain `AccountChip` when this is absent,
+   * which is what every artboard draws.
+   */
+  accountSlot?: (project: TreeProject) => ReactNode
 }
 
 /** Does this triple address this task? Compared whole; a bare ref is ambiguous. */
@@ -818,6 +826,7 @@ export function Tree({
   onAddProject,
   onSelectProject,
   selectedProject,
+  accountSlot,
 }: TreeProps): ReactElement {
   const eyebrow = "text-[11.5px] font-semibold uppercase tracking-[.07em] text-muted-400"
   const ids = useId()
@@ -1004,6 +1013,7 @@ export function Tree({
             key={project.path}
             {...(onSelectProject === undefined ? {} : { onSelectProject })}
             {...(selectedProject === undefined ? {} : { selectedProject })}
+            {...(accountSlot === undefined ? {} : { accountSlot })}
             project={project}
             first={index === 0}
             order={index}
@@ -1033,9 +1043,11 @@ function ProjectBlock({
   onSelect,
   onSelectProject,
   selectedProject,
+  accountSlot,
 }: {
   onSelectProject?: (path: string) => void
   selectedProject?: string | null
+  accountSlot?: (project: TreeProject) => ReactNode
   project: TreeProject
   first: boolean
   /** Position in the column, which is the artboard's `.d1`-`.d9` stagger step. */
@@ -1056,31 +1068,38 @@ function ProjectBlock({
           row the artboard draws. Same box either way: the classes below are
           shared, and `button` is reset to `text-left` and full width so the
           layout is identical to the `div`. */}
-      {createElement(
-        onSelectProject === undefined ? "div" : "button",
-        onSelectProject === undefined
-          ? { className: "flex items-center gap-2 px-[10px] pt-[14px] pb-[2px]" }
-          : {
-              type: "button",
-              "data-project-row": true,
-              "aria-current": selectedProject === project.path ? "true" : undefined,
-              onClick: () => onSelectProject(project.path),
-              className: `trow flex w-full items-center gap-2 rounded-[10px] px-[10px] pt-[14px] pb-[2px] text-left hover:bg-[#EFEFF2] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo ${
-                selectedProject === project.path ? "bg-[#EFEFF2]" : ""
-              }`,
-            },
-        <svg key="i" aria-hidden viewBox="0 0 24 24" className="ic size-4 shrink-0 text-muted-400" {...LINE}>
-          <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
-        </svg>,
-        /* The repo's own directory name. `title` carries the whole path, which
-           is longer than this column and is not what the design shows.
-           `text-[14px]` rather than `text-sm`, because the Tailwind step
-           carries a 20px leading where the artboard's 14px line box is 18. */
-        <span key="n" id={repoId} data-repo title={project.path} className={`${ARBITRARY} text-[14px] font-[620]`}>
-          {repoName(project.path)}
-        </span>,
-        <AccountChip key="a" account={project.account} />,
-      )}
+      {/* The chip is a SIBLING of the row control, never a child of it.
+          `ProjectPanel` mounts an account switch on the chip, and a button
+          inside a button is invalid, un-clickable in the inner case, and sends
+          every chip click bubbling to `onSelectProject`. So the row is a flex
+          container, and only the name half is the button. */}
+      <div className="flex items-center gap-2 px-[10px] pt-[14px] pb-[2px]">
+        {createElement(
+          onSelectProject === undefined ? "span" : "button",
+          onSelectProject === undefined
+            ? { className: "flex min-w-0 items-center gap-2" }
+            : {
+                type: "button",
+                "data-project-row": true,
+                "aria-current": selectedProject === project.path ? "true" : undefined,
+                onClick: () => onSelectProject(project.path),
+                className: `trow -mx-1 flex min-w-0 items-center gap-2 rounded-[8px] px-1 py-0.5 text-left hover:bg-[#EFEFF2] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo ${
+                  selectedProject === project.path ? "bg-[#EFEFF2]" : ""
+                }`,
+              },
+          <svg key="i" aria-hidden viewBox="0 0 24 24" className="ic size-4 shrink-0 text-muted-400" {...LINE}>
+            <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+          </svg>,
+          /* The repo's own directory name. `title` carries the whole path, which
+             is longer than this column and is not what the design shows.
+             `text-[14px]` rather than `text-sm`, because the Tailwind step
+             carries a 20px leading where the artboard's 14px line box is 18. */
+          <span key="n" id={repoId} data-repo title={project.path} className={`${ARBITRARY} text-[14px] font-[620]`}>
+            {repoName(project.path)}
+          </span>,
+        )}
+        {accountSlot === undefined ? <AccountChip account={project.account} /> : accountSlot(project)}
+      </div>
 
       <div
         data-test-cmd

@@ -337,9 +337,6 @@ function DescribeWork({ projectPath, onDone, onCancel }: { projectPath: string; 
 /** Changing a project's settings. Only what is edited is sent. */
 function ProjectSettings({ project, onDone, onCancel }: { project: TreeProject; onDone: () => void; onCancel: () => void }) {
   const [testCmd, setTestCmd] = useState(project.testCmd)
-  const stored: "personal" | "work" | "" =
-    project.account.kind === "personal" || project.account.kind === "work" ? project.account.kind : ""
-  const [account, setAccount] = useState<"personal" | "work" | "">(stored)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -352,10 +349,7 @@ function ProjectSettings({ project, onDone, onCancel }: { project: TreeProject; 
       // rewrite settings this dialog never shows - the budget, the models, the
       // tool allowlist - which is the exact reason registering twice is
       // refused rather than treated as an edit.
-      await updateProject(project.path, {
-        ...(testCmd.trim() === project.testCmd ? {} : { testCmd: testCmd.trim() }),
-        ...(account === "" || account === stored ? {} : { account }),
-      })
+      await updateProject(project.path, { testCmd: testCmd.trim() })
       onDone()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
@@ -374,24 +368,27 @@ function ProjectSettings({ project, onDone, onCancel }: { project: TreeProject; 
         <input id="ps-cmd" value={testCmd} onChange={(e) => setTestCmd(e.target.value)} required
           className="m mt-1.5 w-full rounded-[10px] border border-edge px-3 py-2 text-[13.5px] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#5B5BD6]" />
 
-        <fieldset className="mt-4 border-0 p-0">
-          <legend className="text-[12.5px] font-semibold text-muted-400">Claude account</legend>
-          <div className="mt-2 flex gap-2">
-            {([["personal", "Personal"], ["work", "Work"], ["", "Not sure"]] as const).map(([value, label]) => (
-              <button key={label} type="button" onClick={() => setAccount(value)} aria-pressed={account === value}
-                className={`rounded-full border px-3 py-1.5 text-[12.5px] font-semibold ${
-                  account === value ? "border-ink bg-ink text-white" : "border-edge text-muted-500"
-                }`}>
-                {label}
-              </button>
-            ))}
-          </div>
-          {/* Deliberately not offered as a thing to unset: "not sure" leaves
-              whatever is stored alone rather than erasing a stated account. */}
-          <p className="mt-2 text-[12px] leading-[1.5] text-muted-400">
-            Choosing &ldquo;Not sure&rdquo; leaves the stored account as it is.
-          </p>
-        </fieldset>
+        {/*
+          The account picker is deliberately NOT here.
+
+          `Project.account` is a label and controls nothing: `src/spawn.ts`
+          sets `CLAUDE_CONFIG_DIR` from `configDir`, `src/run.ts` records the
+          run's profile from `configDir`, and nothing reads `account` except
+          the chip's text. A control that PATCHed `account` alone would move
+          the chip, show a confirmation, and bill exactly the same account as
+          before - which is the defect `Account`'s own doc comment says the
+          chip exists to prevent.
+
+          The real switch is `ProjectPanel`'s, which carries the `configDir`
+          with it, and it lands with the server support for clearing that
+          field. Until then this dialog says so rather than offering a lever
+          that does nothing.
+        */}
+        <p className="mt-4 rounded-[10px] border border-edge bg-panel px-3 py-2.5 text-[12.5px] leading-[1.5] text-muted-500">
+          Changing which Claude account this project bills to means changing its profile directory, which this
+          dialog cannot do yet. It is <strong className="font-semibold text-ink">{repoName(project.path)}</strong>&rsquo;s
+          test command only for now.
+        </p>
 
         {error !== null && (
           <p role="alert" className="mt-4 rounded-[10px] border border-[#F3C6C9] bg-[#FDF2F3] px-3 py-2 text-[12.5px] leading-[1.5] text-[#D92D3A]">{error}</p>
