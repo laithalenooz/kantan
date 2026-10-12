@@ -393,6 +393,37 @@ function AgentProse({ children }: { children: string }) {
  *
  * Token names come from `src/ui/tokens.css`. Literal hexes appear only where the
  * artboard uses a value the token layer does not name.
+ *
+ * ## Why this does not use `src/ui/artboard.css`
+ *
+ * That file now carries the artboards' own classes — `.beam`, `.shiny`, `.bf`,
+ * `.plan` — and `main.tsx` loads it. The gate deliberately keeps its own copy of
+ * those four effects, for two reasons that were measured rather than assumed:
+ *
+ *  - **`.beam` bundles paint and motion into one class.** It declares the
+ *    conic-gradient border *and* `animation: kbeam …, kfade …`. The artboard can
+ *    do that because it stops motion with `.kr * { animation: none }`, keeping
+ *    the class. This component is required to withhold the animated class in JS
+ *    instead — three tests assert its absence under the media feature, and
+ *    `CLAUDE.md` explains why a class that is never added beats a duration
+ *    override. Withholding `.beam` would take the border away with the
+ *    animation and leave the card with no edge at all, so the two are split here
+ *    into `.kg-beamframe` (the edge) and `.kg-beam` (the motion).
+ *  - **`.plan ol li` is a two-column grid that assumes one child.** The artboard
+ *    hand-wraps each step in a single `<span>`; `react-markdown` emits the text,
+ *    every `<code>` and every `<strong>` as siblings, and each becomes its own
+ *    grid item. Measured by the agent that wrote `artboard.css`: a step renders
+ *    105px tall in a 273.5px column instead of 27px in a 618px one — the
+ *    one-word-per-line defect `CLAUDE.md` already records. `.kg-prose` positions
+ *    the marker absolutely instead, which has no opinion about how many children
+ *    a list item has. Measured side by side against the artboard at a 1440px
+ *    viewport, the first step comes out 698.8 x 52.7 in both, so this is a
+ *    different implementation of the same drawing, not a different drawing.
+ *
+ * The element rules in `artboard.css` (`button { font: inherit }`,
+ * `textarea { font: inherit }`, the placeholder colour, `a { color: … }`) agree
+ * with what this stylesheet sets, and they sit in `@layer base` while this is
+ * unlayered, so the two do not fight.
  */
 const GATE_CSS = `
 @property --kg-a { syntax: "<angle>"; initial-value: 0deg; inherits: false; }
@@ -486,6 +517,15 @@ const GATE_CSS = `
 .kg { font-family: var(--font-sans, ui-sans-serif, system-ui, sans-serif); color: var(--kg-ink); }
 .kg-mono { font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); }
 .kg-inert { overflow-wrap: anywhere; }
+/* Tailwind names this "sr-only", and the tree and the sidebar use that. Declared
+   here instead for the reason the rest of this stylesheet exists: Tailwind's
+   compiler does not run under "bun test", so a utility class is simply absent
+   there, and a rule this file depends on has to resolve where this file is
+   tested. */
+.kg-visually-hidden {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
 .kg-fade { animation: kg-fade .7s cubic-bezier(.2,.7,.2,1) both; }
 .kg-pop { animation: kg-pop .5s cubic-bezier(.2,.7,.2,1) both; }
 .kg-pulse { animation: kg-pulse 1.8s ease-out infinite; }
@@ -535,7 +575,11 @@ const GATE_CSS = `
 .kg-head {
   padding: 32px clamp(20px,4vw,44px) 26px;
   border-bottom: 1px solid var(--kg-hairline);
-  background-color: var(--kg-paper);
+  /* No background-colour. The artboard's head is a warm gradient over a
+     transparent base, so the Magic Card spotlight on .kg-card beneath shows
+     through it; painting the head white as well occluded the spotlight over
+     the whole top third of the card, which is exactly where the cursor is when
+     someone starts reading. */
   background-image: linear-gradient(180deg, #fff8f3 0%, rgba(255,255,255,0) 100%);
 }
 .kg-eyebrow { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
@@ -712,9 +756,25 @@ const GATE_CSS = `
 .kg-reply { flex: 1 1 380px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .kg-label { font-size: 13px; font-weight: 600; color: #2a2c33; }
 .kg-reply-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+/* The artboard's composer, with one arithmetic fix.
+ *
+ * Measured on Main.dc.html itself at a 1440px viewport: scrollHeight 67
+ * against clientHeight 46, so the artboard clips its own placeholder and shows
+ * a scrollbar before a character is typed. Two causes, and both are fixed here
+ * rather than reproduced:
+ *
+ *  - 48px box - 26px padding - 2px border leaves 20px for a 20.3px line, so
+ *    even a single line overflowed. 12px padding leaves 22px and it fits.
+ *  - The placeholder is two lines in this column, so the box is given two rows.
+ *    That makes it ~18px taller at rest than the artboard draws it, which is
+ *    the one place this component deliberately departs from the drawing: a
+ *    control whose own example text is cut in half reads as broken, and the
+ *    gate's column is narrower in the app than on the artboard, so the wrap is
+ *    the common case rather than the edge.
+ */
 .kg-textarea {
   flex: 1 1 240px; min-height: 48px; resize: vertical;
-  padding: 13px 16px; border-radius: 14px;
+  padding: 12px 16px; border-radius: 14px;
   border: 1px solid transparent; background-color: #efeff2;
   font: inherit; font-size: 14px; line-height: 1.45; color: var(--kg-ink);
   box-sizing: border-box;
@@ -799,13 +859,16 @@ const GATE_CSS = `
   overflow-wrap: anywhere;
 }
 .kg-bubble > :first-child { margin-top: 0; }
+/* The question itself, at the artboard's #ask-h size. The agent writes the
+   question as markdown, so it arrives as a leading paragraph far more often
+   than as a heading; both are drawn as the heading the artboard draws. */
 .kg-bubble > p:first-of-type {
-  font-size: clamp(19px, 2.2vw, 24px); line-height: 1.25; font-weight: 640;
-  letter-spacing: -.02em; color: #17174a; text-wrap: pretty; margin-bottom: 12px;
+  font-size: clamp(22px, 2.6vw, 28px); line-height: 1.2; font-weight: 640;
+  letter-spacing: -.025em; color: #17174a; text-wrap: pretty; margin-bottom: 12px;
 }
 .kg-bubble h1, .kg-bubble h2, .kg-bubble h3 {
-  font-size: clamp(19px, 2.2vw, 24px); line-height: 1.25; font-weight: 640;
-  letter-spacing: -.02em; color: #17174a; margin: 0 0 12px;
+  font-size: clamp(22px, 2.6vw, 28px); line-height: 1.2; font-weight: 640;
+  letter-spacing: -.025em; color: #17174a; margin: 0 0 12px;
 }
 .kg-bubble p { margin: 0 0 10px; }
 .kg-bubble code {
@@ -1159,8 +1222,15 @@ export function Gate(props: GateProps) {
             <span />
           </span>
           <span className="kg-who">
+            {/* The artboard's byline is the agent's name alone; what it *is* is
+                carried visually by the speech bubble and the "A question, not a
+                plan" pill beside it. Neither of those reaches a screen reader
+                from the heading, and this heading is the card's accessible
+                name, so the rest of the sentence stays in the DOM and is hidden
+                from sight only. */}
             <h1 id={headingId} className="kg-who-name">
-              {agent} asked a question
+              {agent}
+              <span className="kg-visually-hidden"> asked a question</span>
             </h1>
             {props.askedAt ? <span className="kg-mono kg-who-when">{props.askedAt}</span> : null}
           </span>
@@ -1285,7 +1355,12 @@ export function Gate(props: GateProps) {
                 {planPath}
               </span>
             ) : null}
-            {meta.length > 0 ? <span className="kg-chip kg-mono">{meta.join(" · ")}</span> : null}
+            {/* Sans, not mono, which is what the artboard draws for this chip
+                and the one case where DESIGN.md's "mono for every machine
+                value" does not apply: a duration and a cost rounded for a
+                human are prose about the run, not values to be read off
+                character by character. The dictated path beside it stays mono. */}
+            {meta.length > 0 ? <span className="kg-chip">{meta.join(" · ")}</span> : null}
           </div>
         </div>
 
@@ -1332,7 +1407,9 @@ export function Gate(props: GateProps) {
                     id={`kg-note-${ids}`}
                     ref={replyRef}
                     className="kg-textarea"
-                    rows={1}
+                    /* Two, not the artboard's one: see `.kg-textarea`. One row
+                       cuts this placeholder in half in the app's column. */
+                    rows={2}
                     value={reply}
                     onChange={(e) => setReply(e.target.value)}
                     placeholder="e.g. Keep unknown fields under row.meta instead of dropping them"
@@ -1355,12 +1432,14 @@ export function Gate(props: GateProps) {
               >
                 <CheckIcon className="kg-approve-icon" />
                 Approve plan
-                {/* Both keys are printed, not only announced. The artboard
-                    draws the chord alone, but a letter that can start an
-                    implementation run has to be discoverable by the person who
-                    might press it by accident - and the chip style is the one
-                    the artboard already uses. */}
-                <span className="kg-mono kg-kbd">A</span>
+                {/* One chip, the chord, exactly as `Main.dc.html` draws it.
+                    An earlier version printed a second chip for the bare `a`
+                    shortcut, on the argument that a key which can start an
+                    implementation run should be visible. That was an addition
+                    to the approved artboard and the user has since asked for
+                    the artboard. The shortcut itself is unchanged and both keys
+                    are still announced through `aria-keyshortcuts` below, which
+                    costs no pixels. */}
                 <span className="kg-mono kg-kbd">⌘↵</span>
               </button>
             </>

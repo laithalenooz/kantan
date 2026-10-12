@@ -975,16 +975,21 @@ describe("`a` approves, and the one letter that does is the one that must not fi
     expect(buttonNamed(noPlan, /approve/i).hasAttribute("aria-keyshortcuts")).toBe(false)
   })
 
-  test("the shortcut is printed on the button, not only announced", async () => {
-    /* A shortcut that can start an implementation run and is advertised only to
-     * a screen reader is a hazard to everyone else. Both keys are printed, in
-     * the key-chip style the artboard already uses for the chord. */
+  test("the chord is printed on the button, as the artboard draws it", async () => {
+    /* `Main.dc.html` puts exactly one key chip on the Approve pill, the chord.
+     * This test used to require a second chip for the bare `a`, on the argument
+     * that a key which can start an implementation run should be visible; the
+     * user asked for the artboard instead, so the chip is gone and `a` is
+     * announced rather than printed. The assertion is exact rather than
+     * "contains \u2318\u21b5", because what changed is the *count*. */
     const { host } = await render(<Gate {...gateProps()} />)
     const approve = buttonNamed(host, /approve/i)
     const chips = [...approve.querySelectorAll(".kg-kbd")].map((chip) =>
       (chip.textContent ?? "").trim(),
     )
-    expect(chips).toEqual(["A", "\u2318\u21b5"])
+    expect(chips).toEqual(["\u2318\u21b5"])
+    /* Removing the chip must not quietly remove the shortcut with it. */
+    expect(approve.getAttribute("aria-keyshortcuts")).toBe("a Meta+Enter Control+Enter")
   })
 })
 
