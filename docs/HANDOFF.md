@@ -833,6 +833,67 @@ The artboard's own `@media (prefers-reduced-motion:reduce){.kr *{animation:none
 animations only, not Motion springs and not the `requestAnimationFrame`-driven
 cost ticker.
 
+### There are TWO bands, and only one of them was built
+
+A mistake I made and had to correct mid-flight, so it is worth writing down.
+
+`src/ui/Digest.tsx` exports `ReturnBand` with a `needsYou` prop, and that reads
+like a component with two moods. It is not. `ReturnBand` is the **calm** band
+from `Return.dc.html` only; `needsYou` is a count used to decide whether the
+calm claim - "Nothing needs you" - may be made at all, and `needsYouClaim`
+returns `undefined` rather than guessing when nobody counted.
+
+The **attention** band is a different element, `Main.dc.html` line 67:
+
+    <div class="band" role="status" style="...;padding:18px 24px;
+         background:#FF6A1A;color:#1A0B02">
+
+Solid orange, full width, entering on the `kband` keyframe. It is the element
+`DESIGN.md` hangs `document.title` and the favicon dot off, and it owns them
+alone - `ReturnBand`'s docstring deliberately refuses both so there is a single
+writer of page-level state.
+
+Both occupy the same slot beneath the app bar; `App.tsx` shows exactly one.
+`ReturnBand` mounts only for a **running** run.
+
+### Motion's entrance animations throw 195 unhandled AbortErrors in one run
+
+Measured by the Digest agent, which then moved off Motion components for
+entrances and onto CSS keyframes translated from the artboard, keeping
+`useReducedMotion()` OR'd with a live `matchMedia` read.
+
+Cancelling a WAAPI animation rejects `Animation.finished`, and nothing in
+`motion-dom` catches it. An interrupted entrance is the *normal* case here -
+rows recycle through a virtualiser and the SSE replays the whole log on
+reconnect - so this is not an edge. `Sidebar.test.tsx` has a pre-existing
+unhandled `AbortError` from the same cause, which failed `bun run check` at the
+error level before any of the current work started.
+
+The artboard gives the CSS equivalents outright: `.bf` + `.d1`-`.d9` for
+blur-fade with stagger, `.beam`, `.ring`, `.pulse`, `.band`. Prefer them. They
+are also covered by the artboard's global
+`@media (prefers-reduced-motion:reduce){.kr *{animation:none!important}}`,
+which a Motion spring is not. The cost **ticker** stays the exception: it is
+`requestAnimationFrame`-driven, no CSS rule reaches it, and its explicit gate
+is load-bearing for six tests.
+
+### Several UI suites are order-dependent, and the order decides the result
+
+Same cause - Motion's module-level reduced-motion singleton, initialised by
+whichever suite calls it first. Measured:
+
+| order | result |
+|---|---|
+| `Gate.test.tsx` alone | **3 fail** |
+| `Sidebar.test.tsx` -> `Gate.test.tsx` | **0 fail** |
+| `Chrome.test.tsx` -> `Sidebar.test.tsx` | ticker test **fails** |
+| `Digest.test.tsx` -> `Sidebar.test.tsx` | **106 pass / 0 fail** |
+
+Each of `Gate`'s three passes individually under `-t`. So **a green single-file
+run is not evidence**, in either direction: it can hide a broken fallback (see
+the Stream entry above) and it can invent a failure that does not exist in the
+full run. Judge by `bun run check`.
+
 ## Settled: decisions with non-obvious reasons
 
 | Decision | Why it is not the obvious thing |
