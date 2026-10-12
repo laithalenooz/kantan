@@ -206,8 +206,13 @@ function AddProject({ onDone, onCancel }: { onDone: () => void; onCancel: () => 
     setError(null)
     try {
       await registerProject({
-        path: path.trim(),
-        testCmd: testCmd.trim(),
+        // Sent exactly as typed. `nonEmptyString` in `src/server.ts` judges
+        // emptiness on a trimmed copy and deliberately forwards the original —
+        // "nothing trimmed is ever forwarded" — so trimming here undid a
+        // decision made on purpose, and registered a path other than the one
+        // the user will later be shown.
+        path,
+        testCmd,
         ...(account === "" ? {} : { account }),
       })
       onDone()

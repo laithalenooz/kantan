@@ -624,7 +624,7 @@ export async function startRun(
  * a worktree is refused here rather than failing later inside a run.
  */
 export async function registerProject(
-  project: { path: string; testCmd: string; account?: "personal" | "work" },
+  project: { path: string; testCmd: string; account?: "personal" | "work"; configDir?: string },
   fetcher: typeof fetch = fetch,
 ): Promise<void> {
   const res = await withSession(fetcher, (f) =>
@@ -637,6 +637,14 @@ export async function registerProject(
       // Omitted rather than sent as null: the route checks the body's keys
       // against a fixed list, and "not sure" is the absence of an answer.
       ...(project.account === undefined ? {} : { account: project.account }),
+      // Forwarded, and load-bearing. `configDir` is what actually selects the
+      // Claude account: `src/spawn.ts` sets CLAUDE_CONFIG_DIR from it and
+      // `src/run.ts` records the run's profile from it, while `account` is only
+      // the chip's word. Dropping it here registered a project whose runs bill
+      // to the default profile whatever the dialog said. TypeScript could not
+      // catch it - excess-property checks do not reach an object built field by
+      // field.
+      ...(project.configDir === undefined ? {} : { configDir: project.configDir }),
     }),
     }),
   )

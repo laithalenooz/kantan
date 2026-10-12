@@ -343,6 +343,28 @@
   .bf {
     animation: kfade 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both;
   }
+  /* Entrance classes, declared BEFORE the delay rungs below.
+   *
+   * The `animation` shorthand resets `animation-delay`, so a class that
+   * sets it AFTER `.d1`-`.d9` cannot be staggered: `pop d3` silently
+   * animates at zero. `.bf` was the only one declared early, so it was the
+   * only one that worked - which cost an agent a workaround before anyone
+   * noticed. The infinite classes stay below on purpose: `.fl2` and `.fl3`
+   * bake their own offset into the shorthand, and a rung reaching them
+   * would overwrite it. */
+  /* The calm green band: "Nothing needs you". */
+  .calm {
+    background: #dcefe6;
+    animation: kfade 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+  /* Animated List (Return) and the question bubble (Question). */
+  .slide {
+    animation: kslide 0.6s 0.3s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+  .pop {
+    animation: kpop 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+
   .d1 {
     animation-delay: 0.05s;
   }
@@ -396,19 +418,7 @@
       kfade 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both;
   }
 
-  /* The calm green band: "Nothing needs you". */
-  .calm {
-    background: #dcefe6;
-    animation: kfade 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both;
-  }
 
-  /* Animated List (Return) and the question bubble (Question). */
-  .slide {
-    animation: kslide 0.6s 0.3s cubic-bezier(0.2, 0.7, 0.2, 1) both;
-  }
-  .pop {
-    animation: kpop 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both;
-  }
 
   /* Only "needs you" pulses. Orange on a light surface, dark on the orange
    * band itself, indigo for the calm "still running" dot. */
