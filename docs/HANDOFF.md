@@ -12,6 +12,78 @@ Stable project-wide rules live in `CLAUDE.md`, not here. This file is only the m
 
 ## Open: things later tasks must handle
 
+### Where this session stopped — 2026-10-12, read this first
+
+Everything is committed and pushed; the working tree is clean and `bun run check` is green
+(2406 pass, 1 skip, 0 fail). The session was a long run of defects reported from **actually using
+the app**, which is a different list from the one the plan produces. What follows is what is left,
+in the order it is worth doing.
+
+**Next, and already diagnosed:** nothing. The last bug found (`accountOptionsFor` producing two
+options with one `optionId`) is fixed in `d359d55`. Pick from the open items below.
+
+#### Open, with the reasoning already done
+
+1. **The animation audit found nothing missing, and could not see five states.** All 18 artboard
+   keyframes are in `src/ui/artboard.css` and every one is applied. Three apparent gaps are not
+   gaps: `shiny`, `beam`, `pop`, `pulse`, `spin` and `fade` on the gate live under the Gate's own
+   scoped `kg-*` stylesheet, so a global-class search cannot see them; `pulsei` (the pulsing
+   indigo "live" dot) is **deliberately** unapplied, because `DESIGN.md` reserves the pulse for
+   "needs you" and `Sidebar.tsx` records that; and `tick` is replaced by Motion's `animate()`
+   counting the figure up over 0.6s, which is better than the CSS nudge. `beam` appears in no
+   artboard's class attributes at all.
+
+   What the audit **could not** verify in a browser: the **gate**, **running**, **needs-you**,
+   **toast** and **grinding** states, because reaching them means driving a live run. Those are
+   verified at code level and by their suites only. If you want them seen, the honest way is a
+   states gallery route mounting each component with fixed props — `States.dc.html` is the
+   artboard for exactly that and has no counterpart here.
+
+2. **`AddRepo`'s "Run it once" is still unwired.** `POST /api/test` requires a **registered**
+   project, and that screen runs before registration. Either widen the route to accept a path
+   validated by `requireUsableRepo` (the detection route already validates arbitrary paths the
+   same way, so it adds no reachable surface), or leave the control hidden there. Do not quietly
+   run the stored command instead: the control exists to prove the command in the field.
+
+3. **No account-level view.** The 5-hour window rings are per account and fed by
+   `rate_limit_event` from a live run, so with nothing running there is nowhere to see where the
+   accounts stand. Reported as wanting "accounts states such as usage and other available
+   states". The data only arrives mid-run today; a view would need somewhere to persist the last
+   reading per `configDir`.
+
+4. **No project summary.** Reported, and now T5 in `docs/features/kantan.md`. Clicking a project
+   opens settings; there is no overview.
+
+5. **The server factoring plan is unstarted** — `docs/plans/2026-10-12-server-factoring.md`.
+   `src/server.ts` has grown by five routes this session, so the case is stronger than when it
+   was written. The plan's constraint still holds: **the route table stays one table in one
+   file**, because `Bun.serve({routes})` matches before the guard chain.
+
+#### Two rules this session earned the hard way
+
+- **Run an unfamiliar suite inside a cgroup cap.** `CLAUDE.md` has the command. Two editor
+  sessions died to a duplicate React key that made one `act()` render never return, and the cap
+  is what turned "my machine died" into a fact about the code.
+- **`docs/probes/shoot.ts` refuses to press anything with consequences.** It reached **Approve
+  plan** on a real parked run while checking layout at four window sizes: approved a plan, spawned
+  an implement phase, committed to the user's repo and spent money. The refusal list is in the
+  file; `--force` opts out, which is the point — that click was one nobody wrote down.
+
+#### What is running, and how to start it again
+
+Nothing needs to be running. To bring it back:
+
+```bash
+export PATH="$HOME/.bun/bin:$PATH"
+ORCH_DEV=1 bun run src/server.ts &   # 3100, the API and the token
+bun run ui &                         # 5173, Vite
+```
+
+`paca`/`paperclip`'s systemd units were moved to `~/.config/systemd/user-disabled-by-kantan/`
+because they were taking port 3100 and contributing to the crashes. Move them back to restore
+them.
+
+
 ### `failureSignature`'s window must stay well under `MAX_OUTPUT_BYTES` — anyone tuning either
 `src/testrun.ts` keeps the last 1 MiB of each stream; `src/stall.ts` hashes the last 256 Ki
 **UTF-16 code units** of that, so up to about 768 KB of UTF-8 in the worst case. If the two ever
