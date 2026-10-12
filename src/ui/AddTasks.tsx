@@ -112,7 +112,8 @@
  *    nothing. `draftFeature` in `src/draft.ts` already returns without writing,
  *    but it returns a whole file numbered from `T1`, which is the wrong shape.
  *    Its prompt must also carry the file's current contents, or the artboard's
- *    "Reads importer.md and the repo, read-only" is not yet true — `askHaiku`
+ *    The artboard's "Reads importer.md and the repo, read-only" was not true —
+ *    `askHaiku`
  *    runs with `--tools ""`.
  *  - a **write-the-subset** call taking `{projectPath, featureFile, texts}`,
  *    which re-reads the bytes, numbers from the highest ref on disk, inserts
@@ -756,7 +757,7 @@ export function AddTasks(props: AddTasksProps): ReactElement {
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-2 pt-2.5 pr-2 pb-1.5 pl-2.5">
                     <span className="inline-flex items-center gap-1.5 text-[12.5px] text-muted-700">
                       <Icon size={13}>{FILE}</Icon>
-                      Reads {file} and the repo, read-only
+                      Reads {file}, so it will not repeat what is already there
                     </span>
                     {accountLabel === null ? null : (
                       <span className="inline-flex items-center gap-1 rounded-md bg-account-tint py-0.5 pr-[7px] pl-[5px] text-[11.5px] font-[550] text-account-ink">
@@ -866,13 +867,41 @@ export function AddTasks(props: AddTasksProps): ReactElement {
                           {ref ?? NO_REF}
                         </span>
                         <span className="flex min-w-0 items-center gap-2">
-                          <input
-                            type="text"
+                          {/*
+                            A textarea that grows, not the artboard's single-line
+                            `<input>`.
+
+                            The artboard draws an input and its own sample text
+                            fits one. Haiku's proposals routinely will not, and
+                            an input clips to "…resumes from the last r" with
+                            the rest reachable only by focusing and scrolling.
+                            This is the one row a human reads before agreeing to
+                            it, and every other surface in this design prints
+                            content rather than shortening it — paths wrap, exit
+                            codes are never paraphrased. Clipping the sentence
+                            being approved contradicts the rule the rest of the
+                            product is built on, so the row grows instead.
+
+                            `rows={1}` keeps a short draft exactly the artboard's
+                            height; `field-sizing-content` grows it where the
+                            browser supports it, and the ref below is the floor
+                            everywhere else.
+                          */}
+                          <textarea
+                            rows={1}
                             value={row.text}
                             onChange={(e) => editRow(row.id, (r) => ({ ...r, text: e.target.value }))}
+                            onKeyDown={(e) => {
+                              // Enter commits rather than inserting a newline: a
+                              // task is one line, and `featurefile.ts` cannot
+                              // represent one that is not. Shift+Enter is left
+                              // alone so nothing traps a caret.
+                              if (e.key === "Enter" && !e.shiftKey) e.preventDefault()
+                            }}
                             aria-label={`Edit draft ${i + 1}`}
                             className={[
-                              "tin min-h-[38px] min-w-0 flex-1 rounded-[10px] border-0 bg-transparent px-2.5",
+                              "tin min-h-[38px] min-w-0 flex-1 resize-none rounded-[10px] border-0 bg-transparent px-2.5 py-[9px]",
+                              "[field-sizing:content] leading-[1.35]",
                               "text-[14.5px] focus:bg-white focus:shadow-[0_0_0_3px_rgba(91,91,214,.18)] focus:outline-none",
                               row.on ? "text-ink" : "text-[#7A7F8C] line-through",
                             ].join(" ")}

@@ -547,7 +547,7 @@ describe("asking Claude for drafts", () => {
 
     expect(text("h2")).toBe("Claude drafted 3 tasks")
     expect(all<HTMLInputElement>('input[type="checkbox"]').map((c) => c.checked)).toEqual([true, true, true])
-    expect(all<HTMLInputElement>('input[type="text"]').map((i) => i.value)).toEqual([...DRAFTS])
+    expect(all<HTMLTextAreaElement>("textarea[aria-label^='Edit draft']").map((i) => i.value)).toEqual([...DRAFTS])
   })
 
   test("one draft says one task, not 1 tasks", async () => {
@@ -634,13 +634,13 @@ describe("asking Claude for drafts", () => {
       second.resolve({ tasks: ["the fresh one"] })
       await second.promise
     })
-    expect(all<HTMLInputElement>('input[type="text"]').map((i) => i.value)).toEqual(["the fresh one"])
+    expect(all<HTMLTextAreaElement>("textarea[aria-label^='Edit draft']").map((i) => i.value)).toEqual(["the fresh one"])
 
     await api.act(async () => {
       first.resolve({ tasks: ["the stale one"] })
       await first.promise
     })
-    expect(all<HTMLInputElement>('input[type="text"]').map((i) => i.value)).toEqual(["the fresh one"])
+    expect(all<HTMLTextAreaElement>("textarea[aria-label^='Edit draft']").map((i) => i.value)).toEqual(["the fresh one"])
   })
 
   /** The same token, the other way round: a refusal from a superseded call
@@ -711,7 +711,7 @@ describe("choosing and editing the drafts", () => {
     const added: string[][] = []
     await drafted({ onAdd: (texts) => { added.push([...texts]); return ["T4", "T5", "T6"] } })
 
-    const first = all<HTMLInputElement>('input[type="text"]')[0]
+    const first = all<HTMLTextAreaElement>("textarea[aria-label^='Edit draft']")[0]
     if (!first) throw new Error("expected a text input")
     await type(first, "Checkpoint after every committed batch")
 
@@ -732,12 +732,12 @@ describe("choosing and editing the drafts", () => {
     await type(one('[role="tabpanel"] textarea'), "x")
     await click(button("Draft tasks"))
 
-    const first = all<HTMLInputElement>('input[type="text"]')[0]
+    const first = all<HTMLTextAreaElement>("textarea[aria-label^='Edit draft']")[0]
     if (!first) throw new Error("expected a text input")
     await type(first, "my own words")
 
     await render(<api.AddTasks {...props({ onDraft, tasks: [...TASKS] })} />)
-    expect(all<HTMLInputElement>('input[type="text"]')[0]?.value).toBe("my own words")
+    expect(all<HTMLTextAreaElement>("textarea[aria-label^='Edit draft']")[0]?.value).toBe("my own words")
   })
 
   /**
@@ -752,7 +752,7 @@ describe("choosing and editing the drafts", () => {
     const added: string[][] = []
     await drafted({ onAdd: (texts) => { added.push([...texts]); return ["T4", "T5"] } })
 
-    const first = all<HTMLInputElement>('input[type="text"]')[0]
+    const first = all<HTMLTextAreaElement>("textarea[aria-label^='Edit draft']")[0]
     if (!first) throw new Error("expected a text input")
     await type(first, "   ")
 
@@ -768,7 +768,7 @@ describe("choosing and editing the drafts", () => {
   test("surrounding whitespace is trimmed, because the parser trims on the way back", async () => {
     const added: string[][] = []
     await drafted({ onAdd: (texts) => { added.push([...texts]); return ["T4", "T5", "T6"] } })
-    const first = all<HTMLInputElement>('input[type="text"]')[0]
+    const first = all<HTMLTextAreaElement>("textarea[aria-label^='Edit draft']")[0]
     if (!first) throw new Error("expected a text input")
     await type(first, "  padded  ")
     await click(button("Add 3 tasks to importer.md"))
@@ -1005,7 +1005,7 @@ describe("the add button", () => {
     for (const box of boxes.slice(1)) await toggle(box)
 
     await click(button("Add 1 task to importer.md"))
-    const first = all<HTMLInputElement>('input[type="text"]')[0]
+    const first = all<HTMLTextAreaElement>("textarea[aria-label^='Edit draft']")[0]
     if (!first) throw new Error("expected a text input")
     await type(first, "edited mid-write")
 
@@ -1013,7 +1013,7 @@ describe("the add button", () => {
       gate.resolve(["T4"])
       await gate.promise
     })
-    expect(all<HTMLInputElement>('input[type="text"]').map((i) => i.value)).toContain("edited mid-write")
+    expect(all<HTMLTextAreaElement>("textarea[aria-label^='Edit draft']").map((i) => i.value)).toContain("edited mid-write")
   })
 
   /** The human may have edited the file since the draft, so the refs the
@@ -1088,7 +1088,7 @@ describe("the add button", () => {
 
     await click(button("Add 2 tasks to importer.md"))
 
-    expect(all<HTMLInputElement>('input[type="text"]').map((i) => i.value)).toEqual([DRAFTS[2] ?? ""])
+    expect(all<HTMLTextAreaElement>("textarea[aria-label^='Edit draft']").map((i) => i.value)).toEqual([DRAFTS[2] ?? ""])
     expect(text('[role="status"]')).toContain("Added T4–T5 to importer.md")
   })
 
@@ -1190,9 +1190,19 @@ describe("the artboard's own values", () => {
     ])
   })
 
-  test("the untouched read-only promise the artboard makes about drafting", async () => {
+  test("the drafting note claims only what the drafter actually does", async () => {
     await render(<api.AddTasks {...props({ onDraft: () => ({ tasks: DRAFTS }) })} />)
-    expect(text('[role="tabpanel"]')).toContain("Reads importer.md and the repo, read-only")
+    /*
+     * The artboard says "Reads importer.md and the repo, read-only". It does
+     * not: `askHaiku` in `src/draft.ts` spawns with `--tools ""`, so the
+     * drafter reads nothing at all and the prompt is its only input. A claim
+     * the product does not honour is worse than a smaller true one, so the
+     * copy says what will actually be true once the propose endpoint passes
+     * the file's current contents in the prompt — and says nothing about the
+     * repo, which it still cannot see.
+     */
+    expect(text('[role="tabpanel"]')).toContain("Reads importer.md, so it will not repeat what is already there")
+    expect(text('[role="tabpanel"]')).not.toContain("the repo, read-only")
   })
 
   /**
@@ -1221,7 +1231,7 @@ describe("the artboard's own values", () => {
     await toggle(first)
 
     const row = all<HTMLElement>("li")[0]
-    const input = row?.querySelector<HTMLElement>('input[type="text"]')
-    expect((input?.getAttribute("class") ?? "").split(/\s+/)).toContain("line-through")
+    const field = row?.querySelector<HTMLElement>("textarea[aria-label^='Edit draft']")
+    expect((field?.getAttribute("class") ?? "").split(/\s+/)).toContain("line-through")
   })
 })
