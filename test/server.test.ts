@@ -1433,16 +1433,18 @@ test("every action is a POST registered in ROUTES, and none is token-exempt", ()
 })
 
 test("nothing that acts is reachable by GET or HEAD, so no local page can drive kantan with an img tag", async () => {
-  // Structural, not a sample: the paths come from every POST in the table -
-  // registering a project included, since a no-cors GET must not be able to
-  // write projects.json either - and each is tried with every method a no-cors
-  // cross-site request can use. The double proves nothing ran, and the absent
-  // store file proves nothing was written.
+  // Structural, not a sample: the paths come from every route in the table
+  // that is not a GET - registering, removing and editing a project included,
+  // since a no-cors GET must not be able to write projects.json either - and
+  // each is tried with every method a no-cors cross-site request can use. The
+  // double proves nothing ran, and the absent store file proves nothing was
+  // written. Keyed on "not a GET" rather than on "POST", so a DELETE or a
+  // PATCH cannot be added outside this claim.
   const { l, fake, store } = await withRunner()
-  const posts = Object.keys(ROUTES).filter((key) => key.startsWith("POST "))
-  expect(posts.length).toBeGreaterThanOrEqual(ACTION_ROUTES.length)
+  const acts = Object.keys(ROUTES).filter((key) => !key.startsWith("GET "))
+  expect(acts.length).toBeGreaterThanOrEqual(ACTION_ROUTES.length)
 
-  for (const key of posts) {
+  for (const key of acts) {
     const path = actionPath(key)
     for (const method of ["GET", "HEAD"]) {
       // No Origin either, which is what those requests send.
@@ -2600,6 +2602,273 @@ test("a malformed registration body is refused before anything is written", asyn
     expect(res.status, row.why).toBe(row.status)
     expect(await loadProjects(store), row.why).toHaveLength(row.status === 201 ? 1 : 0)
   }
+})
+
+// ---------------------------------------------------------------------------
+// 12b. Removing a project
+// ---------------------------------------------------------------------------
+
+// A real user reported it: a project could be registered and never removed, so
+// a repo added by mistake, or one that has since been deleted, stayed in the
+// tree for good. The mechanism existed nowhere - `src/projects.ts` had
+// `loadProjects` and `addProject` and nothing else - so this is the store's new
+// `removeProject` plus the one question the store cannot answer, which is
+// whether a run of that project is in flight right now.
+
+const REMOVE = "DELETE /api/projects"
+
+function remove(l: Launch, body: unknown): Promise<{ status: number; headers: Headers; body: string }> {
+  return call(l, { path: REGISTER_PATH, method: "DELETE", body: JSON.stringify(body) })
+}
+
+/** A run log holding nothing but its header, under `id`, naming `projectPath`.
+ * `createRunLog` writes it, not this file: attributing a live run reads the
+ * first record and only accepts a header, so a hand-written line missing
+ * `kind` would exercise the wrong branch of that rule. */
+async function logNamingProject(dir: string, id: string, projectPath: string): Promise<void> {
+  const log = await createRunLog(runLogPath(id, dir), header({ runId: id, projectPath }))
+  await log.close()
+}
+
+test("removal is a DELETE registered in ROUTES, behind the guards, and not token-exempt", () => {
+  expect(Object.keys(ROUTES)).toContain(REMOVE)
+  expect(TOKEN_EXEMPT.has(REMOVE)).toBe(false)
+  // Section 7's loop covers all three guards for every key, whatever its
+  // method, so this route is Host-, Origin- and token-checked the moment it is
+  // registered. `SameSite=Strict` ignores ports, which is why an exemption
+  // here would be reachable from any other page on this machine.
+  expect([...TOKEN_EXEMPT].sort()).toEqual(["GET /", "GET /api/session"])
+})
+
+test("removing a project drops its record and leaves the tree without it", async () => {
+  const repo = await cleanRepo()
+  const other = await cleanRepo()
+  const { l, store } = await withStore()
+  expect((await register(l, { path: repo, testCmd: "npm test" })).status).toBe(201)
+  expect((await register(l, { path: other, testCmd: "npm test" })).status).toBe(201)
+
+  const res = await remove(l, { path: repo })
+  expect(res.status).toBe(200)
+  expect(JSON.parse(res.body)).toEqual({ ok: true })
+  expect((await loadProjects(store)).map((p) => p.path)).toEqual([other])
+})
+
+test("a trailing slash removes the record a trailing slash would have found", async () => {
+  // The store's identity is lexical, and `projectIdentity` is the one rule for
+  // it, so the route cannot disagree with the record it is about to remove.
+  const repo = await cleanRepo()
+  const { l, store } = await withStore()
+  await register(l, { path: repo, testCmd: "npm test" })
+  expect((await remove(l, { path: `${repo}/` })).status).toBe(200)
+  expect(await loadProjects(store)).toEqual([])
+})
+
+test("removing a path that is not registered is a 404 naming the store, not a quiet 200", async () => {
+  // Decided rather than assumed. A 200 would make the route idempotent, which
+  // is the usual argument for DELETE, but it answers "that project is gone" to
+  // a misspelled path when the project is still there - and a client that
+  // wants idempotence can treat this 404 as success, while nothing can recover
+  // the distinction from a 200. It is also the answer `POST /api/features`
+  // already gives for the same condition, and two routes disagreeing about
+  // what "that path is not a project" means is the drift worth avoiding.
+  const repo = await cleanRepo()
+  const { l, store } = await withStore()
+  await register(l, { path: repo, testCmd: "npm test" })
+
+  const res = await remove(l, { path: join(repo, "nope") })
+  expect(res.status).toBe(404)
+  expect(res.body).toContain(store)
+  expect(await loadProjects(store)).toHaveLength(1)
+})
+
+test("a removal refuses a relative path rather than resolving it against the cwd", async () => {
+  const { l, store } = await withStore()
+  const res = await remove(l, { path: "repo" })
+  expect(res.status).toBe(400)
+  expect(res.body).toContain("absolute repo path")
+  expect(await readdir(dirname(store))).toEqual([])
+})
+
+test("the removal route takes the path and nothing else", async () => {
+  // Its own allowlist, not registration's: `PROJECT_KEYS` carries `testCmd`
+  // and `account`, and a DELETE that accepted those would read as "remove this
+  // much of the project" to whoever sent them.
+  const repo = await cleanRepo()
+  const { l, store } = await withStore()
+  await register(l, { path: repo, testCmd: "npm test" })
+
+  const res = await remove(l, { path: repo, testCmd: "npm test" })
+  expect(res.status).toBe(400)
+  expect(res.body).toContain("path")
+  expect(res.body).not.toContain("testCmd")
+  expect(await loadProjects(store)).toHaveLength(1)
+})
+
+test("a malformed removal body is refused before anything is written", async () => {
+  const repo = await cleanRepo()
+  const rows: { body?: string; status: number; why: string }[] = [
+    { status: 400, why: "no body names no project" },
+    { body: "", status: 400, why: "nor does an empty one" },
+    { body: "not json", status: 400, why: "the body must parse as JSON" },
+    { body: "null", status: 400, why: "typeof null is object, which is the trap" },
+    { body: JSON.stringify([{ path: "/repo" }]), status: 400, why: "an array is not a record, even holding the right one" },
+    { body: "{}", status: 400, why: "an object with no path in it" },
+    { body: JSON.stringify({ path: "" }), status: 400, why: "an empty path names no project" },
+    { body: JSON.stringify({ path: "   " }), status: 400, why: "and whitespace names none either" },
+    { body: JSON.stringify({ path: 7 }), status: 400, why: "a number is not a path" },
+    { body: JSON.stringify({ pathh: "/repo" }), status: 400, why: "the near-miss spelling, refused by name rather than read as absent" },
+    { body: JSON.stringify({ path: "/repo" }), status: 404, why: "the control: a well-formed body for a path nobody registered" },
+  ]
+
+  for (const row of rows) {
+    const { l, store } = await withStore()
+    await register(l, { path: repo, testCmd: "npm test" })
+    const res = await call(l, {
+      path: REGISTER_PATH,
+      method: "DELETE",
+      ...(row.body === undefined ? {} : { body: row.body }),
+    })
+    expect(res.status, row.why).toBe(row.status)
+    expect(await loadProjects(store), row.why).toHaveLength(1)
+  }
+})
+
+test("a server launched without a project store answers 503 on a removal", async () => {
+  const l = serve({ runsDir: await runsDir() })
+  const res = await remove(l, { path: "/repo" })
+  expect(res.status).toBe(503)
+})
+
+test("a damaged store is a 500 that forwards its own message, not an empty removal", async () => {
+  // The same answer, and the same reasoning, as registration's: the store is
+  // the one piece of state no repository can rebuild, the message names the
+  // file and the field, and an editor fixes what it points at. Reading it as
+  // "no projects" would answer 404 for a project that is still in the file.
+  const store = await storeFile()
+  await mkdir(dirname(store), { recursive: true })
+  await writeFile(store, '[{ "path": "/repo", oops }]')
+  const l = serve({ runsDir: await runsDir(), projectsFile: store })
+
+  const res = await remove(l, { path: "/repo" })
+  expect(res.status).toBe(500)
+  expect(res.body).toContain(store)
+})
+
+test("a project with a run in flight is refused, because removing it makes that run unreachable", async () => {
+  // Every method on the machine's port - `stop` included - resolves the run's
+  // project through `projects.json` first, so a record removed mid-run turns
+  // approve, answer, resume and stop into `unknown-project`. The run keeps its
+  // child, keeps spending, and vanishes from the tree with no way to reach it.
+  // Refusing costs one sentence: stop it first.
+  const repo = await cleanRepo()
+  const dir = await runsDir()
+  const store = await storeFile()
+  const live = "33333333-3333-4333-8333-333333333333"
+  const l = serve({ runsDir: dir, projectsFile: store, liveRunIds: () => [live] })
+
+  // The header is what attributes a live run to a record, and nothing else in
+  // the log holds it. Written by `createRunLog`, never by hand: it writes
+  // `kind` beside the header's own fields, and a line without that does not
+  // parse as a header at all - which would make this pass as "could not be
+  // attributed" rather than as the case it is about.
+  await logNamingProject(dir, live, (await requireUsableRepo(repo)).root)
+  await register(l, { path: repo, testCmd: "npm test" })
+
+  const res = await remove(l, { path: repo })
+  expect(res.status).toBe(409)
+  expect(res.body).toContain(live)
+  // The attributed refusal, not the one for a run whose log says nothing:
+  // without this the case passes with the header unreadable, which is a
+  // different branch and a different sentence.
+  expect(res.body).toContain("is in flight for")
+  expect(res.body).toContain(repo)
+  expect(await loadProjects(store)).toHaveLength(1)
+})
+
+test("a live run of another project does not block a removal", async () => {
+  // The lock is per repository, so two projects can be busy at once: a check
+  // keyed on "anything is running" would make a removal depend on an unrelated
+  // task, which is a refusal nobody could act on.
+  const repo = await cleanRepo()
+  const dir = await runsDir()
+  const store = await storeFile()
+  const live = "44444444-4444-4444-8444-444444444444"
+  const l = serve({ runsDir: dir, projectsFile: store, liveRunIds: () => [live] })
+
+  await logNamingProject(dir, live, "/some/other/repo")
+  await register(l, { path: repo, testCmd: "npm test" })
+
+  expect((await remove(l, { path: repo })).status).toBe(200)
+  expect(await loadProjects(store)).toEqual([])
+})
+
+test("a live run whose log cannot be attributed to a project blocks the removal", async () => {
+  // The dimension is **what one live run id's log can be read as**, and the
+  // values are: a header naming this project, a header naming another, no log
+  // at all, a log with no header on line one, and a read that fails. Only the
+  // second is safely ignorable. The rest cannot be attributed, and the two
+  // costs are not symmetric: refusing costs a restart or a stop, while
+  // allowing it can orphan a run that is still spending money with no route
+  // left to stop it.
+  const repo = await cleanRepo()
+  const dir = await runsDir()
+  const store = await storeFile()
+  const headless = "55555555-5555-4555-8555-555555555555"
+  const absent = "66666666-6666-4666-8666-666666666666"
+  const unusable = ".."
+
+  for (const id of [headless, absent, unusable]) {
+    const l = serve({ runsDir: dir, projectsFile: store, liveRunIds: () => [id] })
+    if (id === headless) {
+      // A log whose line one is not a header: nothing in it can say which
+      // project the run belongs to.
+      await writeFile(runLogPath(headless, dir), JSON.stringify({ kind: "cli", event: {} }) + "\n")
+    }
+    await register(l, { path: repo, testCmd: "npm test" })
+    const res = await remove(l, { path: repo })
+    expect(res.status, id).toBe(409)
+    // The un-attributable refusal specifically, which is the branch this case
+    // is about: it says kantan cannot tell, rather than naming a project.
+    expect(res.body, id).toContain("cannot tell which project")
+    expect(await loadProjects(store), id).toHaveLength(1)
+  }
+})
+
+test("a launch that cannot say who is live removes the project rather than refusing every time", async () => {
+  // `liveRunIds` is null when the launch was given no machine to ask, and such
+  // a server drives no run at all - so there is nothing to orphan, and
+  // refusing would make the route unusable on exactly the launches the tests
+  // and the docs use.
+  const repo = await cleanRepo()
+  const { l, store } = await withStore()
+  await register(l, { path: repo, testCmd: "npm test" })
+  expect((await remove(l, { path: repo })).status).toBe(200)
+  expect(await loadProjects(store)).toEqual([])
+})
+
+test("a removed project's run logs are left on disk, because nothing can rebuild one", async () => {
+  // Decided rather than assumed. They are keyed by run id, not by project,
+  // they are the record of work that cost real money, and `indexRuns` already
+  // skips a log whose project is gone - with a warning, which is the whole
+  // cost of keeping them. Re-registering the same path brings the history
+  // back; deleting them answers an undoable question nobody asked.
+  const repo = await cleanRepo()
+  const dir = await runsDir()
+  const store = await storeFile()
+  const l = serve({ runsDir: dir, projectsFile: store })
+  const id = "77777777-7777-4777-8777-777777777777"
+  await logNamingProject(dir, id, (await requireUsableRepo(repo)).root)
+
+  expect((await register(l, { path: repo, testCmd: "npm test" })).status).toBe(201)
+  expect((await remove(l, { path: repo })).status).toBe(200)
+
+  expect(await readdir(dir)).toContain(`${id}.jsonl`)
+  // And the tree says out loud that it is skipping them, rather than dropping
+  // them in silence: this is the warning the user who asked for removal has
+  // already seen in practice.
+  const tree = await getTree(l)
+  expect(tree.body.projects).toEqual([])
+  expect(tree.body.warnings?.join("\n")).toContain("no longer in projects.json")
 })
 
 // ---------------------------------------------------------------------------

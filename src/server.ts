@@ -8,7 +8,7 @@ import type { Task } from "./backlog"
 import { draftFeature, type Draft } from "./draft"
 import { listFeatureFiles } from "./featurefile"
 import { requireUsableRepo, taskBranchName } from "./git"
-import { addProject, defaults, loadProjects } from "./projects"
+import { addProject, defaults, loadProjects, projectIdentity, removeProject } from "./projects"
 import type { Project } from "./projects"
 import { indexRuns, taskKey } from "./runindex"
 import type { TaskStatus } from "./runindex"
@@ -447,6 +447,12 @@ export const ROUTES: Record<string, RouteHandler> = {
    * and what nothing wrote until now: `projects.json` was read everywhere and
    * written by nobody. */
   "POST /api/projects": (req, ctx) => registerProject(req, ctx),
+
+  /** Stopping tracking a repository, which nothing could do: a project added
+   * by mistake, or one whose repo has since been deleted, stayed in the tree
+   * for good. A `DELETE`, and therefore Origin-guarded like every other
+   * acting method - `checkRequest` keys on "not GET or HEAD", not on POST. */
+  "DELETE /api/projects": (req, ctx) => removeRegistration(req, ctx),
 
   /** Turning a sentence into a task file, which is otherwise hand-written. */
   "POST /api/features": (req, ctx) => draftFeatureFile(req, ctx),
@@ -1270,7 +1276,7 @@ const MAX_FEATURE_BYTES = 1024 * 1024
  */
 async function readProjects(ctx: RouteContext): Promise<Response> {
   const projectsFile = ctx.projectsFile
-  if (projectsFile === null) return noStore()
+  if (projectsFile === null) return noStore("list any projects")
 
   let registered: Project[]
   try {
@@ -1726,6 +1732,15 @@ const NO_KEYS: readonly string[] = []
  * run, and it reaches `POST /api/runs` as `featureFile`.
  */
 const PROJECT_KEYS = ["path", "testCmd", "account", "configDir"] as const
+/**
+ * What removing a project takes: the repo path, and nothing else.
+ *
+ * Its **own** list rather than `PROJECT_KEYS`, which also carries `testCmd`
+ * and `account`. `parseBody` refuses an unknown key by naming the keys *this
+ * route* takes, so sharing the longer list would accept a body that reads as
+ * "remove this much of the project" and then ignore the rest of it.
+ */
+const REMOVE_KEYS = ["path"] as const
 const FEATURE_KEYS = ["projectPath", "text"] as const
 
 async function startRun(req: Request, ctx: RouteContext): Promise<Response> {
@@ -1876,8 +1891,11 @@ async function stopRun(req: Request, ctx: RouteContext, id: string): Promise<Res
 
 // --- Registering a project --------------------------------------------------
 
-function noStore(): Response {
-  return refuse(503, "refused: this server was launched without a project store, so it cannot register a project")
+/** `what` names the thing that cannot be done, because this answers the tree,
+ * registration, removal, an edit and a draft, and "it cannot register a
+ * project" was already the wrong sentence for three of them. */
+function noStore(what: string): Response {
+  return refuse(503, `refused: this server was launched without a project store, so it cannot ${what}`)
 }
 
 /**
@@ -1911,7 +1929,7 @@ function noStore(): Response {
  */
 async function registerProject(req: Request, ctx: RouteContext): Promise<Response> {
   const projectsFile = ctx.projectsFile
-  if (projectsFile === null) return noStore()
+  if (projectsFile === null) return noStore("register a project")
 
   const body = await readBody(req)
   if ("refused" in body) return body.refused
@@ -1995,6 +2013,150 @@ async function registerProject(req: Request, ctx: RouteContext): Promise<Respons
 }
 
 /**
+ * Stops tracking a repository. The repo itself is untouched, and so are its run
+ * logs.
+ *
+ * Three questions this answers, each decided rather than assumed:
+ *
+ * 1. **The run logs stay.** They live in `~/.orch/runs` keyed by run id, they
+ *    are the record of work that cost real money, and nothing can rebuild one.
+ *    `indexRuns` already skips a log whose project is no longer registered and
+ *    says so in a warning - the warning the person who asked for this route had
+ *    already seen - so the whole cost of keeping them is that line of text,
+ *    while deleting them answers an undoable question nobody asked.
+ *    Re-registering the same path brings every run of it back into the tree.
+ * 2. **A project with a run in flight is refused**, 409. Every method on the
+ *    machine's port resolves the run's project through `projects.json` first -
+ *    `stop` included - so a record removed mid-run turns approve, answer,
+ *    resume and stop into `unknown-project`. The run would keep its child and
+ *    keep spending, invisible in the tree and unreachable from the UI.
+ *    Refusing costs one sentence: stop it first.
+ * 3. **A path nobody registered is a 404**, not an idempotent 200. The usual
+ *    argument for DELETE is idempotence, but a 200 tells someone their project
+ *    is gone when a misspelling means it is still there - and a client that
+ *    wants idempotence can treat this 404 as success, where nothing can recover
+ *    the distinction from a 200. It is also what `POST /api/features` already
+ *    answers for the same condition.
+ *
+ * No git, and no `realpath`: see `projectIdentity`. A project is most often
+ * removed *because* its repo has been deleted or moved, so a route that
+ * required a usable repository could not remove the records that most need
+ * removing.
+ */
+async function removeRegistration(req: Request, ctx: RouteContext): Promise<Response> {
+  const projectsFile = ctx.projectsFile
+  if (projectsFile === null) return noStore("remove a project")
+
+  const body = await readBody(req)
+  if ("refused" in body) return body.refused
+  const parsed = parseBody(body.text, REMOVE_KEYS)
+  if ("refused" in parsed) return parsed.refused
+
+  const named = nonEmptyString(parsed.fields["path"])
+  if (named === null) {
+    return badBody(REMOVE_KEYS, "a removal names the project by the repo path it is registered under, which must be a non-empty string")
+  }
+  let path: string
+  try {
+    // The store's own rule for which record a path names, so this route and
+    // the write it is about to make cannot disagree about that. Its throw is
+    // the caller's typo - a relative path - and so a 400, exactly as
+    // `defaults()`'s throw is on registration.
+    path = projectIdentity(named)
+  } catch (cause) {
+    return refuse(400, (cause as Error).message)
+  }
+
+  const busy = await liveRunFor(ctx, path)
+  if (busy !== null) return refuse(409, busy)
+
+  let removed: boolean
+  try {
+    removed = await removeProject(projectsFile, path)
+  } catch (cause) {
+    // A damaged store, answered as registration answers it: a 500 that
+    // forwards its own message, because it names the file, the record and the
+    // field, the user owns that file, and an editor fixes what it points at.
+    console.error(`DELETE /api/projects: ${projectsFile} cannot be read:`, cause)
+    return refuse(500, (cause as Error).message)
+  }
+  if (!removed) {
+    return refuse(404, `${path} is not registered in ${projectsFile}, so there was nothing to remove. Its run logs, if it has any, were not touched either.`)
+  }
+  return Response.json({ ok: true })
+}
+
+/**
+ * The sentence that refuses a removal because a run of `projectPath` is in
+ * flight, or `null` when none is.
+ *
+ * A skipping guard, so CLAUDE.md's rule applies. The dimension is **what one
+ * live run id's log can be read as**, and every value it takes:
+ *
+ * - **A header naming this project.** Refuse, naming the run.
+ * - **A header naming another project.** Ignored: the lock is per repository,
+ *   so two projects can be busy at once, and a guard keyed on "anything is
+ *   running" would make a removal wait on an unrelated task.
+ * - **An id `runLogPath` refuses**, a log that is not there, one whose first
+ *   record is not a header, or a read that fails for any other reason. The run
+ *   cannot be attributed, so it is refused - see the asymmetry below.
+ * - **`liveRunIds` is null**, meaning the launch was given no machine to ask.
+ *   Such a server drives no run at all, so there is nothing to orphan and
+ *   nothing to refuse; refusing here would make the route unusable on exactly
+ *   the launches that cannot be driving anything.
+ *
+ * The costs are not symmetric. Refusing a removal that would have been safe
+ * costs a stop or a restart, both of which the message can ask for. Allowing
+ * one that is not costs a run that keeps spending with no route left to stop
+ * it, which no later request can undo. So an id this cannot attribute fails
+ * toward refusing.
+ *
+ * "First record, and it must be a header" is `createRunner`'s own rule for
+ * attributing a run to a project, deliberately: this check has to refuse
+ * exactly when that lookup would resolve the run to this record.
+ *
+ * It is a read of a file another process is writing, so there is a window
+ * between this answer and the removal. It cannot be closed from here - the run
+ * registry is the machine's - and it is one request wide against a human
+ * clicking two things at once, where the worst case is the case this refuses.
+ */
+async function liveRunFor(ctx: RouteContext, projectPath: string): Promise<string | null> {
+  const live = ctx.liveRunIds
+  if (live === null) return null
+
+  for (const id of live()) {
+    const owner = await projectOfRun(id, ctx.runsDir)
+    if (owner === null) {
+      return `kantan is driving run ${id} right now and cannot tell which project it belongs to, so it will not remove one: every action on a run - stop included - finds its project in ${ctx.projectsFile ?? "the project store"} first, and a removed record would leave that run spending with no way to reach it. Stop it, or restart kantan, then remove the project.`
+    }
+    if (owner === projectPath) {
+      return `run ${id} is in flight for ${projectPath}, so removing it now would leave that run unreachable: every action on it - stop included - finds its project in ${ctx.projectsFile ?? "the project store"} first. Stop the run, then remove the project.`
+    }
+  }
+  return null
+}
+
+/** The project a run log is attributed to, or `null` where it cannot be read as
+ * naming one. The **first** record, and only if it is a header: a header
+ * anywhere later is not a log that starts with one, and `src/runindex.ts` and
+ * `createRunner` both read it that way. */
+async function projectOfRun(id: string, runsDir: string): Promise<string | null> {
+  const path = runLogPathFor(id, runsDir)
+  if (path === null) return null
+  try {
+    for await (const record of replay(path)) {
+      return record.kind === "header" ? record.projectPath : null
+    }
+  } catch {
+    // Missing, unreadable, a directory: all "cannot be attributed", which is
+    // the refusing direction above. Not logged: this runs on a request, and a
+    // log that is gone is not a server fault.
+    return null
+  }
+  return null
+}
+
+/**
  * Drafts `docs/features/<slug>.md` from a description, and writes it.
  *
  * This closes the only gap between registering a repository and having
@@ -2022,7 +2184,7 @@ async function registerProject(req: Request, ctx: RouteContext): Promise<Respons
  */
 async function draftFeatureFile(req: Request, ctx: RouteContext): Promise<Response> {
   const projectsFile = ctx.projectsFile
-  if (projectsFile === null) return noStore()
+  if (projectsFile === null) return noStore("draft a feature file")
 
   const body = await readBody(req)
   if ("refused" in body) return body.refused
