@@ -6,7 +6,8 @@ import type { Server } from "bun"
 import { parseFeature } from "./backlog"
 import type { Task } from "./backlog"
 import { draftFeature, type Draft } from "./draft"
-import { listFeatureFiles } from "./featurefile"
+import { listFeatureFiles, readFeature, removeTaskFromFile } from "./featurefile"
+import type { RemoveResult } from "./featurefile"
 import { commitPaths, requireUsableRepo, taskBranchName } from "./git"
 import type { Repo } from "./git"
 import {
@@ -516,6 +517,14 @@ export const ROUTES: Record<string, RouteHandler> = {
 
   /** Turning a sentence into a task file, which is otherwise hand-written. */
   "POST /api/features": (req, ctx) => draftFeatureFile(req, ctx),
+
+  /** Deleting one task from a task file, which nothing could do: a task added
+   * by mistake, or one the work made redundant, stayed in the tree for good and
+   * could only be removed by editing the markdown by hand. A `DELETE`, so
+   * Origin-guarded like the others. It takes the project, the file and the ref
+   * in a body rather than the path, because the file is a path of the user's
+   * and a path in a URL segment is the one shape this route must not invite. */
+  "DELETE /api/features/task": (req, ctx) => removeFeatureTask(req, ctx),
 }
 
 /**
@@ -1855,6 +1864,8 @@ const EDITABLE_KEYS = ["testCmd", "account", "configDir", "budgetUsd"] as const
 const EDIT_KEYS: readonly string[] = ["path", ...EDITABLE_KEYS]
 const FEATURE_KEYS = ["projectPath", "text"] as const
 
+const REMOVE_TASK_KEYS = ["projectPath", "featureFile", "taskRef"] as const
+
 async function startRun(req: Request, ctx: RouteContext): Promise<Response> {
   const runner = ctx.runner
   if (runner === null) return noRunner()
@@ -2468,6 +2479,118 @@ async function projectOfRun(id: string, runsDir: string): Promise<string | null>
  *   call rather than debug it under pressure - but it is still a spend the
  *   caller should know about, which is why the failure says which model it was.
  */
+/**
+ * Removes one task from one task file.
+ *
+ * The order of the guards is the whole design, because the last of them has to
+ * run **before** any bytes move:
+ *
+ * 1. The body's keys, by the names this route takes.
+ * 2. The project, by its stored spelling - a path not in the store is not a
+ *    project this server writes into.
+ * 3. The file, read through `plannedPath`'s rules: relative, no `..`, no NUL,
+ *    and then checked for containment after joining. A task file is a path the
+ *    *client* supplies, so this is the one input here that a traversal could
+ *    ride in on.
+ * 4. **No run in flight in this repository**, and this one is a 409 rather
+ *    than the warning `draftFeatureFile` answers with. The two differ because
+ *    what is at stake differs. A draft that cannot be committed still exists -
+ *    the caller got the thing they asked for, untracked. A removal that cannot
+ *    be committed has already changed a file the user can see, on a checkout
+ *    that is on the run's own `orch/<task>` branch, and `returnToBase` at the
+ *    end of that run would then restore the task as if nothing happened -
+ *    after the UI had said it was gone. Worse, the run may be *working through
+ *    that very file*: `tickCheckbox` commits a tick into it, and a removal
+ *    landing between a tick and its commit is a conflict in the user's repo
+ *    with no surface to explain it. So nothing is written at all.
+ *
+ * The write itself re-reads and re-resolves by ref - see `removeTaskFromFile` -
+ * so a human editing the markdown in the same second loses nothing.
+ */
+async function removeFeatureTask(req: Request, ctx: RouteContext): Promise<Response> {
+  const projectsFile = ctx.projectsFile
+  if (projectsFile === null) return noStore("remove a task")
+
+  const body = await readBody(req)
+  if ("refused" in body) return body.refused
+  const parsed = parseBody(body.text, REMOVE_TASK_KEYS)
+  if ("refused" in parsed) return parsed.refused
+
+  const projectPath = nonEmptyString(parsed.fields["projectPath"])
+  const featureFile = nonEmptyString(parsed.fields["featureFile"])
+  const taskRef = nonEmptyString(parsed.fields["taskRef"])
+  if (projectPath === null || featureFile === null || taskRef === null) {
+    return badBody(
+      REMOVE_TASK_KEYS,
+      "removing a task needs the project, the task file it is in and the task's ref, each a non-empty string",
+    )
+  }
+
+  const registered = await loadProjects(projectsFile)
+  const project = registered.find((p) => p.path === projectPath)
+  if (project === undefined) return refuse(404, "refused: that project is not registered")
+
+  const relative = plannedPath(featureFile)
+  if (relative === null) return refuse(400, TASK_FILE_OUTSIDE_REPO)
+  const target = resolve(project.path, relative)
+  if (!inside(target, project.path)) return refuse(400, TASK_FILE_OUTSIDE_REPO)
+
+  // Before the read, let alone the write. See the docblock.
+  const live = await liveRunIdFor(ctx, project.path)
+  if (live !== null) {
+    return refuse(
+      409,
+      `refused: run ${live} is in flight in this repository, so nothing was removed. The checkout is on that run's own branch, and a removal committed there would come back the moment the run returns to your base branch - after kantan had told you the task was gone. The run may also be working through this very file. Stop the run, or wait for it, then remove the task.`,
+    )
+  }
+
+  let result: RemoveResult
+  try {
+    result = await removeTaskFromFile(await readFeature(target), taskRef)
+  } catch (cause) {
+    const why = (cause as NodeJS.ErrnoException).code === "ENOENT"
+      ? `refused: ${relative} is not a file in this project`
+      : `refused: ${(cause as Error).message}`
+    // 404 for a file that is not there, 409 for a ref that is not in it: the
+    // first is a request about nothing, the second is a request about a real
+    // file whose contents disagree with the caller - most often because the
+    // tree on screen is older than the markdown on disk.
+    return refuse((cause as NodeJS.ErrnoException).code === "ENOENT" ? 404 : 409, why)
+  }
+
+  // Committed for the same reason the draft is: kantan changed a file inside
+  // someone's repository, and leaving that change loose in their working tree
+  // is the inconsistency. A failed commit is a warning on the 200, not a 5xx -
+  // the task is already gone from the file the caller asked about, and a
+  // rejecting pre-commit hook must not turn that into an error that invites a
+  // retry against a file the first call already changed.
+  let repo: Repo
+  try {
+    repo = await requireUsableRepo(project.path)
+  } catch (cause) {
+    return refuse(400, (cause as Error).message)
+  }
+  const commitWarning = await commitPaths(repo, {
+    subject: `chore: remove ${taskRef} from ${relative}`,
+    body: `The task read "${result.removed}". Removed through kantan at a human's request; it had not been run.`,
+    paths: [relative],
+  })
+
+  const warnings = [result.warning, commitWarning].filter((w): w is string => w !== null)
+  return Response.json(
+    {
+      ok: true,
+      featureFile: relative,
+      taskRef,
+      removed: result.removed,
+      ...(warnings.length === 0 ? {} : { warnings }),
+    },
+    { headers: { "Cache-Control": "no-store" } },
+  )
+}
+
+const TASK_FILE_OUTSIDE_REPO = "refused: that task file does not sit inside the project"
+
 async function draftFeatureFile(req: Request, ctx: RouteContext): Promise<Response> {
   const projectsFile = ctx.projectsFile
   if (projectsFile === null) return noStore("draft a feature file")

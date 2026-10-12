@@ -2136,6 +2136,16 @@ async function gitIn(dir: string, ...args: string[]): Promise<void> {
   if (code !== 0) throw new Error(`git ${args.join(" ")} failed: ${await new Response(p.stderr).text()}`)
 }
 
+/** What git says, trimmed. `gitIn` deliberately answers nothing, because every
+ * other caller here only needs the exit code. */
+async function gitSays(dir: string, ...args: string[]): Promise<string> {
+  const p = Bun.spawn(["git", "-C", dir, ...args], { env: GIT_ENV, stdout: "pipe", stderr: "pipe" })
+  const out = await new Response(p.stdout).text()
+  const code = await p.exited
+  if (code !== 0) throw new Error(`git ${args.join(" ")} failed: ${await new Response(p.stderr).text()}`)
+  return out.trim()
+}
+
 /** An empty scratch directory of its own, canonicalised so a comparison against
  * git's resolved root compares like with like. `mkdtemp` is unique per call, so
  * two `bun run check` processes cannot delete each other's work - the pid rule
@@ -4167,3 +4177,221 @@ test("the real entry point builds a server that can register a project and start
     await server.exited
   }
 }, 30_000)
+
+/* ========================================================================== */
+/* DELETE /api/features/task                                                  */
+/* ========================================================================== */
+
+const REMOVE_TASK = "DELETE /api/features/task"
+
+function removeTask(
+  l: Launch,
+  body: unknown,
+): Promise<{ status: number; headers: Headers; body: string }> {
+  return call(l, { path: "/api/features/task", method: "DELETE", body: JSON.stringify(body) })
+}
+
+test("removing a task is a DELETE in ROUTES, behind the guards, and not token-exempt", () => {
+  expect(Object.keys(ROUTES)).toContain(REMOVE_TASK)
+  expect(TOKEN_EXEMPT.has(REMOVE_TASK)).toBe(false)
+})
+
+test("it takes the task out of the file and says what it removed", async () => {
+  const repo = await cleanRepo()
+  await withFeature(repo, "importer.md", FEATURE)
+  const l = await withTree(await storeOf(repo))
+
+  const res = await removeTask(l, {
+    projectPath: repo,
+    featureFile: "docs/features/importer.md",
+    taskRef: "T1",
+  })
+
+  expect(res.status).toBe(200)
+  const body = JSON.parse(res.body) as { removed: string; taskRef: string; featureFile: string }
+  expect(body.removed).toBe("Read the CSV")
+  expect(body.taskRef).toBe("T1")
+  expect(body.featureFile).toBe("docs/features/importer.md")
+
+  const after = await readFile(join(repo, "docs", "features", "importer.md"), "utf8")
+  expect(after).not.toContain("Read the CSV")
+  // Every other line, including the done task and the one with no ref.
+  expect(after).toBe("# Importer\n\n- [x] T2 Write the rows\n- [ ] A line with no ref\n")
+})
+
+test("the tree stops listing it, which is the point of the route", async () => {
+  const repo = await cleanRepo()
+  await withFeature(repo, "importer.md", FEATURE)
+  const l = await withTree(await storeOf(repo))
+
+  await removeTask(l, { projectPath: repo, featureFile: "docs/features/importer.md", taskRef: "T1" })
+
+  const { body } = await getTree(l)
+  const tasks = body.projects?.[0]?.features[0]?.tasks ?? []
+  expect(tasks.map((t) => t.ref)).toEqual(["T2", null])
+})
+
+test("it commits the change, because kantan wrote into someone's repository", async () => {
+  const repo = await cleanRepo()
+  await withFeature(repo, "importer.md", FEATURE)
+  // Tracked first: an untracked file has no diff to commit, and the realistic
+  // case is a backlog the user already has in git.
+  await gitIn(repo, "add", "docs/features/importer.md")
+  await gitIn(repo, "commit", "-m", "add the backlog", "--", "docs/features/importer.md")
+  const l = await withTree(await storeOf(repo))
+
+  const res = await removeTask(l, {
+    projectPath: repo,
+    featureFile: "docs/features/importer.md",
+    taskRef: "T1",
+  })
+  expect(res.status).toBe(200)
+  expect(JSON.parse(res.body)).not.toHaveProperty("warnings")
+
+  expect(await gitSays(repo, "log", "-1", "--pretty=%s")).toBe("chore: remove T1 from docs/features/importer.md")
+  expect(await gitSays(repo, "status", "--porcelain")).toBe("")
+})
+
+/**
+ * The guard that has to run before any bytes move, and the reason it is a 409
+ * where `POST /api/features` answers a warning.
+ *
+ * A draft that cannot be committed still exists - the caller got what they
+ * asked for, untracked. A removal that cannot be committed has already changed
+ * a file the user can see, on a checkout sitting on the run's own `orch/<task>`
+ * branch, and `returnToBase` would then bring the task back after the UI said
+ * it was gone. The assertion that matters here is the second one: the file is
+ * untouched.
+ */
+test("a run in flight in the repo refuses, and nothing is written", async () => {
+  const repo = await cleanRepo()
+  const path = await withFeature(repo, "importer.md", FEATURE)
+  const before = await readFile(path, "utf8")
+  const dir = await runsDir()
+  const store = await storeFile()
+  const live = "33333333-3333-4333-8333-333333333333"
+  const l = serve({ runsDir: dir, projectsFile: store, liveRunIds: () => [live] })
+  await logNamingProject(dir, live, (await requireUsableRepo(repo)).root)
+  await register(l, { path: repo, testCmd: "npm test" })
+
+  const res = await removeTask(l, {
+    projectPath: repo,
+    featureFile: "docs/features/importer.md",
+    taskRef: "T1",
+  })
+
+  expect(res.status).toBe(409)
+  expect(res.body).toContain(live)
+  expect(await readFile(path, "utf8")).toBe(before)
+})
+
+test("a run in flight in a *different* repo does not refuse", async () => {
+  const mine = await cleanRepo()
+  const other = await cleanRepo()
+  await withFeature(mine, "importer.md", FEATURE)
+  const dir = await runsDir()
+  const store = await storeFile()
+  const live = "44444444-4444-4444-8444-444444444444"
+  const l = serve({ runsDir: dir, projectsFile: store, liveRunIds: () => [live] })
+  await logNamingProject(dir, live, (await requireUsableRepo(other)).root)
+  await register(l, { path: mine, testCmd: "npm test" })
+
+  const res = await removeTask(l, {
+    projectPath: mine,
+    featureFile: "docs/features/importer.md",
+    taskRef: "T1",
+  })
+  expect(res.status).toBe(200)
+})
+
+/**
+ * The task file is a path the *client* supplies, which makes it the one input
+ * on this route a traversal could ride in on. Every spelling is refused before
+ * anything is read, and the matrix is the enumeration rather than one example.
+ */
+test("a task file outside the project is refused, every way of spelling it", async () => {
+  const repo = await cleanRepo()
+  await withFeature(repo, "importer.md", FEATURE)
+  const l = await withTree(await storeOf(repo))
+
+  for (const featureFile of [
+    "../outside.md",
+    "docs/../../outside.md",
+    "docs\\..\\..\\outside.md",
+    "/etc/passwd",
+    "docs/features/importer.md\u0000.png",
+    "",
+  ]) {
+    const res = await removeTask(l, { projectPath: repo, featureFile, taskRef: "T1" })
+    expect([400, 404], `for ${JSON.stringify(featureFile)}`).toContain(res.status)
+    // Whatever the status, the real file is still whole.
+    expect(await readFile(join(repo, "docs", "features", "importer.md"), "utf8")).toContain("Read the CSV")
+  }
+})
+
+test("an unregistered project is a 404, not a write", async () => {
+  const repo = await cleanRepo()
+  await withFeature(repo, "importer.md", FEATURE)
+  const l = await withTree(await storeFile())
+
+  const res = await removeTask(l, {
+    projectPath: repo,
+    featureFile: "docs/features/importer.md",
+    taskRef: "T1",
+  })
+  expect(res.status).toBe(404)
+  expect(await readFile(join(repo, "docs", "features", "importer.md"), "utf8")).toContain("Read the CSV")
+})
+
+test("a ref the file does not have is a 409, and a file that is not there is a 404", async () => {
+  const repo = await cleanRepo()
+  await withFeature(repo, "importer.md", FEATURE)
+  const l = await withTree(await storeOf(repo))
+
+  const missingRef = await removeTask(l, {
+    projectPath: repo,
+    featureFile: "docs/features/importer.md",
+    taskRef: "T9",
+  })
+  expect(missingRef.status).toBe(409)
+  expect(missingRef.body).toContain("no task T9")
+
+  const missingFile = await removeTask(l, {
+    projectPath: repo,
+    featureFile: "docs/features/nope.md",
+    taskRef: "T1",
+  })
+  expect(missingFile.status).toBe(404)
+})
+
+test("a body missing any of the three keys is refused by the names this route takes", async () => {
+  const repo = await cleanRepo()
+  await withFeature(repo, "importer.md", FEATURE)
+  const l = await withTree(await storeOf(repo))
+
+  for (const body of [
+    { projectPath: repo, featureFile: "docs/features/importer.md" },
+    { projectPath: repo, taskRef: "T1" },
+    { featureFile: "docs/features/importer.md", taskRef: "T1" },
+    { projectPath: repo, featureFile: "docs/features/importer.md", taskRef: "" },
+  ]) {
+    const res = await removeTask(l, body)
+    expect(res.status).toBe(400)
+    expect(res.body).toContain("taskRef")
+  }
+})
+
+test("a duplicated ref is refused rather than guessed at", async () => {
+  const repo = await cleanRepo()
+  await withFeature(repo, "dupe.md", "# D\n\n- [ ] T1 one\n- [ ] T1 two\n")
+  const l = await withTree(await storeOf(repo))
+
+  const res = await removeTask(l, {
+    projectPath: repo,
+    featureFile: "docs/features/dupe.md",
+    taskRef: "T1",
+  })
+  expect(res.status).toBe(409)
+  expect(res.body).toContain("lines 3, 4")
+  expect(await readFile(join(repo, "docs", "features", "dupe.md"), "utf8")).toContain("T1 two")
+})
