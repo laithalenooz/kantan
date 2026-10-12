@@ -780,12 +780,29 @@ From the Task 25 agent (commit `3881bed`). Each of these is load-bearing, each
 has a test behind it, and several are invisible in a screenshot - so a restyle
 that only checks "does it look like the artboard" will drop them silently.
 
-- **`data-task-row` + `aria-current` on task rows.** A contract between `Tree`
-  and `Gate`, not decoration: the gate's bare-`a` shortcut refuses when focus
-  points at a task the card is not showing, and that check reads these.
-  `test/ui/Gate.test.tsx` renders the **real `Tree`**, so dropping either fails
-  that suite rather than silently allowing a wrong approval. Keep that test
-  rendering the real component.
+- **`data-task-row` on task rows.** A contract between `Tree` and `Gate`, not
+  decoration: no approval keystroke fires when it is raised on a task row, and
+  that check reads this one attribute. `test/ui/Gate.test.tsx` renders the
+  **real `Tree`**, so dropping it fails that suite rather than silently
+  allowing a wrong approval. Keep that test rendering the real component.
+
+  **Corrected 2026-10-12 (`cd726a8`).** This bullet used to read
+  "`data-task-row` + `aria-current`", because the guard refused only on a row
+  that was *not* `aria-current`. That was wrong, and the way it was wrong is
+  worth keeping: `aria-current` says which row the **tree** believes is
+  selected, and says nothing about whether the **gate** beside it has caught
+  up. Press Enter on T3 and T3 is current immediately, while the card still
+  holds T2's plan until a fetch resolves - so the narrower rule approved T2
+  from a row marked T3, and was correct only for as long as `App.tsx` happened
+  to re-render in time. **A guard whose answer comes from another file's render
+  timing is not a guard.** The rule is now the stricter one, `pointsAtATask`:
+  any task row refuses, selected or not. Refusing costs one Tab; approving
+  costs an implementation run on a plan nobody agreed to.
+
+  `aria-current` is still load-bearing for the tree's own selection and for
+  where `j` enters the list - it is just no longer what keeps a wrong approval
+  from firing. Two mutations pin this: deleting the guard fails the suite, and
+  so does reverting it to the `aria-current` form.
 - **`bareKeystroke`, exported from `Tree.tsx`, imported by `Gate.tsx`.** The
   single entry point for any single-letter shortcut. Deliberately not copied: a
   second copy of a rule about when *not* to fire a destructive shortcut drifts,
@@ -851,6 +868,21 @@ So assert the **guarantee**, not the drawing: "the shortcut is discoverable"
 passes whether the hint is a chip, a `title`, or `aria-keyshortcuts`, and
 survives the next restyle. Every load-bearing Task 25 attribute is exposed to
 this, which is why they are listed by name above.
+
+**Settled 2026-10-12: the chip stays out, and this is the user's call, not an
+oversight.** Do not re-add it. The chip was never part of the approved design -
+`docs/design/Main.dc.html:233` draws one key chip, `⌘↵`, `DESIGN.md` says the
+same in prose, and `git log -S` finds the `A` chip in exactly two commits: the
+Task 25 one that invented it and the fidelity one that removed it. The agent
+who removed it was restoring the artboard, not deleting someone's work. The
+user was shown that evidence and chose to keep it removed.
+
+What replaced it (`ec7e137`) is `title="Approve plan — press A, or ⌘↵"` beside
+the existing `aria-keyshortcuts`. Both are attributes, so the button matches
+the artboard pixel for pixel, and the shortcut is still findable by hovering
+the control that performs it. If a later pass wants that gone too, the
+guarantee test accepts any of the three hints - but something has to carry it,
+because `a` starts a real implementation run.
 
 ### There are TWO bands, and only one of them was built
 
