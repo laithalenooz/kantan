@@ -642,11 +642,30 @@ describe("cost", () => {
   test("the chip says whether the figure is still moving", async () => {
     setReducedMotion(true)
     await render(rail())
-    expect(host.textContent).toContain("live")
+    expect(textOf('[data-testid="cost-status"]')).toBe("live")
 
     await render(rail({ phases: gatePhases() }))
-    expect(host.textContent).toContain("paused at gate")
+    expect(textOf('[data-testid="cost-status"]')).toBe("paused at gate")
     expect(host.textContent).not.toContain("live")
+  })
+
+  test("and it is never simply missing, which is what a finished run showed", async () => {
+    /* Both `Main.dc.html` and `Return.dc.html` draw this line, so a card that
+     * renders it only sometimes has a hole where the artboard has a sentence —
+     * which is exactly what the finished run loaded in the browser looked
+     * like. No artboard covers a run that is over, so the third word has to be
+     * true of everything that reaches that branch: a finished run, a failed
+     * one, and a ladder that has not started. It says only what is certain. */
+    setReducedMotion(true)
+
+    await render(rail({ phases: [{ phase: "plan", state: "done", elapsedMs: 8_000 }] }))
+    expect(textOf('[data-testid="cost-status"]')).toBe("not running")
+
+    await render(rail({ phases: [] }))
+    expect(textOf('[data-testid="cost-status"]')).toBe("not running")
+
+    await render(rail({ phases: [{ phase: "refine", state: "flagged", elapsedMs: 1_000 }] }))
+    expect(textOf('[data-testid="cost-status"]')).toBe("not running")
   })
 })
 
@@ -766,20 +785,30 @@ describe("reduced motion", () => {
     setReducedMotion(true)
     await render(rail())
 
-    expect(one('[data-testid="window-ring"]').style.transition).toBe("none")
+    /* The ring is the artboard's own `.ring`/`kring`, so its gate is the
+     * class: no class, no animation, and the attribute is simply correct from
+     * the first paint. The cost bar keeps the inline transition
+     * `Return.dc.html` puts on it. Neither is a transform, which is the point
+     * — Motion's `reducedMotion="user"` would have let both keep moving. */
+    expect(one('[data-testid="window-ring"]').dataset["motion"]).toBe("static")
+    expect(one('[data-testid="window-ring"]').getAttribute("class")).toBeNull()
     expect(one('[data-testid="cost-bar"]').style.transition).toBe("none")
     /* The figures are still the truth. */
     expect(one('[data-testid="window-ring"]').getAttribute("stroke-dashoffset")).toBe("92.68")
   })
 
-  test("and without the preference both really do transition", async () => {
-    /* The control for the test above. `transition: none` would pass it even if
-     * neither element had ever had a transition to suppress. */
+  test("and without the preference both really do move", async () => {
+    /* The control for the test above. A missing class and `transition: none`
+     * would pass it even if neither element had ever had anything to suppress. */
     setReducedMotion(false)
     await render(rail())
 
-    expect(one('[data-testid="window-ring"]').style.transition).toContain("stroke-dashoffset")
+    expect(one('[data-testid="window-ring"]').dataset["motion"]).toBe("animated")
+    expect(one('[data-testid="window-ring"]').getAttribute("class")).toBe("ring")
     expect(one('[data-testid="cost-bar"]').style.transition).toContain("width")
+    /* And the figure is the same either way: `kring` winds up to the value the
+     * attribute already carries, so no animation here can invent a reading. */
+    expect(one('[data-testid="window-ring"]').getAttribute("stroke-dashoffset")).toBe("92.68")
   })
 
   test("and the two glyphs that move stop moving", async () => {
@@ -946,6 +975,122 @@ describe("phases", () => {
     expect(phaseFigure("implement")).toBe("—")
   })
 
+  test("neither has the phase the run is sitting on, and it must not invent 0:00", async () => {
+    /* `foldRun` in `src/ui/live.ts` sets neither `startedAtMs` nor
+     * `elapsedMs` on any step, so this is every live run today.
+     * `formatClock(undefined)` is `0:00` by contract, and on the row the run
+     * is actually at, `0:00` reads as a phase that started a moment ago rather
+     * than one nobody has timed. A current row is exactly where a fabricated
+     * figure gets believed. */
+    expect(formatClock(undefined)).toBe("0:00")
+
+    await render(
+      rail({
+        phases: [
+          { phase: "gate", state: "waiting" },
+          { phase: "test", state: "running" },
+        ],
+      }),
+    )
+    expect(phaseFigure("gate")).toBe("—")
+    expect(phaseFigure("test")).toBe("—")
+  })
+
+  test("a finished phase reads its recorded duration, never a start time it inherited", async () => {
+    /* `close()` in `src/ui/live.ts` builds its `done` entry by spreading the
+     * running one, so the day that fold starts stamping `startedAtMs`, every
+     * finished row inherits one. Reading it would leave a phase that ended an
+     * hour ago still counting — and holding a 1s interval open to do it. */
+    const anHourAgo = Date.now() - 3_600_000
+    await render(
+      rail({
+        phases: [
+          { phase: "plan", state: "done", elapsedMs: 8_000, startedAtMs: anHourAgo },
+          { phase: "gate", state: "done", startedAtMs: anHourAgo },
+        ],
+      }),
+    )
+    expect(phaseFigure("plan")).toBe("8s")
+    expect(phaseFigure("gate")).toBe("—")
+  })
+
+  test("the gate a run is parked at prints a duration; only a running phase clocks", async () => {
+    /* `Main.dc.html` prints the waiting gate as `2m 14s`, and the script in
+     * `Return.dc.html` formats the running phase's `{{elapsed}}` as `mm:ss`.
+     * Two formats, because they mean different things, and the waiting one is
+     * not the one that ticks a clock. */
+    await render(
+      rail({
+        phases: [
+          { phase: "gate", state: "waiting", startedAtMs: Date.now() - 134_000 },
+          { phase: "test", state: "running", startedAtMs: Date.now() - 42_000 },
+        ],
+      }),
+    )
+    expect(phaseFigure("gate")).toBe("2m 14s")
+    expect(phaseFigure("test")).toBe("0:42")
+  })
+
+  /**
+   * The note beside a phase name, as a matrix.
+   *
+   * `src/ui/live.ts` passes the **park reason** as the note, so a gate park
+   * arrives as `note: "gate"` and the row read "Gate · gate" in the browser.
+   * Suppressing it is a guard that drops input, so `CLAUDE.md`'s rule applies:
+   * the dimension is `note` compared against `step.phase`, and the costs are
+   * not symmetric. Dropping `question` or `blocked` hides *why* a run is
+   * parked, which is the one thing the row is there to say; showing a
+   * duplicate is only ugly. So the match is exact, against the phase id alone
+   * — no case folding, no matching the display label, no prefix rule, each of
+   * which would also catch a real reason.
+   */
+  test.each([
+    ["gate", "waiting", "gate", "waiting"],
+    ["gate", "waiting", undefined, "waiting"],
+    ["gate", "waiting", "", "waiting"],
+    ["gate", "waiting", "waiting", "waiting"],
+    ["gate", "waiting", "question", "question"],
+    ["gate", "done", "gate", null],
+    ["gate", "done", undefined, null],
+    ["gate", "done", "approved", "approved"],
+    ["gate", "pending", "gate", null],
+    ["plan", "waiting", "question", "question"],
+    ["implement", "waiting", "blocked", "blocked"],
+    ["implement", "waiting", "stalled", "stalled"],
+    ["test", "running", "attempt 6", "attempt 6"],
+    ["refine", "flagged", "5 rounds", "5 rounds"],
+    /* Case is not folded and the label is not matched. "Gate" is a word a
+     * caller could legitimately mean, and a rule loose enough to catch it is
+     * loose enough to catch a reason that happens to be capitalised. */
+    ["gate", "done", "Gate", "Gate"],
+  ] as const)(
+    "the note on a %s row that is %s, given %p, reads %p",
+    async (phase, state, note, expected) => {
+      await render(rail({ phases: [{ phase, state, ...(note === undefined ? {} : { note }) }] }))
+
+      const shown = host.querySelector(`li[data-phase="${phase}"] [data-note]`)
+      if (expected === null) {
+        expect(shown).toBeNull()
+      } else {
+        expect((shown?.textContent ?? "").replace(/\s+/g, " ").trim()).toBe(`· ${expected}`)
+      }
+    },
+  )
+
+  test("a dropped note is replaced by the state, never by a word the rail cannot know", async () => {
+    /* The substitute comes from `state`, so it cannot be the thing that was
+     * just found redundant. A done gate gets nothing: the rail has no way to
+     * tell whether it was approved or answered, and "approved" would be a
+     * guess about the one decision the product exists to record. */
+    await render(rail({ phases: [{ phase: "gate", state: "waiting", note: "gate" }] }))
+    expect(textOf('li[data-phase="gate"] [data-note]')).toBe("· waiting")
+    expect(one('li[data-phase="gate"]').textContent).not.toContain("gate ·")
+
+    await render(rail({ phases: [{ phase: "gate", state: "done", note: "gate" }] }))
+    expect(host.querySelector('li[data-phase="gate"] [data-note]')).toBeNull()
+    expect(host.textContent).not.toContain("approved")
+  })
+
   test("durations and clocks, at the boundaries", () => {
     expect(formatDuration(0)).toBe("0s")
     expect(formatDuration(8_000)).toBe("8s")
@@ -1006,19 +1151,57 @@ describe("stop", () => {
 // ---------------------------------------------------------------------------
 
 describe("machine values", () => {
-  test("the cost, the ceiling, the durations, the percentages and the reset times are mono", async () => {
+  /*
+   * This pair replaces one test that asserted "every machine value is mono".
+   *
+   * `DESIGN.md` says that, and then says the artboards are more precise than
+   * itself. They are, and they disagree with it here: `Main.dc.html` puts `.m`
+   * (Geist Mono) on the phase durations and the `resets` lines, and on nothing
+   * else in this rail. The cost figure, the `$50.00` ceiling and the ring
+   * percentages are plain Geist with `font-variant-numeric: tabular-nums`.
+   *
+   * It is not a small difference on screen: 38px of Geist Mono sets `$0.42`
+   * with the decimal point alone in a full character cell, which is the single
+   * most visible way the built rail did not look like the artboard.
+   * `tabular-nums` does the job mono was wanted for — a ticking figure that
+   * does not jitter — so nothing is lost but the font.
+   */
+  test("the durations and the reset times are mono, which is where the artboard puts it", async () => {
     setReducedMotion(true)
     await render(rail())
 
     const mono = all(".font-mono").map((element) => (element.textContent ?? "").trim())
-    expect(one('[data-testid="cost-figure"]').className).toContain("font-mono")
-    expect(one('[data-testid="window-percent"]').className).toContain("font-mono")
-    expect(mono).toContain("$3.18")
-    expect(mono).toContain("$50.00")
-    expect(mono).toContain("41%")
+    expect(mono).toContain("8s")
     expect(mono).toContain(phaseFigure("test"))
     expect(phaseFigure("test")).toMatch(/^\d+:\d{2}$/)
-    expect(mono).toContain("8s")
+
+    const resets = new Date(1800000000 * 1000).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    })
+    expect(mono).toContain(`resets ${resets}`)
+  })
+
+  test("and the figures are tabular Geist, which is where it does not", async () => {
+    setReducedMotion(true)
+    await render(rail())
+
+    for (const id of ["cost-figure", "window-percent"]) {
+      const element = one(`[data-testid="${id}"]`)
+      expect(element.className).toContain("tabular-nums")
+      expect(element.className).not.toContain("font-mono")
+    }
+    /* The ceiling sits inside a sentence, so it is found by what it says. */
+    const ceiling = all("span").find((element) => element.textContent === "$50.00")
+    expect(ceiling).toBeDefined()
+    expect(ceiling?.className).toContain("tabular-nums")
+    expect(ceiling?.className).not.toContain("font-mono")
+
+    /* The figures themselves are unchanged by any of this. */
+    expect(textOf('[data-testid="cost-figure"]')).toBe("$3.18")
+    expect(textOf('[data-testid="window-percent"]')).toBe("41%")
+    expect(host.textContent).toContain("of $50.00 ceiling for this run")
   })
 
   test("a figure is a figure even when it is zero", () => {

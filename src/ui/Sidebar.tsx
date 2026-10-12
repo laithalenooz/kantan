@@ -56,10 +56,48 @@
  * never updates — probed here under happy-dom, where it answered `false` with
  * the media feature set to `reduce`. `usePrefersReducedMotion` below therefore
  * reads the media feature live, and everything that moves is gated on it.
+ *
+ * ## Typography: the artboard, not the summary
+ *
+ * `DESIGN.md` says "mono for every machine value", and then says the artboards
+ * are more precise than itself. They are, and they disagree with it here. In
+ * `Main.dc.html` the `.m` (Geist Mono) class is on the **phase durations** and
+ * the **`resets` lines** and nowhere else in this rail: the cost figure, the
+ * `$50.00` ceiling and the ring percentages are plain Geist with
+ * `font-variant-numeric: tabular-nums`. A 38px mono `$0.42` sets the decimal
+ * point in a full character cell and does not look like the artboard at all,
+ * which is the single most visible difference a screenshot shows. So the
+ * artboard wins, and `tabular-nums` does the job mono was wanted for — the
+ * figure does not jitter as it ticks.
+ *
+ * ## Three things this rail cannot show, because nothing upstream sends them
+ *
+ * Each renders as a dash or is left out rather than guessed at:
+ *
+ * - **Per-phase elapsed times.** `foldRun` in `src/ui/live.ts` sets neither
+ *   `elapsedMs` nor `startedAtMs` on any step, so every figure is `—` in a
+ *   live run. A row with no timing at all must print `—`; printing
+ *   `formatClock(undefined)` would invent `0:00` for a gate nobody has timed,
+ *   and a current row is exactly where a fabricated figure would be believed.
+ * - **The account's name.** `GET /api/projects` reports `{kind:"unknown"}`
+ *   because nothing maps a `configDir` to an account, so `App.tsx` passes the
+ *   label "account unknown". Rendered as given. See `AccountWindow.profile`:
+ *   guessing an account's identity shows a run the wrong rate limit silently.
+ * - **The reset time.** `src/stream.ts` reads `rate_limit_info` and keeps only
+ *   `status` and `utilization`; `resetsAt` is dropped there, `RunView.limit`
+ *   has nowhere to put it and `App.tsx` passes no `resetsAtSec`. So `resets —`
+ *   is the honest reading, not a formatting bug.
  */
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
-import { animate, motion, useReducedMotion } from "motion/react"
+/* `animate` only, never a `motion.*` component. Motion drives a component
+ * through WAAPI, and cancelling a WAAPI animation rejects an
+ * `Animation.finished` promise `motion-dom` does not catch — 195 unhandled
+ * `AbortError`s in one test run, measured on this repo's `Digest.tsx`. Every
+ * entrance here is a CSS class from `artboard.css` instead. `animate` on two
+ * numbers is the exception: it runs on `requestAnimationFrame`, has no promise
+ * to reject, and no CSS rule can count a figure. */
+import { animate, useReducedMotion } from "motion/react"
 
 import type { Event } from "../stream.ts"
 import type { RunPhase } from "../runlog.ts"
@@ -313,8 +351,16 @@ export function limitNotice(windows: readonly AccountWindow[]): LimitNotice | nu
 }
 
 // ---------------------------------------------------------------------------
-// Formatting. Every machine value renders in mono, per DESIGN.md.
+// Formatting. Durations and reset times render in mono, figures in tabular
+// Geist — see "Typography: the artboard, not the summary" above.
 // ---------------------------------------------------------------------------
+
+/**
+ * What every absent machine value prints: an em dash, as all three artboards
+ * draw it. Never `0`, never `0:00`, never a blank cell — an empty slot where a
+ * number belongs reads as "nothing happened" rather than "nobody said".
+ */
+const DASH = "—"
 
 /** The artboard's own circumference, for r=25: 2π·25 = 157.0796. */
 export const RING_CIRCUMFERENCE = 157.08
@@ -334,7 +380,7 @@ export function ringOffset(utilization: number | undefined): number {
 
 /** A 0–1 fraction as a percentage. `undefined` is `—`, never `0%`. */
 export function percentLabel(utilization: number | undefined): string {
-  if (utilization === undefined || !Number.isFinite(utilization)) return "—"
+  if (utilization === undefined || !Number.isFinite(utilization)) return DASH
   return `${Math.round(utilization * 100)}%`
 }
 
@@ -347,7 +393,7 @@ export function formatUsd(usd: number): string {
  * Seconds stop being interesting at ten minutes.
  */
 export function formatDuration(ms: number | undefined): string {
-  if (ms === undefined || !Number.isFinite(ms) || ms < 0) return "—"
+  if (ms === undefined || !Number.isFinite(ms) || ms < 0) return DASH
   const total = Math.floor(ms / 1000)
   if (total < 60) return `${total}s`
   const minutes = Math.floor(total / 60)
@@ -526,7 +572,24 @@ function useGrindingNotice(grinding: GrindingFlag | null | undefined): {
 
 const CARD = "rounded-2xl border border-edge bg-white shadow-[0_1px_2px_rgba(17,18,22,.04)]"
 const CARD_HEADING = "m-0 text-[11.5px] font-semibold uppercase tracking-[0.07em] text-muted-400"
+
+/**
+ * A machine value in Geist Mono: the phase durations and the `resets` lines,
+ * which is every `.m` the artboard puts in this rail and no more.
+ *
+ * `tabular-nums` rides along because these tick. It is redundant in a monospace
+ * face and costs nothing, and it means the two constants can be read as "this
+ * number must not jitter" rather than "this number is in a particular font".
+ */
 const MONO = "font-mono tabular-nums"
+
+/**
+ * A machine value in Geist: the cost figure, the ceiling and the ring
+ * percentages. Proportional, but with the digits on a fixed advance so a
+ * counting figure does not shuffle its neighbours — `font-variant-numeric:
+ * tabular-nums`, which is exactly what the artboard puts on all three.
+ */
+const FIGURE = "tabular-nums"
 
 export function Sidebar({
   phases,
@@ -545,11 +608,31 @@ export function Sidebar({
   const notice = useMemo(() => limitNotice(accounts), [accounts])
   const { show: showGrinding, dismiss } = useGrindingNotice(grinding)
 
+  /* Two rules on the root, both measured against `Main.dc.html` in Chrome.
+   *
+   * `min-h-full`, because Stop is pinned with `margin-top:auto` and an auto
+   * margin has nothing to push against in a box that ends at its content. The
+   * artboard's rail is a column of a `min-height:100vh` flex row, so Stop sits
+   * at the bottom of the screen there; without this it sat directly under the
+   * windows card. Caught in a screenshot, not by an assertion.
+   *
+   * `leading-[normal]`, because Tailwind's preflight puts `line-height: 1.5`
+   * on `html` and the artboard sets no line-height at all — so every line in
+   * this rail was 2 to 4px taller than the design, and the three cards came
+   * out 253/141/190px against the artboard's 230/133/178. That is 43px of
+   * looseness nothing points at: each row looks almost right on its own. The
+   * elements that carry a line-height below do so because the artboard gives
+   * them one. For the same reason this file uses `text-[14px]` and
+   * `text-[12px]` rather than `text-sm` and `text-xs`, which bundle a
+   * line-height of their own that would override this. */
   return (
     <aside
       aria-label="Run details"
-      className="flex min-w-0 shrink-0 grow basis-[260px] flex-col gap-3.5 border-l border-edge bg-panel px-4 pt-5 pb-7"
+      className="flex min-h-full min-w-0 shrink-0 grow basis-[260px] flex-col gap-3.5 border-l border-edge bg-panel px-4 pt-5 pb-7 leading-[normal]"
     >
+      {/* `bf d2`…`d5` on the four children below: the Blur Fade stagger, with
+          the artboard's own delays, so the rail arrives one card at a time.
+          The classes are `src/ui/artboard.css`'s, which `main.tsx` imports. */}
       <Phases steps={ladder} reduce={reduce} />
       <Cost spent={spent} ceilingUsd={ceilingUsd} steps={ladder} reduce={reduce} />
       <Windows accounts={accounts} notice={notice} reduce={reduce} />
@@ -592,13 +675,13 @@ const PHASE_STATE_WORD: Record<PhaseState, string> = {
  * on the last thing that moved.
  */
 function currentStep(steps: readonly PhaseStep[]): PhaseStep | undefined {
-  return steps.find((step) => step.state === "running" || step.state === "waiting")
+  return steps.find((step) => isCurrentState(step.state))
 }
 
 function Phases({ steps, reduce }: { steps: readonly PhaseStep[]; reduce: boolean }) {
   const current = currentStep(steps)
   return (
-    <section className={`${CARD} p-3`}>
+    <section className={`${CARD} bf d2 p-3`}>
       <h2 className={`${CARD_HEADING} mx-1.5 mt-0.5 mb-2`}>Phases</h2>
       <ol className="m-0 flex list-none flex-col gap-0.5 p-0">
         {steps.map((step) => (
@@ -609,29 +692,102 @@ function Phases({ steps, reduce }: { steps: readonly PhaseStep[]; reduce: boolea
   )
 }
 
-/** The tint, the type and the figure's colour, one entry per `PhaseState`. */
-const PHASE_TONE: Record<PhaseState, { row: string; name: string; figure: string }> = {
-  done: { row: "", name: "", figure: "text-muted-500" },
+/**
+ * The tint, the type and the figure's colour, one entry per `PhaseState`.
+ *
+ * `row` carries the padding too, because the artboard gives the highlighted
+ * row `10px 8px` against every other row's `9px 8px` — the tint is a plate and
+ * it sits a little prouder than the rows around it.
+ */
+const PHASE_TONE: Record<PhaseState, { row: string; name: string; note: string; figure: string }> = {
+  done: { row: "py-[9px]", name: "", note: "text-muted-500", figure: "text-muted-500" },
   waiting: {
-    row: "rounded-[10px] bg-attention-tint shadow-[inset_0_0_0_1px_#FFD3B8]",
+    row: "rounded-[10px] bg-attention-tint py-[10px] shadow-[inset_0_0_0_1px_#FFD3B8]",
     name: "font-[650]",
+    note: "font-medium text-attention-ink",
     figure: "font-semibold text-attention-ink",
   },
   running: {
-    row: "rounded-[10px] bg-[#F3F3FE] shadow-[inset_0_0_0_1px_#D6D7FA]",
+    row: "rounded-[10px] bg-[#F3F3FE] py-[10px] shadow-[inset_0_0_0_1px_#D6D7FA]",
     name: "font-[650]",
+    note: "font-medium text-indigo-deeper",
     figure: "font-semibold text-indigo-deeper",
   },
-  flagged: { row: "", name: "", figure: "text-muted-500" },
-  pending: { row: "text-muted-500", name: "", figure: "" },
+  flagged: { row: "py-[9px]", name: "", note: "text-muted-500", figure: "text-muted-500" },
+  pending: { row: "py-[9px] text-muted-500", name: "", note: "text-muted-500", figure: "" },
 }
 
-const PHASE_NOTE_TONE: Record<PhaseState, string> = {
-  done: "text-muted-500",
-  waiting: "text-attention-ink",
-  running: "text-indigo-deeper",
-  flagged: "text-muted-500",
-  pending: "text-muted-500",
+/**
+ * The qualifier beside the phase name, or nothing.
+ *
+ * A guard that drops input, so the rule in `CLAUDE.md` applies. **The dimension
+ * it reads is `note` compared against `step.phase`** — not the note on its own.
+ *
+ * The values that dimension takes, because the fold hands this field the
+ * *park reason* (`src/ui/live.ts`) and callers hand it anything:
+ *
+ * | note | phase | today | wanted |
+ * |---|---|---|---|
+ * | `"gate"` | `gate` | the park reason for a gate | drop: "Gate · gate" |
+ * | `"question"` | `plan`, `implement` | why the run is parked | **keep** |
+ * | `"blocked"`, `"stalled"` | any | why the run is parked | **keep** |
+ * | `"waiting"`, `"approved"`, `"attempt 6"` | any | a caller's own word | keep |
+ * | `undefined`, `""` | any | nothing to say | nothing |
+ *
+ * The costs are not symmetric. Dropping `question` on a plan phase hides *why*
+ * a run is parked, which is the one thing the row is there to say; showing a
+ * duplicate is only ugly. So the match is **exact and against the phase id
+ * alone** — no case folding, no matching the display label, no prefix rule.
+ * `"gate"` is the only value any of those extra rules would catch that the
+ * exact one does not, and each of them can also catch a real reason.
+ *
+ * Dropping it is not the end of it. A row that is `waiting` still says so, in
+ * the artboard's own word, and that word comes from `state` rather than from
+ * the caller — so it cannot be the thing that was just found redundant. Every
+ * other state falls back to nothing: `done` would have to invent "approved",
+ * and the rail has no way to know whether a gate was approved or answered.
+ */
+function phaseNote(step: PhaseStep): string | undefined {
+  const note = step.note
+  if (note !== undefined && note !== "" && note !== step.phase) return note
+  return step.state === "waiting" ? "waiting" : undefined
+}
+
+/**
+ * How long a row has been at it, or `—`.
+ *
+ * Two formats, because the artboards print two: a phase that is `running`
+ * counts, so `Return.dc.html` clocks it (`mm:ss`, from its own script), and
+ * everything else — including the gate the run is parked at — is a finished
+ * span, which `Main.dc.html` prints as `2m 14s`.
+ *
+ * The dash is the part that matters. `formatClock(undefined)` is `0:00` by
+ * contract, and a current row is precisely where a fabricated `0:00` would be
+ * believed: it looks like a phase that just started. `foldRun` sets neither
+ * timing field today, so without this every live run would show one.
+ *
+ * Which field is read is decided by `state`, not by which one happens to be
+ * set, because `PhaseStep` gives the two different jobs: `startedAtMs` is "for
+ * the current one" and `elapsedMs` is "for a phase that is no longer the
+ * current one". A finished step can carry both — `close()` in
+ * `src/ui/live.ts` builds its `done` entry by spreading the running one, so
+ * the moment that fold starts stamping `startedAtMs`, every finished row
+ * inherits one. A row that is over therefore reads `elapsedMs` and **nothing
+ * else**: falling back to the live clock would have a phase that ended minutes
+ * ago still counting. With no recorded duration it prints `—`, which is the
+ * same rule as everywhere else here — say nothing rather than something made
+ * up. `PhaseRow` withholds the live clock from those rows for the same reason,
+ * which also stops a finished row holding a 1s interval open.
+ */
+function phaseFigure(step: PhaseStep, live: number | undefined): string {
+  const ms = isCurrentState(step.state) ? (live ?? step.elapsedMs) : step.elapsedMs
+  if (ms === undefined) return DASH
+  return step.state === "running" ? formatClock(ms) : formatDuration(ms)
+}
+
+/** Whether a state is one a run can be *on*, and so one that is still timing. */
+function isCurrentState(state: PhaseState): boolean {
+  return state === "running" || state === "waiting"
 }
 
 function PhaseRow({
@@ -643,31 +799,33 @@ function PhaseRow({
   reduce: boolean
   isCurrent: boolean
 }) {
-  const live = useLiveElapsed(step.startedAtMs)
+  /* Withheld from a row that is over, so a finished phase cannot inherit a
+   * start time and tick on — and does not hold a 1s interval open to do it.
+   * The hook is still called on every render; only its argument varies. */
+  const live = useLiveElapsed(isCurrentState(step.state) ? step.startedAtMs : undefined)
   const tone = PHASE_TONE[step.state]
-  const running = step.state === "running" || step.state === "waiting"
-  /* A phase that is current reads as a clock (`2:14`); one that is over reads as
-   * a duration (`2m 14s`). The design prints both, and they mean different
-   * things: one is still counting. */
-  const figure = running ? formatClock(live ?? step.elapsedMs) : formatDuration(step.elapsedMs ?? live)
+  const note = phaseNote(step)
 
   return (
     <li
       data-phase={step.phase}
       data-state={step.state}
       aria-current={isCurrent ? "step" : undefined}
-      className={`grid grid-cols-[18px_1fr_auto] items-center gap-2.5 px-2 py-[9px] text-sm ${tone.row}`}
+      className={`grid grid-cols-[18px_1fr_auto] items-center gap-2.5 px-2 text-[14px] ${tone.row}`}
     >
       <PhaseGlyph state={step.state} reduce={reduce} />
       <span className={`min-w-0 ${tone.name}`}>
         {PHASE_LABEL[step.phase]}
         <span className="sr-only">, {PHASE_STATE_WORD[step.state]}</span>
-        {step.note !== undefined && step.note !== "" && (
-          <span className={`font-medium ${PHASE_NOTE_TONE[step.state]}`}> · {step.note}</span>
+        {note !== undefined && (
+          <span data-note={step.phase} className={tone.note}>
+            {" · "}
+            {note}
+          </span>
         )}
       </span>
       <span data-figure={step.phase} className={`${MONO} text-[12.5px] ${tone.figure}`}>
-        {figure}
+        {phaseFigure(step, live)}
       </span>
     </li>
   )
@@ -676,6 +834,20 @@ function PhaseRow({
 /**
  * The shape carries the meaning; colour only backs it up. Only `waiting`
  * pulses, only `running` spins, and both stop dead under reduced motion.
+ *
+ * Both are the artboard's own CSS classes — `.pulse` is `kpulse`, `.spin` is
+ * `kspin`, both in `src/ui/artboard.css` — rather than Motion components.
+ * Motion drives these through WAAPI, and cancelling a WAAPI animation rejects
+ * an `Animation.finished` promise that `motion-dom` does not catch: the agent
+ * on `Digest.tsx` measured 195 unhandled `AbortError`s in one test run from
+ * exactly this, and a rejection between tests is reported as a failure in a
+ * suite that did nothing wrong. A CSS keyframe has no promise to reject.
+ *
+ * The class is applied only when motion is allowed, rather than left to the
+ * `@media (prefers-reduced-motion: reduce)` guard in `artboard.css` and
+ * `tokens.css`. Those are the belt; this is the braces, it is what
+ * `data-motion` reports, and it is the only one of the three that still holds
+ * if a root never gets the `kr` class the artboard's guard selects on.
  */
 function PhaseGlyph({ state, reduce }: { state: PhaseState; reduce: boolean }) {
   switch (state) {
@@ -688,42 +860,28 @@ function PhaseGlyph({ state, reduce }: { state: PhaseState; reduce: boolean }) {
         </span>
       )
     case "waiting":
-      /* The pulse is a box-shadow, not a transform, so `reducedMotion="user"`
-       * would have let it keep going. Hence the explicit gate. */
+      /* The pulse is a box-shadow, not a transform, so Motion's
+       * `reducedMotion="user"` would have let it keep going either way. */
       return (
-        <motion.span
+        <span
           aria-hidden
           data-glyph="waiting"
           data-motion={reduce ? "static" : "animated"}
-          className="size-3.5 justify-self-center rounded-full bg-attention"
-          animate={
-            reduce
-              ? undefined
-              : {
-                  boxShadow: [
-                    "0 0 0 0 rgba(255,106,26,.55)",
-                    "0 0 0 9px rgba(255,106,26,0)",
-                    "0 0 0 0 rgba(255,106,26,0)",
-                  ],
-                }
-          }
-          transition={reduce ? undefined : { duration: 1.8, repeat: Infinity, ease: "easeOut" }}
+          className={`size-3.5 justify-self-center rounded-full bg-attention ${reduce ? "" : "pulse"}`}
         />
       )
     case "running":
       return (
-        <motion.svg
+        <svg
           aria-hidden
           data-glyph="running"
           data-motion={reduce ? "static" : "animated"}
           viewBox="0 0 24 24"
-          className="size-4 origin-center"
-          animate={reduce ? undefined : { rotate: 360 }}
-          transition={reduce ? undefined : { duration: 0.9, repeat: Infinity, ease: "linear" }}
+          className={`size-4 origin-center justify-self-center ${reduce ? "" : "spin"}`}
         >
           <circle cx="12" cy="12" r="9" fill="none" stroke="#DCDCF6" strokeWidth="3" />
           <path d="M21 12a9 9 0 0 0-9-9" fill="none" stroke="#5B5BD6" strokeWidth="3" strokeLinecap="round" />
-        </motion.svg>
+        </svg>
       )
     case "flagged":
       return (
@@ -731,7 +889,7 @@ function PhaseGlyph({ state, reduce }: { state: PhaseState; reduce: boolean }) {
           aria-hidden
           data-glyph="flagged"
           viewBox="0 0 24 24"
-          className="size-4 justify-self-center fill-none stroke-[#8A4B0A] stroke-2 [stroke-linecap:round] [stroke-linejoin:round]"
+          className="ic size-4 justify-self-center fill-none stroke-[#8A4B0A] stroke-2 [stroke-linecap:round] [stroke-linejoin:round]"
         >
           <path d="m17 2 4 4-4 4" />
           <path d="M3 11v-1a4 4 0 0 1 4-4h14" />
@@ -755,13 +913,34 @@ function PhaseGlyph({ state, reduce }: { state: PhaseState; reduce: boolean }) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Whether the figure is still moving, in the artboard's own register.
+ *
+ * Derived from the phases rather than passed in, so there is one truth about
+ * what the run is doing, and **total**: `Main.dc.html` and `Return.dc.html`
+ * both draw this line, so a card that renders it only sometimes has a hole in
+ * it where the artboard has a sentence. The third branch is the one neither
+ * artboard covers, and it has to be a word that is true for everything that
+ * reaches it — a finished run, a failed one, and a ladder that has not started
+ * — so it says only what is certain: nothing is running.
+ *
+ * Deliberately not `stopDisabled`, which answers a different question ("can
+ * this still be stopped") and would make the line a property of a button.
+ */
+function costStatus(steps: readonly PhaseStep[]): { word: string; live: boolean } {
+  if (steps.some((step) => step.state === "running")) return { word: "live", live: true }
+  const waiting = steps.find((step) => step.state === "waiting")
+  if (waiting !== undefined) return { word: `paused at ${waiting.phase}`, live: false }
+  return { word: "not running", live: false }
+}
+
+/**
  * The run's spend against its ceiling.
  *
- * The chip beside the heading says whether the figure is still moving, and it
- * is derived from the phases rather than passed in, so there is one truth about
- * what the run is doing. The indigo dot does **not** pulse: DESIGN.md gives the
- * pulse to "needs you" alone, and the Return artboard's pulsing dot loses to
- * that rule.
+ * The indigo dot does **not** pulse: DESIGN.md gives the pulse to "needs you"
+ * alone, and the Return artboard's pulsing dot loses to that rule.
+ *
+ * The figure, the ceiling and the bar are Geist with `tabular-nums`, not mono
+ * — see "Typography: the artboard, not the summary" at the top of this file.
  */
 function Cost({
   spent,
@@ -775,26 +954,26 @@ function Cost({
   reduce: boolean
 }) {
   const shown = useTicker(spent, reduce)
-  const running = steps.some((step) => step.state === "running")
-  const waiting = steps.find((step) => step.state === "waiting")
+  const status = costStatus(steps)
   const ceiling = Number.isFinite(ceilingUsd) && ceilingUsd > 0 ? ceilingUsd : 0
   const usedPct = ceiling === 0 ? 0 : clamp01(spent / ceiling) * 100
 
   return (
-    <section className={`${CARD} p-4`}>
-      <div className="flex items-center justify-between">
+    <section className={`${CARD} bf d3 p-4`}>
+      <div className="flex items-center justify-between gap-2">
         <h2 className={CARD_HEADING}>Cost</h2>
-        {running ? (
-          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-indigo-deeper">
-            <span aria-hidden className="size-[7px] rounded-full bg-indigo" />
-            live
-          </span>
-        ) : waiting !== undefined ? (
-          <span className="inline-flex items-center gap-1.5 text-xs text-muted-500">
-            <span aria-hidden className="size-1.5 rounded-full bg-muted-300" />
-            paused at {waiting.phase}
-          </span>
-        ) : null}
+        <span
+          data-testid="cost-status"
+          className={`inline-flex items-center gap-1.5 text-[12px] ${
+            status.live ? "font-medium text-indigo-deeper" : "text-muted-500"
+          }`}
+        >
+          <span
+            aria-hidden
+            className={`rounded-full ${status.live ? "size-[7px] bg-indigo" : "size-1.5 bg-muted-300"}`}
+          />
+          {status.word}
+        </span>
       </div>
 
       {/* `aria-live="off"`: a figure that changes every few seconds must not be
@@ -803,12 +982,12 @@ function Cost({
         aria-live="off"
         data-testid="cost-figure"
         data-ticker={reduce ? "static" : "animated"}
-        className={`mt-2 text-[38px] leading-none font-[650] tracking-[-0.035em] ${MONO}`}
+        className={`mt-2 text-[38px] leading-none font-[650] tracking-[-0.035em] ${FIGURE}`}
       >
         {formatUsd(shown)}
       </div>
       <div className="mt-1.5 text-[13px] text-muted-500">
-        of <span className={`font-semibold text-ink ${MONO}`}>{formatUsd(ceiling)}</span> ceiling for this run
+        of <span className={`font-semibold text-ink ${FIGURE}`}>{formatUsd(ceiling)}</span> ceiling for this run
       </div>
       <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[#EFEFF2]">
         <div
@@ -842,7 +1021,7 @@ function Windows({
   reduce: boolean
 }) {
   return (
-    <section className={`${CARD} p-4`} aria-labelledby="rail-windows">
+    <section className={`${CARD} bf d4 p-4`} aria-labelledby="rail-windows">
       <h2 id="rail-windows" className={`${CARD_HEADING} mb-3`}>
         5-hour windows
       </h2>
@@ -860,15 +1039,32 @@ function Windows({
   )
 }
 
+/**
+ * One account's ring: the artboard's Animated Circular Progress Bar.
+ *
+ * `.ring` is the artboard's own class — `kring` winds the `stroke-dashoffset`
+ * up from `RING_CIRCUMFERENCE` to the value the attribute already carries, in
+ * 1.4s. The attribute is therefore always the true figure and the animation
+ * only decides how it is arrived at; nothing here can invent a reading.
+ *
+ * The class is applied only when motion is allowed. `artboard.css` and
+ * `tokens.css` both stop CSS animations under the media query, so that is
+ * belt-and-braces rather than the only guard — but it is the one that does not
+ * depend on a root carrying `kr`, and it is what keeps the ring inside the
+ * explicit reduced-motion gate the rest of this file is tested through.
+ *
+ * `.ring` collides by name with Tailwind's `ring` utility, which sets a
+ * box-shadow. On an SVG `<circle>` that does nothing, which is why it is here
+ * and on no wrapper.
+ *
+ * One consequence worth knowing: `kring` has no `to` keyframe, so it fills
+ * against the live computed value. A window that moves *after* the entrance
+ * has run therefore snaps to its new offset rather than sweeping to it. The
+ * artboards are static and say nothing about the second reading; a rate-limit
+ * event arrives minutes apart and moves the ring by a degree or two, so the
+ * snap is not visible, and the entrance the design actually names is.
+ */
 function WindowRing({ account, reduce }: { account: AccountWindow; reduce: boolean }) {
-  /* The ring is revealed by transitioning from empty to its real value. It
-   * starts revealed under reduced motion, and the `stroke-dashoffset`
-   * *attribute* always carries the true figure — a presentation attribute the
-   * transition animates, never a value the animation invents. */
-  const [revealed, setRevealed] = useState(reduce)
-  useEffect(() => setRevealed(true), [])
-
-  const offset = revealed ? ringOffset(account.utilization) : RING_CIRCUMFERENCE
   const resets = formatResetTime(account.resetsAtSec)
   const current = account.current === true
 
@@ -879,6 +1075,8 @@ function WindowRing({ account, reduce }: { account: AccountWindow; reduce: boole
           <circle cx="30" cy="30" r="25" fill="none" stroke={current ? "#E6F3FB" : "#EEEEF1"} strokeWidth="6" />
           <circle
             data-testid="window-ring"
+            data-motion={reduce ? "static" : "animated"}
+            className={reduce ? undefined : "ring"}
             cx="30"
             cy="30"
             r="25"
@@ -887,27 +1085,53 @@ function WindowRing({ account, reduce }: { account: AccountWindow; reduce: boole
             strokeWidth="6"
             strokeLinecap="round"
             strokeDasharray={RING_CIRCUMFERENCE.toFixed(2)}
-            strokeDashoffset={offset.toFixed(2)}
-            style={{ transition: reduce ? "none" : "stroke-dashoffset 1.4s var(--ease-out-soft)" }}
+            strokeDashoffset={ringOffset(account.utilization).toFixed(2)}
           />
         </svg>
         <span
           data-testid="window-percent"
-          className={`absolute inset-0 grid place-items-center text-[12.5px] font-[650] ${MONO}`}
+          className={`absolute inset-0 grid place-items-center text-[12.5px] font-[650] ${FIGURE}`}
         >
           {percentLabel(account.utilization)}
         </span>
       </div>
       <div className="flex min-w-0 flex-col gap-0.5">
+        {/* The one place this rail deliberately does not reproduce the
+            artboard, because the artboard is wrong there — measured, in Chrome,
+            on `Main.dc.html` itself at its own 1440px preview width with the
+            repo's real Geist loaded:
+
+              grid column        129.3px
+              "personal"          68.6px
+              gap                  6.0px
+              "this run" pill     58.1px   (46.1 of text + 2 x 6 padding)
+              -------------------------
+              needed             132.7px
+
+            2.7px over. The artboard's row is `nowrap` with both children
+            shrinkable, so flexbox takes it out of the pill: it renders 54.7px
+            wide and **26px tall**, with "this" and "run" on two lines inside
+            the rounded shape. Opened over `file://` the artboard falls back to
+            a system sans, "this run" measures 50.3px, and it fits — which is
+            why nobody has seen this.
+
+            Nothing here is resized to make it fit: every figure above is the
+            design's. The pill keeps its shape (`shrink-0`, `whitespace-nowrap`)
+            and the row is allowed to wrap, so the only thing that gives is
+            which line the pill sits on. `[overflow-wrap:anywhere]` then only
+            bites for a label with a single token wider than the whole column,
+            which is the right threshold for it. */}
         <span
-          className={`flex flex-wrap items-center gap-1.5 text-sm font-semibold ${current ? "text-account-ink" : "text-ink-soft"}`}
+          className={`flex flex-wrap items-center gap-1.5 text-[14px] font-semibold ${current ? "text-account-ink" : "text-ink-soft"}`}
         >
           <span className="[overflow-wrap:anywhere]">{account.label}</span>
           {current && (
-            <span className="rounded-full bg-ink px-1.5 py-px text-[10.5px] font-semibold text-white">this run</span>
+            <span className="shrink-0 rounded-full bg-ink px-1.5 py-px text-[10.5px] font-semibold whitespace-nowrap text-white">
+              this run
+            </span>
           )}
         </span>
-        <span className={`${MONO} text-xs text-muted-500`}>{resets === undefined ? "resets —" : `resets ${resets}`}</span>
+        <span className={`${MONO} text-[12px] text-muted-500`}>{resets === undefined ? "resets —" : `resets ${resets}`}</span>
       </div>
     </div>
   )
@@ -969,8 +1193,13 @@ function LimitBanner({ notice }: { notice: LimitNotice }) {
  * pulse — amber is for a run that is grinding, and the pulse belongs to "needs
  * you" alone. "Let it run" puts it away for this run.
  *
- * It slides in with Motion, and the slide is gated: an opacity and `x` entrance
- * is half transform, so `reducedMotion="user"` would have faded it in anyway.
+ * It slides in on `.slide`, which `Return.dc.html` puts on this very section:
+ * `kslide` is opacity and `translateX(16px)` over .6s after a .3s delay, which
+ * is what the Motion entrance this replaces was hand-tuned to match. The class
+ * is withheld under reduced motion — an opacity-and-`x` entrance is only half
+ * transform, so Motion's `reducedMotion="user"` would have faded it in anyway,
+ * and the gate has to be explicit either way.
+ *
  * There is deliberately no exit animation — a dismissal the user asked for
  * should leave at once, not linger for 600ms.
  */
@@ -986,20 +1215,18 @@ function Grinding({
   onDismiss: () => void
 }) {
   return (
-    <motion.section
+    <section
       role="status"
       aria-labelledby="rail-grinding"
       data-testid="grinding-notice"
-      initial={reduce ? false : { opacity: 0, x: 16 }}
-      animate={reduce ? undefined : { opacity: 1, x: 0 }}
-      transition={reduce ? undefined : { duration: 0.6, delay: 0.3, ease: [0.2, 0.7, 0.2, 1] }}
-      className="rounded-2xl border border-[#F7D98B] bg-[#FFFBEB] p-4 shadow-[0_8px_24px_-16px_rgba(180,83,9,.5)]"
+      data-motion={reduce ? "static" : "animated"}
+      className={`rounded-2xl border border-[#F7D98B] bg-[#FFFBEB] p-4 shadow-[0_8px_24px_-16px_rgba(180,83,9,.5)] ${reduce ? "" : "slide"}`}
     >
       <div className="flex items-center gap-2">
         <span aria-hidden className="grid size-7 place-items-center rounded-[9px] bg-[#FEF3C7] text-[#8A4B0A]">
           <svg
             viewBox="0 0 24 24"
-            className="size-[15px] fill-none stroke-current stroke-[2.2] [stroke-linecap:round] [stroke-linejoin:round]"
+            className="ic size-[15px] fill-none stroke-current stroke-[2.2] [stroke-linecap:round] [stroke-linejoin:round]"
           >
             <path d="m17 2 4 4-4 4" />
             <path d="M3 11v-1a4 4 0 0 1 4-4h14" />
@@ -1012,7 +1239,8 @@ function Grinding({
         </h2>
       </div>
       <p className="mt-2.5 mb-3.5 text-[13.5px] leading-[1.55] text-[#5C3305]">
-        <span className={MONO}>{flag.attempts}</span> attempts, <span className={`font-[650] ${MONO}`}>{formatUsd(spent)}</span>{" "}
+        <span className={FIGURE}>{flag.attempts}</span> attempts,{" "}
+        <span className={`font-[650] ${FIGURE}`}>{formatUsd(spent)}</span>{" "}
         so far. It is still running and nothing is blocked. Whether to step in is up to you.
       </p>
       <div className="flex flex-wrap gap-2">
@@ -1034,7 +1262,7 @@ function Grinding({
           Let it run
         </button>
       </div>
-    </motion.section>
+    </section>
   )
 }
 
@@ -1055,13 +1283,18 @@ function Grinding({
  */
 function Stop({ onStop, disabled }: { onStop?: (() => void) | undefined; disabled: boolean }) {
   return (
-    <div className="mt-auto flex flex-col gap-2">
+    <div className="bf d5 mt-auto flex flex-col gap-2">
       <button
         type="button"
         onClick={onStop}
         disabled={disabled}
         aria-describedby="rail-stop-note"
-        className="flex h-11 w-full items-center justify-center gap-2 rounded-full border border-edge-strong bg-white text-sm font-medium text-ink-deep transition-colors hover:bg-[#F6F6F8] focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:text-muted-300"
+        /* `ghost` is the artboard's own hover (`#F6F6F8`), and `font-[560]`
+           its own weight. The Tailwind `hover:` restates the former so the
+           button is still right if this is ever mounted without
+           `artboard.css`; they set the same colour, so neither can surprise
+           the other whichever way the cascade falls. */
+        className="ghost flex h-11 w-full items-center justify-center gap-2 rounded-full border border-edge-strong bg-white text-[14px] font-[560] text-ink-deep transition-colors hover:bg-[#F6F6F8] focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:text-muted-300"
       >
         <svg aria-hidden viewBox="0 0 24 24" className="size-3 fill-current">
           <rect width="18" height="18" x="3" y="3" rx="3" />
