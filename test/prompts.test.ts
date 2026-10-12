@@ -356,6 +356,19 @@ test("the plan prompt is unchanged", () => {
     sit on a dirty tree. Commit nothing else: name the plan file as a pathspec rather than
     staging everything, because the tree may hold work that is not yours.
 
+    ## What you can run here
+
+    Read files with the **Read**, **Glob** and **Grep** tools. Do not shell out to read:
+    \`cat\`, \`sed\`, \`head\`, \`tail\`, \`ls\` and \`find\` are not granted, and a denied
+    tool call here is silent - nobody is asked and nothing approves it.
+
+    The shell is for \`git\` (and, where this project has one, its test command) and
+    nothing else.
+
+    **Run one command per call.** Permission is matched per command, so \`a && b\`,
+    \`a; b\` and \`a | b\` each need every part granted separately - chaining anything
+    onto \`git\` loses the grant and the whole call is refused.
+
     ## Nobody can answer you
 
     This conversation runs headless. There is no interactive question tool here, and from
@@ -436,6 +449,19 @@ test("the implement prompt is unchanged", () => {
       passing build. Editing that file can only put the backlog out of step with what was
       actually verified.
 
+    ## What you can run here
+
+    Read files with the **Read**, **Glob** and **Grep** tools. Do not shell out to read:
+    \`cat\`, \`sed\`, \`head\`, \`tail\`, \`ls\` and \`find\` are not granted, and a denied
+    tool call here is silent - nobody is asked and nothing approves it.
+
+    The shell is for \`git\` (and, where this project has one, its test command) and
+    nothing else.
+
+    **Run one command per call.** Permission is matched per command, so \`a && b\`,
+    \`a; b\` and \`a | b\` each need every part granted separately - chaining anything
+    onto \`git\` loses the grant and the whole call is refused.
+
     ## Nobody can answer you
 
     This conversation runs headless. There is no interactive question tool here, and from
@@ -491,6 +517,19 @@ test("the feedback prompt is unchanged", () => {
     Everything from the first turn still applies: plan only, do not implement anything, run
     no tests, leave the backlog file alone, do not offer or ask which execution mode to use,
     and do not run \`superpowers:finishing-a-development-branch\`.
+
+    ## What you can run here
+
+    Read files with the **Read**, **Glob** and **Grep** tools. Do not shell out to read:
+    \`cat\`, \`sed\`, \`head\`, \`tail\`, \`ls\` and \`find\` are not granted, and a denied
+    tool call here is silent - nobody is asked and nothing approves it.
+
+    The shell is for \`git\` (and, where this project has one, its test command) and
+    nothing else.
+
+    **Run one command per call.** Permission is matched per command, so \`a && b\`,
+    \`a; b\` and \`a | b\` each need every part granted separately - chaining anything
+    onto \`git\` loses the grant and the whole call is refused.
 
     ## Nobody can answer you
 

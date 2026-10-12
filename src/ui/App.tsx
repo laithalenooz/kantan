@@ -404,6 +404,37 @@ export function App() {
     [guard, selected],
   )
 
+  /**
+   * Refetch the tree when the followed run reaches a new state.
+   *
+   * The tree's glyphs come from `GET /api/projects`, which was fetched once at
+   * mount and after a project edit - and nowhere else. So a run could start,
+   * park at a gate and finish while every task in the column still drew the
+   * empty circle it had at page load. Reported exactly that way: "all look
+   * empty circle even if one is running".
+   *
+   * Driven by the run's own state rather than a timer. That route folds every
+   * run log on the disk - measured at 107-180ms - so polling it would be a
+   * steady cost for a thing that changes a handful of times per run. The
+   * signature below changes only on a transition a glyph can show: which
+   * phases exist and what each is doing, why it is parked, and how it ended.
+   * Records arrive constantly and almost all of them leave it identical.
+   */
+  const runSignature =
+    view === null
+      ? null
+      : [
+          runId,
+          view.phases.map((p) => `${p.phase}:${p.state}`).join(","),
+          view.waiting?.reason ?? "",
+          view.ended?.state ?? "",
+        ].join("|")
+
+  useEffect(() => {
+    if (runSignature === null) return
+    reload()
+  }, [runSignature, reload])
+
   /* Debounced in the shell, not the component: one owner holds the string and
      the component keys its answer on the exact bytes it was told about. */
   useEffect(() => {

