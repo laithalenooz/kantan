@@ -156,6 +156,15 @@ function footerFor(view: RunView | null): string | null {
     const why = view.ended.why === undefined ? "" : ` · ${view.ended.why}`
     return view.ended.state === "done" ? "Done" : `Failed${why}`
   }
+  /* Before the park, for the reason `runindex.ts`'s `finish` gives at length: a
+     run can be stopped while parked, and then "waiting until you decide" asks
+     someone to decide something no process is listening for. */
+  if (view.stopped) {
+    const at = view.phases.find((p) => p.state === "running")
+    return at === undefined
+      ? "Stopped · resumable, and stopping cost nothing"
+      : `Stopped at ${at.phase} · resumable, and stopping cost nothing`
+  }
   if (view.waiting !== null) {
     switch (view.waiting.reason) {
       case "gate":
@@ -956,7 +965,11 @@ export function App() {
             ceilingUsd={view.ceilingUsd}
             windows={windowsFor(view, project?.account)}
             onStop={() => void send({ kind: "stop" })}
-            stopDisabled={view.ended !== null}
+            /* `stopped` as well as `ended`: a stopped run is resumable, so it
+               is not ended, but there is nothing left to stop either. Without
+               it the button stayed enabled after a successful stop and looked
+               broken - which is how it was reported. */
+            stopDisabled={view.ended !== null || view.stopped}
           />
       )}
       </div>

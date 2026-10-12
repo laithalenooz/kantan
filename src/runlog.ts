@@ -239,6 +239,26 @@ export interface TestRecord {
  */
 export type HumanRecord =
   | { kind: "human"; action: "approve" }
+  /**
+   * A human stopped the run.
+   *
+   * Written because **nothing else in the log says it**, and that omission was
+   * reachable from the UI twice over: `stopRun` killed the child, released the
+   * lock and answered `{ok:true}` without appending anything, so the last
+   * record stayed `phase: test, state: running`. The server's own tree read
+   * `interrupted` - it has `liveRunIds` and could see nobody was driving - but
+   * the browser folds the log alone and had nothing to go on, so the rail went
+   * on showing a live run with an enabled "Stop run". Reported from use as "I
+   * see stop run even tho the task stopped" and "the stop run button isn't
+   * clickable": it was clickable, it worked, and it changed nothing on screen.
+   *
+   * Not an `end` record, and that distinction is the point. A stopped run is
+   * **resumable** - `resumeRun` picks it up from its last complete phase - so
+   * `end.state` would have to grow a third value that means "finished" in a
+   * type where the other two mean exactly that, and every reader of `done` or
+   * `failed` would inherit a state neither of them covers.
+   */
+  | { kind: "human"; action: "stop" }
   | { kind: "human"; action: "feedback"; text: string }
   | { kind: "human"; action: "raise"; budgetUsd: number }
 

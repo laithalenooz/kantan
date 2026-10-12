@@ -104,6 +104,19 @@ export interface RunView {
   waitId: string | null
   waiting: Waiting | null
   ended: Ended | null
+  /**
+   * A human stopped this run, and no phase record has followed.
+   *
+   * Separate from `ended`, because a stopped run is **resumable** and `ended`
+   * is for a run that finished. It exists because the browser folds the log
+   * and nothing else: the server's tree can read `interrupted` from
+   * `liveRunIds`, which no page has, so without this a stopped run kept a
+   * running phase and an enabled "Stop run" that appeared to do nothing.
+   * Reported from use twice, as "I see stop run even tho the task stopped" and
+   * "the stop run button isn't clickable" - it was clickable, it worked, and
+   * it changed nothing on screen.
+   */
+  stopped: boolean
   /** The newest rate-limit reading in this log, for this run's account. */
   limit: { status: string; utilization: number | undefined; resetsAt: number | undefined } | null
   /** Anything this reader could not fully account for. Never thrown. */
@@ -177,6 +190,7 @@ export function foldRun(runId: string, records: readonly RunRecord[]): RunView {
   let waitId: string | null = null
   let waiting: Waiting | null = null
   let ended: Ended | null = null
+  let stopped = false
   let limit: RunView["limit"] = null
   /** The phase whose record last said `running`, so a later record can close it. */
   let openPhase: RunPhase | null = null
@@ -276,6 +290,8 @@ export function foldRun(runId: string, records: readonly RunRecord[]): RunView {
         // process and records no id, so it must not open a new bucket.
         if (record.sessionId !== undefined) buckets.push([])
         if (record.planPath !== undefined) planPath = record.planPath
+        // A phase record after a stop is a resume: the run is moving again.
+        stopped = false
 
         if (openPhase === "implement" && record.phase !== "implement") {
           digest.push({
@@ -367,6 +383,14 @@ export function foldRun(runId: string, records: readonly RunRecord[]): RunView {
           if (typeof figure === "number" && Number.isFinite(figure) && figure > 0) raised = figure
           else warnings.push("a raise record carried a figure this reader cannot use; the previous ceiling stands")
         }
+        if (record.action === "stop") {
+          stopped = true
+          /* The park is over as far as this run is concerned: nothing is
+             listening for an approval, so the gate must not be offered. A
+             resume re-parks it and the gate comes back. */
+          waitId = null
+          waiting = null
+        }
         if (record.action === "approve") digest.push({ id: `${runId}#${i}`, kind: "approved" })
         if (record.action === "approve" || record.action === "feedback") {
           // The park this answered is over, whatever the next phase record says.
@@ -418,6 +442,7 @@ export function foldRun(runId: string, records: readonly RunRecord[]): RunView {
     waitId,
     waiting,
     ended,
+    stopped,
     limit,
     warnings,
     unknownKinds,

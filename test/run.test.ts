@@ -107,9 +107,18 @@ function lastLifecycle(): string {
   let last = ""
   for (const line of lines) {
     try {
-      const r = JSON.parse(line) as { kind?: unknown; phase?: unknown; state?: unknown; reason?: unknown }
+      const r = JSON.parse(line) as {
+        kind?: unknown
+        phase?: unknown
+        state?: unknown
+        reason?: unknown
+        action?: unknown
+      }
       if (r.kind === "cli") continue
-      last = String(r.kind) + ":" + String(r.phase ?? "") + ":" + String(r.state ?? "")
+      // The action stands in where there is no phase, so a human record says
+      // which action it was. Only the stop needs telling apart: it is the one
+      // human record that is not followed by a phase record.
+      last = String(r.kind) + ":" + String(r.phase ?? r.action ?? "") + ":" + String(r.state ?? "")
     } catch {
       // A partial final line: not a record yet.
     }
@@ -117,13 +126,24 @@ function lastLifecycle(): string {
   return last
 }
 
-/** Waits until the run has come to rest, the way a client watching the stream
- * would: the newest lifecycle record is a wait or the end. */
+/**
+ * Waits until the run has come to rest, the way a client watching the stream
+ * would: the newest lifecycle record is a wait, the end, or a stop.
+ *
+ * The stop is the one added last and the reason this comment exists. Before
+ * the interruption was recorded, a stopped run left whatever phase record it
+ * had been in as the newest line - usually a waiting park - so this returned
+ * by accident. With the record the newest line is human:stop, which is
+ * neither, and the wait ran its full 120 seconds before throwing: a test
+ * failed in a way that read as a hang inside resumeRun and was a harness that
+ * did not know the state existed. A stopped run is at rest by definition -
+ * nothing is driving it.
+ */
 async function untilRest(): Promise<void> {
   const deadline = Date.now() + 120000
   while (Date.now() < deadline) {
     const last = lastLifecycle()
-    if (last.endsWith(":waiting") || last.startsWith("end:")) return
+    if (last.endsWith(":waiting") || last.startsWith("end:") || last.startsWith("human:stop")) return
     await Bun.sleep(20)
   }
   throw new Error("the run never came to rest, last record: " + lastLifecycle())

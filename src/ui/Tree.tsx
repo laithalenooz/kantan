@@ -16,7 +16,7 @@
  * - **Only `needs you` pulses. Only `running` spins.** Nothing else moves.
  */
 
-import { useEffect, useId, useRef, useSyncExternalStore, createElement } from "react"
+import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore, createElement } from "react"
 import type { KeyboardEvent as ReactKeyboardEvent, ReactElement, ReactNode } from "react"
 
 /* Type-only, and deliberately so: `src/runindex.ts` opens files at module
@@ -870,9 +870,36 @@ function isSameTask(a: TaskId | null | undefined, b: TaskId): boolean {
  * inventing a ref, so it is text rather than a control - and the tab stop has
  * to be something that can be activated.
  */
-function firstNavigable(projects: readonly TreeProject[]): TaskId | null {
+/**
+ * What identifies a task file in the collapsed set: the project **and** the
+ * path.
+ *
+ * A path alone is not an identity. `TreeFeature.path` is repo-relative, so two
+ * projects both holding `docs/features/kantan.md` share it - and collapsing
+ * one would have collapsed the other, which is the same class of mistake as
+ * keying the account cards on `kind`. NUL for the same reason `taskKey` uses
+ * it: no path contains one.
+ */
+function fileKey(projectPath: string, featureFile: string): string {
+  return `${projectPath}\u0000${featureFile}`
+}
+
+/**
+ * The first task a Tab could land on, skipping collapsed files.
+ *
+ * `collapsed` is read here rather than filtered afterwards because a tab stop
+ * inside a collapsed file is not a tab stop at all: `hidden` makes the node
+ * unfocusable, so `tabIndex={0}` on it leaves the whole column with no way in
+ * from the keyboard. Defaulting to an empty set keeps every existing caller -
+ * and every test that renders `Tree` without one - reading exactly as before.
+ */
+function firstNavigable(
+  projects: readonly TreeProject[],
+  collapsed: ReadonlySet<string> = new Set(),
+): TaskId | null {
   for (const project of projects) {
     for (const feature of project.features) {
+      if (collapsed.has(fileKey(project.path, feature.path))) continue
       for (const task of feature.tasks) {
         if (task.ref !== null) {
           return { projectPath: project.path, featureFile: feature.path, taskRef: task.ref }
@@ -920,6 +947,27 @@ export function Tree({
 }: TreeProps): ReactElement {
   const eyebrow = "text-[11.5px] font-semibold uppercase tracking-[.07em] text-muted-400"
   const ids = useId()
+
+  /**
+   * Task files the human has collapsed, by path.
+   *
+   * A **deny** set rather than an allow set, so the default is open and a file
+   * that arrives from a refetch is visible rather than hidden. Collapsing is
+   * the exception the human asks for; appearing already collapsed is a file
+   * they would have to find.
+   *
+   * Here rather than in `ProjectBlock` because this component survives a tree
+   * refetch and the blocks are re-created by it - state below this point would
+   * reset every time a run changed state, which is often.
+   */
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set())
+  const toggleFile = useCallback((path: string) => {
+    setCollapsed((was) => {
+      const next = new Set(was)
+      if (!next.delete(path)) next.add(path)
+      return next
+    })
+  }, [])
   const column = useRef<HTMLElement | null>(null)
   const reduce = usePrefersReducedMotion()
 
@@ -934,7 +982,7 @@ export function Tree({
    * follows the human one keystroke later.
    */
   const stop = (() => {
-    const first = firstNavigable(projects)
+    const first = firstNavigable(projects, collapsed)
     if (first === null) return null
     const hasSelection = projects.some((project) =>
       project.features.some((feature) =>
@@ -949,7 +997,12 @@ export function Tree({
         ),
       ),
     )
-    return hasSelection && selected != null ? selected : first
+    /* And it has to be *reachable*: a selection inside a collapsed file is
+       still the subject of the centre column, but it cannot be the column's
+       way in from the keyboard. */
+    const reachable =
+      hasSelection && selected != null && !collapsed.has(fileKey(selected.projectPath, selected.featureFile))
+    return reachable && selected != null ? selected : first
   })()
 
   /**
@@ -963,7 +1016,16 @@ export function Tree({
   const navigableRows = (): HTMLElement[] => {
     const root = column.current
     if (root === null) return []
-    return [...root.querySelectorAll<HTMLElement>("button[data-task-row]")]
+    return [...root.querySelectorAll<HTMLElement>("button[data-task-row]")].filter(
+      /* A row inside a collapsed file is not navigable, and `offsetParent` is
+         the cheap read that says so: it is `null` for anything whose subtree
+         has `display: none`, which is what `[hidden]` gives the task list. The
+         alternative - deriving it from the collapsed set - would be a second
+         source of truth about what is on screen, and `.focus()` on a
+         `display: none` element silently does nothing, so the two disagreeing
+         would strand the arrow keys with no error anywhere. */
+      (row) => row.offsetParent !== null,
+    )
   }
 
   /**
@@ -1110,6 +1172,8 @@ export function Tree({
             project={project}
             first={index === 0}
             order={index}
+            collapsed={collapsed}
+            toggleFile={toggleFile}
             /* The entrance fade is the one motion in this column that is not a
                glyph, so it is read here once and handed down rather than
                subscribed to per block. */
@@ -1140,6 +1204,8 @@ function ProjectBlock({
   onAddTask,
   onRemoveTask,
   onNewTaskFile,
+  collapsed,
+  toggleFile,
 }: {
   onSelectProject?: (path: string) => void
   selectedProject?: string | null
@@ -1178,9 +1244,30 @@ function ProjectBlock({
   selected?: TaskId | null
   stop: TaskId | null
   onSelect?: (task: TaskId) => void
+  /** Paths the human collapsed. A deny set; see `Tree`. */
+  collapsed: ReadonlySet<string>
+  toggleFile: (path: string) => void
 }): ReactElement {
   const repoId = `${idPrefix}-repo`
   const testCmd = commandOf(project.testCmd)
+
+  /**
+   * Whether a file's tasks are drawn: whatever the human last said.
+   *
+   * It forced a file open when it held the selected task or the tree's tab
+   * stop, and that was wrong in a way only the browser showed: the tab stop is
+   * the first task when nothing is selected, so the first file could never be
+   * collapsed at all - the click toggled the set and the row reappeared
+   * immediately.
+   *
+   * The focus concern behind that rule is real and is handled where it belongs.
+   * `hidden` makes a node unfocusable, so `.focus()` on a row in a collapsed
+   * file silently does nothing; `navigableRows` therefore skips rows whose
+   * `offsetParent` is `null`, and `stopFor` picks the tab stop from the rows
+   * that are actually on screen. A collapsed file keeps its `aria-current` on
+   * a hidden row, which costs nothing - the centre column is still about it.
+   */
+  const isOpen = (feature: TreeFeature): boolean => !collapsed.has(fileKey(project.path, feature.path))
   return (
     <li
       className={`${reduce ? "" : `${blurFade(order)} `}${first ? "" : "mt-[6px] border-t border-[#ECECEF]"}`.trim()}
@@ -1232,22 +1319,49 @@ function ProjectBlock({
       <ul aria-labelledby={repoId} className="m-0 list-none p-0">
         {project.features.map((feature, index) => {
           const pathId = `${idPrefix}-f${index}`
+          const listId = `${pathId}-tasks`
+          const open = isOpen(feature)
           return (
             <li key={feature.path}>
-              <div
-                className={`m flex items-center gap-[6px] ${index === 0 ? "pt-[6px]" : "pt-[10px]"} pr-[10px] pb-[4px] pl-[14px] font-mono text-xs text-muted-500`}
+              {/* The artboard already draws a chevron here and it did nothing.
+                  With a backlog of any size the column becomes one long scroll,
+                  so the chevron is now the control it looks like.
+
+                  A `<button>` rather than a `<summary>`: `<details>` would own
+                  the open state, and this component has to be able to open a
+                  file itself - see `openFiles` - which `<details>` only allows
+                  by writing to the DOM node. */}
+              <button
+                type="button"
+                data-feature-toggle={feature.path}
+                aria-expanded={open}
+                aria-controls={listId}
+                onClick={() => toggleFile(fileKey(project.path, feature.path))}
+                className={`m flex w-full items-center gap-[6px] ${index === 0 ? "pt-[6px]" : "pt-[10px]"} pr-[10px] pb-[4px] pl-[14px] text-left font-mono text-xs text-muted-500 hover:text-ink focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo`}
               >
-                <svg aria-hidden viewBox="0 0 24 24" className="ic size-[13px] shrink-0" {...LINE}>
+                <svg
+                  aria-hidden
+                  viewBox="0 0 24 24"
+                  className={`ic size-[13px] shrink-0 transition-transform ${open ? "" : "-rotate-90"}`}
+                  {...LINE}
+                >
                   <path d="m6 9 6 6 6-6" />
                 </svg>
                 <span id={pathId} data-feature-path className={ARBITRARY}>
                   {feature.path}
                 </span>
-              </div>
+                {/* What is behind a collapsed file, so closing one does not
+                    hide that it has work needing attention. */}
+                {!open && (
+                  <span data-feature-count className="ml-auto shrink-0 pl-2 text-[11px] text-muted-400">
+                    {feature.tasks.length} task{feature.tasks.length === 1 ? "" : "s"}
+                  </span>
+                )}
+              </button>
 
               {/* Named by the path above it, so a screen reader reaching the
                   tasks says which file they come from. */}
-              <ul aria-labelledby={pathId} className="m-0 list-none p-0">
+              <ul id={listId} aria-labelledby={pathId} hidden={!open} className="m-0 list-none p-0">
                 {feature.tasks.map((task, position) => {
                   const id: TaskId = {
                     projectPath: project.path,
@@ -1265,8 +1379,19 @@ function ProjectBlock({
                       /* `group/task` so the remove control can appear on hover
                          of the row, and `focus-within` so it appears for a
                          keyboard user too - a control reachable only by a
-                         pointer is not reachable. */
-                      className="group/task relative flex items-center"
+                         pointer is not reachable.
+
+                         No `relative`, and the control is in normal flow
+                         rather than absolutely positioned over the row. It was
+                         `absolute right-[6px]` first, and that covered the
+                         state chip and the end of any title long enough to
+                         reach it - reported from use. Reserving the space
+                         costs every row ~30px of title width whether the
+                         control is visible or not, which is the cheap
+                         direction: a narrower title wraps, while a covered
+                         "Needs you" chip hides the one thing the row exists to
+                         say. */
+                      className="group/task flex items-center"
                     >
                       <TaskRow
                         task={task}
@@ -1287,7 +1412,7 @@ function ProjectBlock({
                           title={`Remove ${ref} from ${feature.path}`}
                           data-remove-task={ref}
                           onClick={() => onRemoveTask(project.path, feature.path, ref)}
-                          className="absolute right-[6px] grid size-[26px] place-items-center rounded-[8px] border border-transparent bg-white/0 text-muted-400 opacity-0 transition-opacity hover:border-[#F0B8BE] hover:bg-white hover:text-[#A61B27] focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-indigo group-hover/task:opacity-100 group-focus-within/task:opacity-100"
+                          className="mr-[4px] grid size-[26px] shrink-0 place-items-center rounded-[8px] border border-transparent bg-white/0 text-muted-400 opacity-0 transition-opacity hover:border-[#F0B8BE] hover:bg-white hover:text-[#A61B27] focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-indigo group-hover/task:opacity-100 group-focus-within/task:opacity-100"
                         >
                           <svg aria-hidden viewBox="0 0 24 24" className="ic size-[14px]" {...LINE}>
                             <path d="M3 6h18" />
@@ -1458,8 +1583,12 @@ function TaskRow({
    * cost is the whole column reading as top-heavy, which is what it did
    * before this change.
    */
+  /* `min-w-0 flex-1` because the row is a flex item beside the remove control.
+     Without `min-w-0` a grid child's automatic minimum is its content, so a
+     long task title would push the row wider than the column instead of
+     wrapping, and the control off the edge. */
   const shape =
-    "grid w-full min-h-[44px] grid-cols-[18px_22px_minmax(0,1fr)_auto] items-center gap-2 rounded-[10px] py-2 pr-[10px] pl-[14px] text-left text-[13.5px] leading-[1.35]"
+    "grid min-w-0 flex-1 min-h-[44px] grid-cols-[18px_22px_minmax(0,1fr)_auto] items-center gap-2 rounded-[10px] py-2 pr-[10px] pl-[14px] text-left text-[13.5px] leading-[1.35]"
   const look = isSelected
     ? `bg-white font-[560] text-ink ${ring}`
     : "trow bg-transparent text-ink-deep hover:bg-[#EFEFF2]"

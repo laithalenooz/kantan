@@ -1045,6 +1045,11 @@ async function fail(run: ActiveRun, why: string): Promise<RunResult> {
  */
 async function interrupted(run: ActiveRun, resumeFrom: RunPhase): Promise<RunResult> {
   await abandonSession(run)
+  /* Before `retire`, which closes the log. Written because nothing else in the
+     log says the run stopped: without it the last record is whatever phase was
+     running, and a reader with no liveness to consult - which is every
+     browser - goes on showing a live run. See `RunRecord`'s `action: "stop"`. */
+  await run.log.append({ kind: "human", action: "stop" })
   const out = result(run, { kind: "interrupted", resumeFrom })
   await retire(run)
   return out
@@ -2475,6 +2480,14 @@ export async function stopRun(options: ActionOptions): Promise<RunResult> {
   await abandonSession(run)
   const job = run.driving
   if (job !== null) {
+    /* No append here, and that was a wrong turn worth recording: the drive
+       does reach `interrupted` - on `stopping(run)` at four points and on a
+       `killed` verdict at two - so writing the record here as well raced its
+       retirement for the same log. The symptom was not a duplicate record but
+       a **hang**: `append` on a log the drive had already closed threw out of
+       `stopRun` after the transition was accepted, so the run was never
+       retired, the project's lock stayed held, and the next `resume` waited on
+       it until the test timed out at 112s. One writer, at the transition. */
     // The drive owns the retirement; it sees the kill as a signal exit, judges
     // it `killed`, and parks the run as interrupted.
     const out = await job.catch(() => result(run, { kind: "interrupted", resumeFrom: run.phase }))
@@ -2514,15 +2527,42 @@ async function stopAbsent(options: ActionOptions): Promise<RunResult> {
     )
   }
   const phase = folded.lastPhase?.phase ?? "plan"
+
+  /* It *does* touch one thing now, and the docstring above used to say
+     otherwise: the human's stop is recorded even though there was no child to
+     kill. The log is the only thing a browser can read - it has no
+     `liveRunIds` - so without this record a run whose server died shows a
+     running phase and an enabled "Stop run" that appears to do nothing, which
+     is exactly what it did. The record is what makes the stop visible, and it
+     is true either way: a human asked, and the run is not going to continue
+     until something resumes it. */
+  const warnings = [
+    `run ${options.runId} was not being driven by this server, so there was no child to stop: it is already interrupted at the ${phase} phase, and resuming it picks it up from there.`,
+  ]
+  try {
+    const log = await openRunLog(path)
+    try {
+      await log.append({ kind: "human", action: "stop" })
+    } finally {
+      await log.close()
+    }
+  } catch (cause) {
+    /* A warning on the answer, not a refusal. The run is stopped either way -
+       there was nothing running - and failing the request over a log that
+       cannot be appended to would leave the human with no way to say "stop"
+       at all. What they lose is the record, so the warning says so. */
+    warnings.push(
+      `the stop could not be recorded in this run's log (${(cause as Error).message}), so surfaces that read only the log may still show it as running until it is resumed or removed.`,
+    )
+  }
+
   return {
     runId: options.runId,
     state: { kind: "interrupted", resumeFrom: phase },
     costUsd: folded.spent,
     branch: branchOf(folded.header),
     planPath: folded.planPath ?? "",
-    warnings: [
-      `run ${options.runId} was not being driven by this server, so there was nothing to stop: it is already interrupted at the ${phase} phase, and resuming it picks it up from there.`,
-    ],
+    warnings,
   }
 }
 

@@ -1791,6 +1791,32 @@ describe("the remove-task control", () => {
     }
   })
 
+  /**
+   * In flow, never over the row.
+   *
+   * It was `absolute right-[6px]` first, which covered the state chip and the
+   * end of any title long enough to reach it - reported from use as "the trash
+   * can is covering the chips and text". Reserving the space costs every row
+   * about 30px of title width whether the control is visible or not, and that
+   * is the cheap direction: a narrower title wraps, while a covered "Needs
+   * you" chip hides the one thing the row exists to say.
+   */
+  test("takes its own space rather than sitting over the row", () => {
+    const host = render(<Tree projects={projects()} onRemoveTask={() => {}} />)
+    const button = host.querySelector("[data-remove-task]")
+    const row = button?.parentElement?.querySelector("[data-task-row]")
+
+    expect(button?.getAttribute("class") ?? "").not.toContain("absolute")
+    expect(button?.getAttribute("class") ?? "").toContain("shrink-0")
+    // The item lays them out side by side, and the row yields the width.
+    expect(button?.parentElement?.getAttribute("class") ?? "").toContain("flex")
+    expect(button?.parentElement?.getAttribute("class") ?? "").not.toContain("relative")
+    expect(row?.getAttribute("class") ?? "").toContain("flex-1")
+    // `min-w-0`, or a long title pushes the row past the column and the
+    // control off the edge instead of wrapping.
+    expect(row?.getAttribute("class") ?? "").toContain("min-w-0")
+  })
+
   /** Reachable by keyboard as well as by hover; a pointer-only control is not
    *  reachable. The row is the tree's one Tab stop, so `focus-within` on the
    *  item is what brings this into view for the arrow-key navigation. */
@@ -1801,5 +1827,61 @@ describe("the remove-task control", () => {
     expect(classes).toContain("group-hover/task:opacity-100")
     expect(classes).toContain("group-focus-within/task:opacity-100")
     expect(classes).toContain("focus-visible:opacity-100")
+  })
+})
+
+/* ========================================================================== */
+/* Collapsing a task file                                                     */
+/* ========================================================================== */
+
+/**
+ * The artboard already drew a chevron here and it did nothing. With a backlog
+ * of any size the column becomes one long scroll, which is what prompted this.
+ *
+ * Static markup, so these pin the contract rather than the toggle: the control
+ * exists, it is wired to the list it controls, and it is open by default. The
+ * close behaviour is checked in a browser - `[hidden]` is a *computed* style,
+ * and `CLAUDE.md` records a collapsed list that rendered in full anyway
+ * because a `display` utility outranked it.
+ */
+describe("the task-file disclosure", () => {
+  test("every file header is a button that controls its own task list", () => {
+    const host = render(<Tree projects={projects()} />)
+    const toggles = [...host.querySelectorAll("[data-feature-toggle]")]
+    expect(toggles.length).toBeGreaterThan(0)
+
+    for (const toggle of toggles) {
+      expect(toggle.tagName).toBe("BUTTON")
+      // Open by default: a file that arrived already collapsed is a file the
+      // human would have to go looking for.
+      expect(toggle.getAttribute("aria-expanded")).toBe("true")
+
+      const controls = toggle.getAttribute("aria-controls")
+      expect(controls).not.toBeNull()
+      const list = host.querySelector(`#${CSS.escape(controls ?? "")}`)
+      expect(list?.tagName).toBe("UL")
+      expect(list?.hasAttribute("hidden")).toBe(false)
+      // The list it controls is the one holding this file's tasks.
+      expect(list?.querySelectorAll("[data-task-row]").length).toBeGreaterThan(0)
+    }
+  })
+
+  test("the toggle names the file it opens, and still labels the list", () => {
+    const host = render(<Tree projects={projects()} />)
+    const toggle = host.querySelector("[data-feature-toggle]")
+    const path = toggle?.querySelector("[data-feature-path]")
+
+    expect(toggle?.getAttribute("data-feature-toggle")).toBe(path?.textContent)
+    // `aria-labelledby` on the list still points at the path, so a screen
+    // reader reaching the tasks says which file they came from.
+    const controls = toggle?.getAttribute("aria-controls") ?? ""
+    const list = host.querySelector(`#${CSS.escape(controls)}`)
+    expect(list?.getAttribute("aria-labelledby")).toBe(path?.getAttribute("id"))
+  })
+
+  /** A count only when closed: open, the rows are the count. */
+  test("an open file prints no task count beside its name", () => {
+    const host = render(<Tree projects={projects()} />)
+    expect(host.querySelectorAll("[data-feature-count]")).toHaveLength(0)
   })
 })

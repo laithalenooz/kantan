@@ -486,6 +486,20 @@ interface Scan {
   phase: Phase | null
   /** The **first** `end` record, with whatever cost it carried. */
   end: { state: RunState; costUsd: number | null } | null
+  /**
+   * A human stopped the run, and no `phase` record has been written since.
+   *
+   * Cleared by a later accepted `phase` record, which is how a stop followed by
+   * a resume reads as running again rather than as permanently stopped.
+   *
+   * Deliberately **not** a lifecycle record for `sawLifecycle`'s purposes: the
+   * tail reader stops walking at the first chunk carrying one, and a stop
+   * arrives *after* the phase record that says where a resume would pick up.
+   * Counting it would stop the walk one chunk short, with `phase: null`, and
+   * `finish` would then answer `resumeFrom: "plan"` - restarting a run from
+   * the beginning because the log mentioned that someone stopped it.
+   */
+  stopped: boolean
   /** The largest `total_cost_usd` any `cli` record here showed. */
   costFloor: number
   warnings: readonly string[]
@@ -495,6 +509,7 @@ interface Scan {
 const EMPTY_SCAN: Scan = {
   phase: null,
   end: null,
+  stopped: false,
   costFloor: 0,
   warnings: [],
   sawLifecycle: false,
@@ -505,6 +520,7 @@ function scan(records: readonly RunRecord[]): Scan {
   const warnings: string[] = []
   let phase: Phase | null = null
   let end: Scan["end"] = null
+  let stopped = false
   let costFloor = 0
   let sawLifecycle = false
 
@@ -519,6 +535,9 @@ function scan(records: readonly RunRecord[]): Scan {
         if (read) {
           phase = read
           sawLifecycle = true
+          // A phase record after a stop is a resume: the run is moving again,
+          // so the stop is history rather than the current state.
+          stopped = false
         }
         break
       }
@@ -542,13 +561,21 @@ function scan(records: readonly RunRecord[]): Scan {
         if (cost !== null && cost > costFloor) costFloor = cost
         break
       }
-      // `header` carries identity, read from line one. `test` and `human` move
-      // nothing. An unknown kind belongs to a newer writer.
+      case "human": {
+        // Only the stop. `approve`, `feedback` and `raise` are all followed by
+        // a phase record saying what happened next, so the phase is the state
+        // and reading the action would add nothing. A stop is followed by
+        // nothing at all, which is precisely why it has to be read here.
+        if (record.action === "stop") stopped = true
+        break
+      }
+      // `header` carries identity, read from line one. `test` moves nothing.
+      // An unknown kind belongs to a newer writer.
       default:
         break
     }
   }
-  return { phase, end, costFloor, warnings, sawLifecycle }
+  return { phase, end, stopped, costFloor, warnings, sawLifecycle }
 }
 
 /**
@@ -576,6 +603,11 @@ function combine(earlier: Scan, later: Scan): Scan {
   return {
     phase: later.phase ?? earlier.phase,
     end: earlier.end ?? later.end,
+    /* The later chunk is nearer the end of the file. If it holds a phase
+       record, that record is the run's position and only a stop *after* it
+       counts - which within one chunk the scan has already resolved. If it
+       holds none, a stop in either chunk is still the latest word. */
+    stopped: later.phase !== null ? later.stopped : later.stopped || earlier.stopped,
     costFloor: Math.max(earlier.costFloor, later.costFloor),
     warnings:
       earlier.warnings.length === 0
@@ -592,6 +624,15 @@ function finish(found: Scan, isLive: boolean): Folded {
   const { warnings, sawLifecycle } = found
   const costUsd = found.end?.costUsd ?? found.costFloor
   if (found.end) return { state: found.end.state, costUsd, warnings, sawLifecycle }
+  /* Before the park check, and that order is a decision. A run can be stopped
+     while parked at a gate, and then the log says both "waiting for a human"
+     and "a human stopped it". The stop is the later fact and the actionable
+     one: nothing is driving the run, so offering the gate would ask someone to
+     approve a plan that no process is waiting to receive. Resuming re-parks
+     it, and the gate comes back. */
+  if (found.stopped && found.phase) {
+    return { state: { kind: "interrupted", resumeFrom: found.phase.phase }, costUsd, warnings, sawLifecycle }
+  }
   if (!found.phase) {
     return {
       state: { kind: "interrupted", resumeFrom: FIRST_PHASE },
