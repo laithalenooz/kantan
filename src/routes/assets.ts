@@ -26,9 +26,23 @@
  * - **The fallback stays.** A checkout with no `dist/` is the normal state of a
  *   fresh clone and of the dev loop, and both are served by Vite on another
  *   port. So `GET /` says what to do rather than 404ing.
+ *
+ * And one thing that had to be probed rather than reasoned about: **the
+ * directory this serves from is canonicalised on every request**, because
+ * `readBytesInside` compares `realpath(file)` against the root it was handed
+ * and `DEFAULT_DIST` is the *spelling* this module was loaded under. A
+ * checkout reached through a symlink - `~/code` pointing at another volume, or
+ * macOS resolving `/tmp` to `/private/tmp` - therefore made the containment
+ * check refuse the build's own files, and `GET /` answered a page telling
+ * somebody who had just run `bun run build` to run `bun run build`. Probed:
+ * with the same `dist/` passed by its real path the index came back, and
+ * passed by a symlink to it the read answered `outside`.
+ *
+ * Per request, not once at launch: `dist/` may be built while the server is
+ * already up, which is the first thing anyone does after seeing the fallback.
  */
 
-import { stat } from "node:fs/promises"
+import { realpath } from "node:fs/promises"
 import { join } from "node:path"
 
 import type { RouteContext } from "../http/context"
@@ -42,9 +56,18 @@ import { readBytesInside, readInside } from "../http/readinside"
  */
 export const DEFAULT_DIST = join(import.meta.dir, "..", "..", "dist")
 
-/** The most an asset may be. Vite's largest output here is a 60 KB woff2; the
- *  bound exists so a mis-pointed `distDir` cannot stream something huge. */
-const MAX_ASSET_BYTES = 16 * 1024 * 1024
+/**
+ * The most an asset may be.
+ *
+ * The bound exists so a mis-pointed `distDir` cannot stream something huge,
+ * and it is this low because `readBytesInside` allocates `maxBytes + 1`
+ * **eagerly** - a page load fetches five assets, so a generous cap is a
+ * generous allocation five times over for a 731 KB bundle.
+ *
+ * 8 MB is an order of magnitude above the largest thing this build emits,
+ * which is that JS chunk and not one of the ~29 KB fonts.
+ */
+const MAX_ASSET_BYTES = 8 * 1024 * 1024
 
 /**
  * Content types, by extension.
@@ -118,12 +141,22 @@ function typeOf(name: string): string | null {
   return TYPES[name.slice(dot).toLowerCase()] ?? null
 }
 
-/** `true` when a built UI is on disk. */
-export async function hasBuiltUI(distDir: string): Promise<boolean> {
+/**
+ * `dir` as a canonical path, or `null` when there is nothing there.
+ *
+ * Both readers below go through this, because `readBytesInside`'s contract is
+ * that the root it compares against is already canonical - a root that is
+ * itself a symlinked spelling refuses every file under it. See the header for
+ * what that looked like before it was probed.
+ *
+ * A missing directory is `null` rather than a throw: on `GET /` that is a
+ * clone nobody has built yet, which is the normal state and not an error.
+ */
+async function canonical(dir: string): Promise<string | null> {
   try {
-    return (await stat(join(distDir, "index.html"))).isFile()
+    return await realpath(dir)
   } catch {
-    return false
+    return null
   }
 }
 
@@ -136,7 +169,9 @@ export async function hasBuiltUI(distDir: string): Promise<boolean> {
  * this one is HTML and a build that is not UTF-8 is a broken build.
  */
 export async function builtIndex(distDir: string): Promise<string | null> {
-  const read = await readInside(distDir, join(distDir, "index.html"), MAX_ASSET_BYTES)
+  const root = await canonical(distDir)
+  if (root === null) return null
+  const read = await readInside(root, join(root, "index.html"), MAX_ASSET_BYTES)
   return read.ok ? read.text : null
 }
 
@@ -161,7 +196,8 @@ export async function readAsset(ctx: RouteContext, file: string): Promise<Respon
   // and the text reader refuses invalid UTF-8 on purpose. Running a font
   // through a fatal decoder answers 404 for a file that is sitting right
   // there, which is the kind of failure that reads as "the server is broken".
-  const assets = join(ctx.distDir, "assets")
+  const assets = await canonical(join(ctx.distDir, "assets"))
+  if (assets === null) return refuse(404, "no such asset")
   const read = await readBytesInside(assets, join(assets, file), MAX_ASSET_BYTES)
   if (!read.ok) {
     // Switched rather than flattened to one 404, because two of these are a
@@ -177,7 +213,11 @@ export async function readAsset(ctx: RouteContext, file: string): Promise<Respon
       case "outside":
         return refuse(404, "no such asset")
       case "too-large":
-        return refuse(413, `refused: that asset is larger than the ${MAX_ASSET_BYTES} byte cap this route serves`)
+        // Not a 4xx: nothing is wrong with the request. The build contains an
+        // asset this route will not serve, which is the server's problem and
+        // belongs in its terminal - and a 404 for a file that is sitting
+        // right there is the lie this switch exists to avoid.
+        return fault(`GET /assets/${file}`, `it is larger than this route's ${MAX_ASSET_BYTES} byte cap`)
       case "failed":
         // To the terminal, not the body: the message can carry a local path.
         return fault(`GET /assets/${file}`, read.message)

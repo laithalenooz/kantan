@@ -317,6 +317,49 @@ test("a traversal survives as a filename rather than becoming a path", async () 
   }
 })
 
+test("a dist reached through a symlink serves the build, not the fallback", async () => {
+  /**
+   * The dimension the rest of this file does not vary: every fixture above
+   * sits under the canonical repo root, so a green suite says nothing about a
+   * checkout reached through a link - `~/code` pointing at another volume, or
+   * macOS resolving `/tmp` to `/private/tmp`.
+   *
+   * It failed when first probed, and quietly: `readBytesInside` compares
+   * `realpath(file)` against the root it was handed, `DEFAULT_DIST` is the
+   * spelling the module was loaded under, so containment refused the build's
+   * own files and `GET /` told somebody who had just run `bun run build` to
+   * run `bun run build`.
+   */
+  const real = await dist({ "index-abc123.js": "export const x = 1\n" })
+  const link = join(ROOT, `link-${made++}`)
+  await symlink(real, link)
+
+  const l = serve(link)
+  const index = await get(l, "/")
+  expect(await index.text()).toBe(BUILT)
+
+  const asset = await get(l, "/assets/index-abc123.js", await bootstrap(l))
+  expect(asset.status).toBe(200)
+  expect(await asset.text()).toBe("export const x = 1\n")
+})
+
+test("a symlink out of the build is still refused when dist is itself a link", async () => {
+  // The containment check has to survive canonicalising the root - the fix for
+  // the test above is a `realpath` on the root, and a `realpath` that resolved
+  // too much would make every escape look like it was inside.
+  const real = await dist()
+  const outside = join(ROOT, "secret-via-link.js")
+  await writeFile(outside, "export const secret = 1\n")
+  await symlink(outside, join(real, "assets", "escape-abc123.js"))
+  const link = join(ROOT, `link-${made++}`)
+  await symlink(real, link)
+
+  const l = serve(link)
+  const res = await get(l, "/assets/escape-abc123.js", await bootstrap(l))
+  expect(res.status).toBe(404)
+  expect(await res.text()).not.toContain("secret")
+})
+
 test("the default dist is resolved from the module, not the working directory", () => {
   // A cwd-relative default would serve the fallback page whenever kantan was
   // started from anywhere but the repo root, which is most of the time.

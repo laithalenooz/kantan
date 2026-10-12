@@ -309,8 +309,9 @@ export interface RouteContext {
   origins: ReadonlySet<string>
   /** Resolved from `ServerOptions`, so a handler never consults a default. */
   runsDir: string
-  /** Where a built UI would be. Resolved, like `runsDir`: present whether or
-   * not anything is there, and `hasBuiltUI` is what answers that. */
+  /** Where a built UI would be. Resolved from `ServerOptions` like `runsDir`,
+   * so it is present whether or not anything is there - and it is the
+   * *spelling*, which `src/routes/assets.ts` canonicalises per request. */
   distDir: string
   streamPollMs: number
   streamKeepAliveMs: number
