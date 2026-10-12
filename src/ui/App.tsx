@@ -5,7 +5,8 @@ import { Stream } from "./Stream.tsx"
 import { Sidebar, sumProcessCost, type AccountWindow } from "./Sidebar.tsx"
 import { Digest, ReturnBand, type DigestSubject } from "./Digest.tsx"
 import { AppBar, Breadcrumb, NeedsYouBand, usePageAttention } from "./Chrome.tsx"
-import { startRun, taskKeyOf, type RunView } from "./live.ts"
+import { Empty } from "./Empty.tsx"
+import { registerProject, startRun, taskKeyOf, type RunView } from "./live.ts"
 import { useAction, usePlan, useRun, useTree } from "./useRun.ts"
 import type { RunPhase } from "../runlog.ts"
 import type { AskingPhase } from "./Gate.tsx"
@@ -169,8 +170,69 @@ function useNow(): number {
   return now
 }
 
+/**
+ * Adding a repository: the only way a project enters the tree.
+ *
+ * A real form rather than a `prompt()`, because the server's refusals are the
+ * useful part - "not a git repository", "not a worktree" - and they have to be
+ * readable beside the field that caused them.
+ */
+function AddProject({ onDone, onCancel }: { onDone: () => void; onCancel: () => void }) {
+  const [path, setPath] = useState("")
+  const [testCmd, setTestCmd] = useState("")
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const submit = async (e: React.FormEvent): Promise<void> => {
+    e.preventDefault()
+    setBusy(true)
+    setError(null)
+    try {
+      await registerProject({ path: path.trim(), testCmd: testCmd.trim() })
+      onDone()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-[#111216]/30 p-6" role="dialog" aria-modal="true" aria-label="Add a repository">
+      <form onSubmit={(e) => void submit(e)} className="w-full max-w-[520px] rounded-[18px] border border-edge bg-white p-6 shadow-lg">
+        <h2 className="text-[19px] font-[650] tracking-[-.015em] text-ink">Add a repository</h2>
+        <p className="mt-2 text-[13.5px] leading-[1.55] text-muted-500">
+          kantan reads the tasks in <span className="m">docs/features/*.md</span> and runs your test command after each one.
+        </p>
+
+        <label className="mt-5 block text-[12.5px] font-semibold text-muted-400" htmlFor="ap-path">Repository path</label>
+        <input id="ap-path" value={path} onChange={(e) => setPath(e.target.value)} required autoFocus
+          placeholder="/home/you/code/your-app"
+          className="m mt-1.5 w-full rounded-[10px] border border-edge px-3 py-2 text-[13.5px] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#5B5BD6]" />
+
+        <label className="mt-4 block text-[12.5px] font-semibold text-muted-400" htmlFor="ap-cmd">Test command</label>
+        <input id="ap-cmd" value={testCmd} onChange={(e) => setTestCmd(e.target.value)} required
+          placeholder="npm test"
+          className="m mt-1.5 w-full rounded-[10px] border border-edge px-3 py-2 text-[13.5px] text-ink outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#5B5BD6]" />
+
+        {error !== null && (
+          <p role="alert" className="mt-4 rounded-[10px] border border-[#F3C6C9] bg-[#FDF2F3] px-3 py-2 text-[12.5px] leading-[1.5] text-[#D92D3A]">{error}</p>
+        )}
+
+        <div className="mt-6 flex items-center justify-end gap-3">
+          <button type="button" onClick={onCancel} className="ghost rounded-full px-4 py-2 text-[13px] font-semibold text-muted-500">Cancel</button>
+          <button type="submit" disabled={busy} className="cta rounded-full bg-ink px-4 py-2 text-[13px] font-semibold text-white disabled:opacity-50">
+            {busy ? "Adding…" : "Add repository"}
+          </button>
+        </div>
+      </form>
+    </div>
+  )
+}
+
 export function App() {
-  const { tree, origin, error: treeError } = useTree()
+  const { tree, origin, error: treeError, reload } = useTree()
+  const [adding, setAdding] = useState(false)
   const nowMs = useNow()
   const [selected, setSelected] = useState<TaskId | null>(null)
   const [started, setStarted] = useState<Record<string, string>>({})
@@ -275,6 +337,13 @@ export function App() {
      deliberately refuses both so there cannot be two. */
   usePageAttention({ subject, needsYou })
 
+  /* The rail is only drawn for a run, so its column must not be reserved when
+     there is none: 16.25rem of empty grid leaves the centre too narrow for the
+     empty state's two-column hero, which then stacks below the fold. */
+  const showRail = view !== null && view.ceilingUsd !== null
+  const nothingSelected = treeError === null && tree !== null && projects.length > 0 && selected === null
+  const noProjects = treeError === null && tree !== null && projects.length === 0
+
   const failure = treeError ?? startError ?? actionError
 
   return (
@@ -299,14 +368,24 @@ export function App() {
         subject !== null && view?.ended === null && <ReturnBand subject={subject} needsYou={needsYou} />
       )}
 
-      <div className="grid min-h-0 flex-1 grid-cols-[18rem_minmax(0,1fr)_16.25rem] overflow-hidden">
+      <div className={`grid min-h-0 flex-1 overflow-hidden ${showRail ? "grid-cols-[18rem_minmax(0,1fr)_16.25rem]" : "grid-cols-[18rem_minmax(0,1fr)]"}`}>
       {/* A flex column, because `Tree` draws its own panel as an `<aside
           className="basis-72 grow">` - and `grow` does nothing to a child of a
           block, so the panel ends at its content and the ground shows through
           below it. Caught in a screenshot; no assertion would have seen it. */}
       <div className="flex min-w-0 flex-col overflow-y-auto">
-        <Tree projects={projects} selected={selected} onSelect={setSelected} />
+        <Tree projects={projects} selected={selected} onSelect={setSelected} onAddProject={() => setAdding(true)} />
       </div>
+
+      {/* Empty renders its own `<main>` and its own `.dots` layer, because
+          `artboard.css` scopes the first-run dot geometry to `.kr-empty .dots`
+          and the column below already carries `.dots` with the other mask.
+          `treeError` is in both conditions deliberately: the failure alert is
+          rendered *inside* the main these replace, and `useTree` does not clear
+          `tree` on a failed refetch - so without it an error would be silently
+          swallowed on a tree that had loaded once. */}
+      {noProjects && <Empty kind="no-projects" onAddProject={() => setAdding(true)} />}
+      {nothingSelected && <Empty kind="no-selection" />}
 
       {/* The dotted ground is its **own absolutely positioned layer**, exactly
           as the artboard draws it (`position:absolute;inset:0;pointer-events:
@@ -314,7 +393,7 @@ export function App() {
           `mask-image`, and a mask applies to the element's entire rendering,
           children included - putting it on the container faded the digest and
           erased the run record below the mask's 75% stop. */}
-      <main className="relative flex min-w-0 flex-col overflow-y-auto px-6 pb-10">
+      <main hidden={noProjects || nothingSelected} className="relative flex min-w-0 flex-col overflow-y-auto px-6 pb-10">
         <div className="dots pointer-events-none absolute inset-0" aria-hidden="true" />
         <div className="relative flex min-w-0 flex-col">
         {project !== null && selected !== null && (
@@ -375,6 +454,7 @@ export function App() {
 
       {/* No border or background here: `Sidebar` draws its own aside, faithfully
           to the artboard, and repeating them painted a 2px seam. */}
+      {showRail && (
       <div className="flex min-w-0 flex-col overflow-y-auto">
         {view !== null && view.ceilingUsd !== null && (
           <Sidebar
@@ -387,7 +467,18 @@ export function App() {
           />
         )}
       </div>
+      )}
       </div>
+
+      {adding && (
+        <AddProject
+          onDone={() => {
+            setAdding(false)
+            reload()
+          }}
+          onCancel={() => setAdding(false)}
+        />
+      )}
     </div>
   )
 }

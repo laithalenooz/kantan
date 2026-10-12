@@ -587,6 +587,28 @@ export async function startRun(
   return answer.runId
 }
 
+/**
+ * Registers a repository, which is the only way a project enters the tree.
+ *
+ * The server validates the path with `requireUsableRepo` and stores the record
+ * under git's resolved root, so a path that is not a repo, not readable, or not
+ * a worktree is refused here rather than failing later inside a run.
+ */
+export async function registerProject(
+  project: { path: string; testCmd: string },
+  fetcher: typeof fetch = fetch,
+): Promise<void> {
+  const res = await fetcher(`${API}/projects`, {
+    method: "POST",
+    cache: "no-store",
+    body: JSON.stringify({ path: project.path, testCmd: project.testCmd }),
+  })
+  // 201, because the record now exists. Anything else carries the server's own
+  // sentence about what is wrong with the path, which is the whole value of
+  // this call failing — the user has to be told which part to fix.
+  if (!res.ok) throw new Error(`that repository could not be added: ${res.status} ${await text(res)}`)
+}
+
 /** The actions, design §4.4. POST, never GET: see the header of `src/server.ts`. */
 export type Action =
   | { kind: "approve" }

@@ -809,29 +809,48 @@ that only checks "does it look like the artboard" will drop them silently.
 
 ### A reduced-motion fallback can pass its own suite and fail the real one
 
-Mutation evidence from the same agent, and the inverse of the usual failure.
-Deleting the `|| live` from the **Stream** row's reduced-motion read:
+**CORRECTED 2026-10-12.** The original claim here was that deleting `|| live`
+from the Stream row's reduced-motion read survived `bun test
+test/ui/Stream.test.tsx` and was caught only by `bun run check`, and the
+conclusion drawn was "verify a reduced-motion fallback with the full suite,
+never a single file."
 
-| run | result |
-|---|---|
-| `bun test test/ui/Stream.test.tsx` | **0 fail** - the mutation survives |
-| `bun run check` (full suite) | **1 fail** |
+The measurement was real; the explanation was wrong, and so was the advice. The
+author re-probed it: **the test's own stub was repairing Motion's singleton as
+a side effect of firing `change`**, so inside that harness Motion's cached
+answer was live and `|| live` genuinely was redundant - the mutation was
+surviving for a reason that had nothing to do with file order. The test now
+warms Motion to `false` and then changes the preference *without* firing
+`change`, which is the state the documented trap actually occurs in. Measured
+after that: **the same mutation fails the file on its own.**
 
-Run alone, Motion's cached preference happens to agree with that file's stubbed
-query. In the full suite a sibling file initialises the module-level singleton
-first and the cached answer goes stale - the `CLAUDE.md` trap, reproduced. So
-**verify a reduced-motion fallback with the full suite, never a single file.**
+So the real rule is narrower and more useful: a reduced-motion test must put
+Motion's singleton into the stale state it is guarding against, rather than
+assuming the harness has done so. A stub that fires `change` has quietly fixed
+the very bug it was written to catch.
 
-Two more probed facts from that work: happy-dom's `getComputedStyle` does
-**not** evaluate `@media (prefers-reduced-motion)`, so a CSS-only guard is
-invisible to every assertion and needs a JS read beside it; and `matchMedia`
-returns a **new** `MediaQueryList` per call and never fires `change`, so
-"preference changed mid-session" needs a stubbed shared query.
+What stands unchanged from the original entry: Motion's `useReducedMotion()` is
+a module-level singleton initialised at the first call anywhere in the process;
+happy-dom's `getComputedStyle` does **not** evaluate
+`@media (prefers-reduced-motion)`, so a CSS-only guard is invisible to every
+assertion; and `matchMedia` returns a new `MediaQueryList` per call and never
+fires `change` on its own.
 
-The artboard's own `@media (prefers-reduced-motion:reduce){.kr *{animation:none
-!important}}` is a strong second belt but not a replacement: it reaches CSS
-animations only, not Motion springs and not the `requestAnimationFrame`-driven
-cost ticker.
+### A green suite does not prove a guarantee survived a restyle
+
+The `A` key chip on the Approve button was removed in a visual-fidelity commit,
+**together with the test that required it**, so `bun run check` stayed green
+while a keystroke that starts a real implementation run lost its only visible
+hint. The assertion died in the same commit as the behaviour it protected.
+
+This is not a reviewer failing. It is what happens when a test pins *markup* -
+"there are two chips" - and the markup is then legitimately changed. The test
+had to go, and the guarantee went with it silently.
+
+So assert the **guarantee**, not the drawing: "the shortcut is discoverable"
+passes whether the hint is a chip, a `title`, or `aria-keyshortcuts`, and
+survives the next restyle. Every load-bearing Task 25 attribute is exposed to
+this, which is why they are listed by name above.
 
 ### There are TWO bands, and only one of them was built
 
