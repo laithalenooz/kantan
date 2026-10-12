@@ -186,7 +186,9 @@ export function App() {
   const failure = treeError ?? startError ?? actionError
 
   return (
-    <div className="grid h-dvh grid-cols-[18rem_minmax(0,1fr)_14rem] overflow-hidden">
+    /* `kr` is the artboards' own root class, and `artboard.css`'s reduced-motion
+       guard is `.kr, .kr *` — it does nothing until a root carries it. */
+    <div className="kr grid h-dvh grid-cols-[18rem_minmax(0,1fr)_14rem] overflow-hidden">
       {/* A flex column, because `Tree` draws its own panel as an `<aside
           className="basis-72 grow">` - and `grow` does nothing to a child of a
           block, so the panel ends at its content and the ground shows through

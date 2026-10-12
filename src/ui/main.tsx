@@ -5,6 +5,14 @@ import { createRoot } from "react-dom/client"
 import { MotionConfig } from "motion/react"
 
 import "./tokens.css"
+/* After `tokens.css`, which owns the `@import` and the theme: `artboard.css`
+ * declares its rules in `@layer components`, and its own header says the order
+ * matters. It carries the artboards' real class vocabulary — `.m`, `.ic`,
+ * `.bf` with `.d1`–`.d9`, `.beam`, `.ring`, `.dots`, `.plan`, `.trow` — so a
+ * component ported from `docs/design/*.dc.html` keeps the markup it was drawn
+ * with. Nothing imported it until now, which meant every one of those classes
+ * was inert. */
+import "./artboard.css"
 import { App } from "./App.tsx"
 
 /**
