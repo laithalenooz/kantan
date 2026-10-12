@@ -72,8 +72,14 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test"
 
 /* Type-only, so nothing here is evaluated before the window exists. */
-import type { AccountOption, TestCommandResult } from "../../src/ui/ProjectPanel.tsx"
-import type { Account, TreeProject } from "../../src/ui/Tree.tsx"
+import type { AccountOption, ProjectPanelProps, TestCommandResult } from "../../src/ui/ProjectPanel.tsx"
+import type { Account } from "../../src/ui/Tree.tsx"
+
+/**
+ * What the panel is handed, taken from its own props rather than restated so
+ * the fixtures below cannot drift from what it accepts.
+ */
+type PanelProject = ProjectPanelProps["project"]
 
 /** Taken only if free, and never given back. See the header. */
 let ownsDocument = false
@@ -334,10 +340,29 @@ const WORK: AccountOption = {
 
 const ACCOUNTS = [PERSONAL, WORK] as const
 
-function project(account: Account["kind"], over: Partial<TreeProject> = {}): TreeProject {
+/**
+ * The profile each fixture account bills to, so a project and the option that
+ * names it agree.
+ *
+ * Not decoration: `TreeProject.configDir` is what `src/spawn.ts` turns into
+ * `CLAUDE_CONFIG_DIR`, so a record whose account says "personal" and whose
+ * profile is absent is a project running on the *default* profile under a
+ * personal label - a different thing from one running on `~/.claude`, and the
+ * panel now has to tell them apart. `unknown` keeps no profile, because
+ * nobody has said.
+ */
+const PROFILE: Record<Account["kind"], string | undefined> = {
+  personal: PERSONAL.configDir,
+  work: WORK.configDir,
+  unknown: undefined,
+}
+
+function project(account: Account["kind"], over: Partial<PanelProject> = {}): PanelProject {
+  const configDir = PROFILE[account]
   return {
     path: "/home/you/code/your-app",
     account: { kind: account },
+    ...(configDir === undefined ? {} : { configDir }),
     testCmd: "npm test",
     features: [
       {
@@ -718,6 +743,151 @@ describe("the toast that finishes the switch", () => {
   })
 })
 
+/* ========================================================================== */
+
+/**
+ * The profile, which is the only part of an account switch that moves money.
+ *
+ * Verified 2026-10-12: `src/spawn.ts:194` sets `CLAUDE_CONFIG_DIR` from
+ * `configDir` and `src/run.ts:698` records the run's profile from it, and
+ * nothing outside `accountOf()` in `src/server.ts` reads `account` at all. So
+ * `account` is the human's word and `configDir` is the credential. A switch
+ * that sends the word alone relabels the chip and bills the same account -
+ * pinned deliberately at `test/server.test.ts:3038`, because the route must
+ * not refuse `{account}` alone: someone's *default* profile may be their work
+ * one. Not misleading anybody is therefore this panel's job.
+ *
+ * ## The guard, and its matrix
+ *
+ * `TreeProject.configDir` now carries the project's own profile, so the
+ * dimension this reads is **the pair (word, profile) of the pick against the
+ * pair the project already has**, and a pick is a no-op only when both halves
+ * match. Its values, and what reading each one wrongly costs:
+ *
+ * | pick vs stored | if it is read as a no-op |
+ * |---|---|
+ * | same word, same profile | nothing changes either way |
+ * | same word, other profile | the other profile can never be chosen, and the card it was clicked on goes on claiming the project runs there |
+ * | other word, same profile | a relabel is silently skipped; harmless to billing, invisible to the human |
+ * | other word, other profile | the switch the control exists for never happens |
+ *
+ * One extra confirmation is the cheap direction, so only an exact pair match
+ * skips. `AccountSwitch`'s own "Add an account" takes a `configDir`, so a list
+ * with two of a kind is something this file asks for.
+ */
+describe("the profile an account switch moves, not just the label", () => {
+  const ACME: AccountOption = { kind: "work", label: "acme", configDir: "/home/you/.claude-acme" }
+  const GLOBEX: AccountOption = { kind: "work", label: "globex", configDir: "/home/you/.claude-globex" }
+  const DEFAULT_PROFILE: AccountOption = { kind: "work", label: "work" }
+
+  /**
+   * `/` and not a NUL, which this file asked for first.
+   *
+   * Probed: happy-dom's selector parser reads `\0` in a selector as U+0000 and
+   * matches an attribute holding one, so the NUL spelling passed here - but CSS
+   * says an escape of zero is U+FFFD, so the same selector matches nothing in a
+   * real browser, and the HTML parser rewrites a NUL in an attribute anyway. A
+   * separator that only works in the harness is worse than no separator. A
+   * `kind` is one of three words and none contains a `/`, so the first one ends
+   * the word and the rest is the path. See `optionId`.
+   */
+  const KEY = (option: AccountOption): string =>
+    `[role="radio"][data-card-key="${option.kind}/${option.configDir ?? ""}"]`
+
+  test("names the folder the runs will actually use", async () => {
+    const h = handlers()
+    await render(<api.ProjectPanel project={project("personal")} accounts={ACCOUNTS} {...h.props} />)
+    await click(one(CARD("work")))
+
+    const said = (one('[data-confirm="panel"]').textContent ?? "").replace(/\s+/g, " ")
+    expect(said).toContain("Future runs bill to work")
+    expect(said).toContain("~/.claude-work")
+  })
+
+  /**
+   * An option with no folder is the default profile, and saying so is what
+   * stops the sentence promising a directory the run will not use - the same
+   * rule `AddRepo` follows for its cards.
+   */
+  test("says `the default profile` rather than naming one, when the option has none", async () => {
+    const h = handlers()
+    await render(<api.ProjectPanel project={project("personal")} accounts={[PERSONAL, DEFAULT_PROFILE]} {...h.props} />)
+    await click(one(CARD("work")))
+
+    const said = (one('[data-confirm="panel"]').textContent ?? "").replace(/\s+/g, " ")
+    expect(said).toContain("the default profile")
+  })
+
+  test("the toast says which profile the project now runs on", async () => {
+    const h = handlers()
+    await render(<api.ProjectPanel project={project("personal")} accounts={ACCOUNTS} {...h.props} />)
+    await click(one(CARD("work")))
+    await click(byText('[data-confirm="panel"] button', "Switch to work"))
+    await settle()
+
+    expect((one("[data-toast]").textContent ?? "").replace(/\s+/g, " ")).toContain("~/.claude-work")
+  })
+
+  test("gives each profile its own card, which `kind` alone cannot name", async () => {
+    const h = handlers()
+    await render(<api.ProjectPanel project={project("work")} accounts={[PERSONAL, ACME, GLOBEX]} {...h.props} />)
+
+    expect(all('[role="radio"][data-card-key]')).toHaveLength(3)
+    expect(one(KEY(ACME))).not.toBe(one(KEY(GLOBEX)))
+  })
+
+  test("picking another profile of the account it already runs as still confirms", async () => {
+    const got: AccountOption[] = []
+    await render(
+      <api.ProjectPanel
+        project={project("work")}
+        accounts={[PERSONAL, ACME, GLOBEX]}
+        onSwitchAccount={(account) => void got.push(account)}
+        onSaveTestCmd={() => {}}
+        onRemove={() => {}}
+      />,
+    )
+
+    await click(one(KEY(GLOBEX)))
+    expect(got).toEqual([])
+    const said = (one('[data-confirm="panel"]').textContent ?? "").replace(/\s+/g, " ")
+    expect(said).toContain("/home/you/.claude-globex")
+
+    await click(byText('[data-confirm="panel"] button', "Switch to globex"))
+    await settle()
+    /* The whole option, so the shell has the folder to PATCH. */
+    expect(got).toEqual([GLOBEX])
+  })
+
+  test("checks no card at all when the stored word names more than one profile", async () => {
+    const h = handlers()
+    await render(<api.ProjectPanel project={project("work")} accounts={[PERSONAL, ACME, GLOBEX]} {...h.props} />)
+
+    expect(all('[role="radio"]').filter((el) => el.getAttribute("aria-checked") === "true")).toEqual([])
+    expect(prose()).toContain("cannot tell which profile")
+  })
+
+  test("still checks the stored account when only one profile answers to it", async () => {
+    const h = handlers()
+    await render(<api.ProjectPanel project={project("work")} accounts={ACCOUNTS} {...h.props} />)
+
+    expect(one(CARD("work")).getAttribute("aria-checked")).toBe("true")
+    expect(prose()).not.toContain("cannot tell which profile")
+  })
+
+  /** Undo has to name one option, and an ambiguous word names none. */
+  test("hides Undo when the account it came from names more than one profile", async () => {
+    const h = handlers()
+    await render(<api.ProjectPanel project={project("work")} accounts={[PERSONAL, ACME, GLOBEX]} {...h.props} />)
+    await click(one(CARD("personal")))
+    await click(byText('[data-confirm="panel"] button', "Switch to personal"))
+    await settle()
+
+    expect(maybe("[data-toast]")).not.toBeNull()
+    expect(all("[data-toast] button").map((b) => (b.textContent ?? "").trim())).not.toContain("Undo")
+  })
+})
+
 describe("the account chip and its popover", () => {
   function switchProps(account: Account["kind"]) {
     const switched: string[] = []
@@ -934,7 +1104,15 @@ describe("the test command, and proving it works", () => {
     expect(h.saved).toEqual(["bun test"])
   })
 
-  test("refuses to save a blank command, and says why", async () => {
+  /**
+   * The message changed with the user's 2026-10-12 decision, and the old one
+   * is now false: a test command is **not** required - `null` is a project
+   * the agent verifies itself. What a blank string is not, is that opt-out.
+   * `src/projects.ts` fails toward refusing `""` for the reason this names:
+   * `sh -c ""` exits 0, so a blank command ticks every task as tested with
+   * nothing run.
+   */
+  test("refuses to save a blank command, and says what a blank one would do", async () => {
     const h = handlers()
     await render(<api.ProjectPanel project={project("personal")} accounts={ACCOUNTS} {...h.props} />)
     const field = one<HTMLInputElement>("#kp-testcmd")
@@ -942,7 +1120,11 @@ describe("the test command, and proving it works", () => {
     await typeInto(field, "   ")
     await blurOf(field)
     expect(h.saved).toEqual([])
-    expect(prose()).toContain("A test command is required")
+    const said = prose()
+    expect(said).toContain("A blank command is not an opt-out")
+    expect(said).toContain("exits 0")
+    /* The old sentence, which the decision made untrue. */
+    expect(said).not.toContain("A test command is required")
   })
 
   test("offers `Run it now` only when something can run it", async () => {
@@ -1126,6 +1308,248 @@ describe("the test command, and proving it works", () => {
 
     expect(maybe("[data-exit-badge]")).toBeNull()
     expect(prose()).toContain("a run is already holding this repo")
+  })
+})
+
+/* ========================================================================== */
+
+/**
+ * A project may have no test command, and then the agent verifies its own work
+ * (the user's decision, 2026-10-12, `docs/HANDOFF.md`). `Project.testCmd` is
+ * `string | null` and `GET /api/projects` already sends the `null`.
+ *
+ * ## The guard, and its matrix
+ *
+ * The dimension is **the stored `testCmd` as it arrives over HTTP** - not what
+ * the store can hold, because this panel reads a tree over the wire rather
+ * than the record. Its values are: a command; `null`; `""`; whitespace only;
+ * and a command with its own padding, which `sh -c` keeps and so must the
+ * display.
+ *
+ * The costs are nowhere near symmetric, which is what decides the fold:
+ *
+ * | wrong guess | costs |
+ * |---|---|
+ * | a real command read as absent | a label that says the agent checks itself while kantan will in fact run a suite: wrong, and visible the moment a run ends |
+ * | absent or blank read as a command | a bare `$` with nothing after it, under a blurb promising kantan "trusts only its exit code" - a project ticked on the agent's word while the panel says an exit code was read |
+ *
+ * So blank folds to "no command", exactly as `StartPanel`'s `commandOf` does,
+ * and for the same reason it gives: under-claiming a verification is the cheap
+ * direction, over-claiming one gets work merged that nothing checked.
+ */
+describe("a project with no test command", () => {
+  const NO_CMD = "Self-checked by the agent — no test command"
+
+  const ROWS: ReadonlyArray<{ why: string; stored: string | null; command: string | null }> = [
+    { why: "a command", stored: "npm test", command: "npm test" },
+    { why: "no suite at all", stored: null, command: null },
+    { why: "an empty string", stored: "", command: null },
+    { why: "whitespace only", stored: "   ", command: null },
+    { why: "a command with padding", stored: "  npm test  ", command: "  npm test  " },
+  ]
+
+  for (const { why, stored, command } of ROWS) {
+    test(`reads ${why} as ${command === null ? "no command" : JSON.stringify(command)}`, async () => {
+      const h = handlers()
+      await render(
+        <api.ProjectPanel project={project("personal", { testCmd: stored })} accounts={ACCOUNTS} {...h.props} />,
+      )
+
+      if (command === null) {
+        /* No field, because an empty one behind a `$` reads as a command the
+           reader cannot see - which is the defect `src/server.ts` names when
+           it refuses to send `?? ""`. */
+        expect(maybe("#kp-testcmd")).toBeNull()
+        expect(prose()).toContain(NO_CMD)
+        expect(prose()).toContain("nothing outside it checks")
+        /* The promise that belongs to a command, and would be false here. */
+        expect(prose()).not.toContain("trusts only its exit code")
+        return
+      }
+
+      /* Verbatim: it is a shell string handed to `sh -c`, so its spacing is
+         the user's and not this field's to tidy. */
+      expect(one<HTMLInputElement>("#kp-testcmd").value).toBe(command)
+      expect(prose()).not.toContain(NO_CMD)
+      expect(prose()).toContain("trusts only its exit code")
+    })
+  }
+
+  /**
+   * `src/testrun.ts` has nothing to run without a command, and the control
+   * exists to prove a command works before it is trusted. With none there is
+   * nothing to prove, and `sh -c ""` would exit 0 - a pass from an empty
+   * string is the one answer no reader could tell from a real one.
+   */
+  test("does not offer to run a command that does not exist", async () => {
+    const h = handlers()
+    const ran: string[] = []
+    await render(
+      <api.ProjectPanel
+        project={project("personal", { testCmd: null })}
+        accounts={ACCOUNTS}
+        onRunTest={(cmd) => {
+          ran.push(cmd)
+          return Promise.resolve({ exitCode: 0 })
+        }}
+        {...h.props}
+      />,
+    )
+
+    expect(all("button").map((b) => (b.textContent ?? "").trim())).not.toContain("Run it now")
+    expect(ran).toEqual([])
+  })
+
+  test("does not offer to run a field the human has emptied either", async () => {
+    const h = handlers()
+    await render(
+      <api.ProjectPanel
+        project={project("personal")}
+        accounts={ACCOUNTS}
+        onRunTest={() => Promise.resolve({ exitCode: 0 })}
+        {...h.props}
+      />,
+    )
+    expect(all("button").map((b) => (b.textContent ?? "").trim())).toContain("Run it now")
+
+    await typeInto(one("#kp-testcmd"), "   ")
+    expect(all("button").map((b) => (b.textContent ?? "").trim())).not.toContain("Run it now")
+  })
+
+  test("offers a way to give it one, and saves what is typed", async () => {
+    const h = handlers()
+    await render(
+      <api.ProjectPanel
+        project={project("personal", { testCmd: null })}
+        accounts={ACCOUNTS}
+        onRunTest={() => Promise.resolve({ exitCode: 0 })}
+        {...h.props}
+      />,
+    )
+
+    await click(byText("button", "Set a test command"))
+    const field = one<HTMLInputElement>("#kp-testcmd")
+    expect(field.value).toBe("")
+    /* Still nothing to run until there is something in it. */
+    expect(all("button").map((b) => (b.textContent ?? "").trim())).not.toContain("Run it now")
+
+    await typeInto(field, "bun test")
+    expect(all("button").map((b) => (b.textContent ?? "").trim())).toContain("Run it now")
+    await blurOf(field)
+    expect(h.saved).toEqual(["bun test"])
+  })
+
+  /**
+   * Blank is not refused here, because nothing is required: the project
+   * already has no command and leaving the field empty changed nothing. What
+   * it must not do is stay on screen as an empty field behind a `$`.
+   */
+  test("leaving the field empty is not an error when there was no command", async () => {
+    const h = handlers()
+    await render(
+      <api.ProjectPanel project={project("personal", { testCmd: null })} accounts={ACCOUNTS} {...h.props} />,
+    )
+
+    await click(byText("button", "Set a test command"))
+    await blurOf(one("#kp-testcmd"))
+
+    expect(h.saved).toEqual([])
+    expect(maybe("#kp-testcmd")).toBeNull()
+    expect(prose()).toContain(NO_CMD)
+    expect(prose()).not.toContain("A blank command is not an opt-out")
+  })
+
+  /** The store's own spelling is `null`, and this is the only way to send it. */
+  test("offers the opt-out only when something can save it", async () => {
+    const h = handlers()
+    await render(<api.ProjectPanel project={project("personal")} accounts={ACCOUNTS} {...h.props} />)
+    expect(all("button").map((b) => (b.textContent ?? "").trim())).not.toContain("Remove the test command")
+
+    await render(
+      <api.ProjectPanel
+        project={project("personal")}
+        accounts={ACCOUNTS}
+        onClearTestCmd={() => {}}
+        {...h.props}
+      />,
+    )
+    expect(all("button").map((b) => (b.textContent ?? "").trim())).toContain("Remove the test command")
+    /* The consequence, beside the control rather than after the fact. */
+    expect(prose()).toContain("verifies its own work")
+  })
+
+  test("the opt-out is not offered for a project that has already taken it", async () => {
+    const h = handlers()
+    await render(
+      <api.ProjectPanel
+        project={project("personal", { testCmd: null })}
+        accounts={ACCOUNTS}
+        onClearTestCmd={() => {}}
+        {...h.props}
+      />,
+    )
+    expect(all("button").map((b) => (b.textContent ?? "").trim())).not.toContain("Remove the test command")
+  })
+
+  test("taking the opt-out asks once, and then says there is no command", async () => {
+    const h = handlers()
+    let cleared = 0
+    await render(
+      <api.ProjectPanel
+        project={project("personal")}
+        accounts={ACCOUNTS}
+        onClearTestCmd={() => void cleared++}
+        {...h.props}
+      />,
+    )
+
+    await click(byText("button", "Remove the test command"))
+    await settle()
+
+    expect(cleared).toBe(1)
+    expect(h.saved).toEqual([])
+    expect(maybe("#kp-testcmd")).toBeNull()
+    expect(prose()).toContain(NO_CMD)
+  })
+
+  /**
+   * Nothing may claim a verification it did not observe, and the mirror of
+   * that is a panel claiming a project has no command when the PATCH that
+   * would have said so was refused.
+   */
+  test("a refused opt-out puts the command back, and shows the refusal", async () => {
+    const h = handlers()
+    await render(
+      <api.ProjectPanel
+        project={project("personal")}
+        accounts={ACCOUNTS}
+        onClearTestCmd={() => Promise.reject(new Error("a run is in flight for this project"))}
+        {...h.props}
+      />,
+    )
+
+    await click(byText("button", "Remove the test command"))
+    await settle()
+
+    expect(one<HTMLInputElement>("#kp-testcmd").value).toBe("npm test")
+    expect(prose()).not.toContain(NO_CMD)
+    expect(prose()).toContain("a run is in flight for this project")
+  })
+
+  /** The store is the truth; a reload that drops the command wins over a
+   *  draft nobody committed. */
+  test("a command that disappears from the store takes the field with it", async () => {
+    const h = handlers()
+    await render(<api.ProjectPanel project={project("personal")} accounts={ACCOUNTS} {...h.props} />)
+    await typeInto(one("#kp-testcmd"), "half-typed")
+
+    await render(
+      <api.ProjectPanel project={project("personal", { testCmd: null })} accounts={ACCOUNTS} {...h.props} />,
+    )
+
+    expect(maybe("#kp-testcmd")).toBeNull()
+    expect(prose()).toContain(NO_CMD)
+    expect(h.saved).toEqual([])
   })
 })
 

@@ -111,6 +111,7 @@ import {
   type AccountWindow,
 } from "./Sidebar.tsx"
 import type { Account, TreeProject } from "./Tree.tsx"
+import { commandOf, SELF_CHECKED } from "./testcmd.ts"
 
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
@@ -184,6 +185,18 @@ export interface ProjectPanelProps {
   onSwitchAccount: (account: AccountOption) => void | Promise<void>
   /** Called with a trimmed, non-empty command, once per change. */
   onSaveTestCmd: (cmd: string) => void | Promise<void>
+  /**
+   * Sends `null`, which is the only way this panel can say "no suite".
+   *
+   * Separate from `onSaveTestCmd` rather than `onSaveTestCmd("")` because the
+   * store refuses `""` - and it should: `sh -c ""` exits 0, so a blank command
+   * would tick every task as tested with nothing run. The opt-out is a
+   * different request, so it gets a different handler, and a shell that cannot
+   * express it simply omits this and the control is not drawn.
+   *
+   * Absent hides "Remove the test command".
+   */
+  onClearTestCmd?: () => void | Promise<void>
   /** Called only from the confirmation dialog. */
   onRemove: () => void | Promise<void>
   /** Runs the command now. Absent hides "Run it now" - there is no endpoint. */
@@ -216,6 +229,68 @@ export interface AccountSwitchProps {
 /* Small helpers                                                              */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * What identifies an account option: the word **and** the folder.
+ *
+ * `kind` alone is not an identity. It is one of three words, while the thing
+ * that decides what a run costs is `configDir` - so a list may hold two
+ * options reading "work" that bill to different folders, and `AccountSwitch`'s
+ * own "Add an account" is how they get there.
+ *
+ * Keying a React list on `kind` in that list is not a cosmetic slip. Two
+ * children with the same key put the reconciler in a state it calls
+ * unsupported, and measured here it does not merely mis-render: a single
+ * render of a three-card list holding two `work` options never returned, and
+ * the process grew until a 3 GB cgroup killed it. Uncapped, that is the whole
+ * machine. `docs/probes/account-key-collision.ts` reruns it.
+ *
+ * The separator is `/` because a `kind` is one of three words and none of them
+ * contains one, so the first `/` always ends the word and the rest is the path
+ * verbatim. A NUL would also be unambiguous, and was tried: happy-dom's
+ * selector parser reads `\0` in a selector as that NUL and matches, but CSS
+ * says an escape of zero is U+FFFD, so the same selector finds nothing in a
+ * real browser. A separator that only works in the test harness is worse than
+ * no separator.
+ *
+ * An absent `configDir` and an empty one both mean the default profile, and
+ * folding them together is the reading, not a loss.
+ */
+function optionId(option: { kind: Account["kind"]; configDir?: string }): string {
+  return `${option.kind}/${option.configDir ?? ""}`
+}
+
+/** The pair a project stores, in the same spelling `optionId` produces. */
+function storedId(project: { account: Account; configDir?: string }): string {
+  return optionId({ kind: project.account.kind, ...(project.configDir === undefined ? {} : { configDir: project.configDir }) })
+}
+
+/**
+ * The one option a project runs as, or `null` when the record cannot say.
+ *
+ * `null` has two causes and they are not distinguished here because the
+ * surface treats them alike: no option matches the stored pair, or more than
+ * one does. Either way nothing may be drawn as checked - a checked card is a
+ * claim about where the money goes, and the cheap direction is to check
+ * nothing and say so.
+ */
+function storedOption(
+  project: { account: Account; configDir?: string },
+  accounts: readonly AccountOption[],
+): AccountOption | null {
+  const want = storedId(project)
+  const hits = accounts.filter((option) => optionId(option) === want)
+  return hits.length === 1 ? (hits[0] ?? null) : null
+}
+
+/** Whether the stored word names more than one of the options on offer. */
+function profileAmbiguous(
+  project: { account: Account; configDir?: string },
+  accounts: readonly AccountOption[],
+): boolean {
+  if (storedOption(project, accounts) !== null) return false
+  return accounts.filter((option) => option.kind === project.account.kind).length > 1
+}
+
 /** The repo's own directory name, which is what the design shows. */
 function repoName(path: string): string {
   const segments = path.split("/").filter((segment) => segment !== "")
@@ -245,8 +320,15 @@ const TOAST_MS = 5000
 
 interface Toast {
   to: AccountOption
-  /** Where it came from, which decides whether Undo can exist. */
-  from: Account["kind"]
+  /**
+   * The pair it came from, in `optionId` spelling, which decides whether Undo
+   * can exist.
+   *
+   * The pair rather than the word: with two options reading "work", a word
+   * does not say which folder to go back to, and an Undo that picked the first
+   * match would quietly rebill to the wrong one.
+   */
+  from: string
 }
 
 interface SwitchController {
@@ -271,6 +353,8 @@ interface SwitchController {
  */
 function useAccountSwitch(
   stored: Account["kind"],
+  /** The stored pair, from `storedId`. The identity `stored` alone is not. */
+  storedKey: string,
   accounts: readonly AccountOption[],
   onSwitchAccount: (account: AccountOption) => void | Promise<void>,
   onSwitched?: () => void,
@@ -295,11 +379,17 @@ function useAccountSwitch(
     (account: AccountOption) => {
       setError(null)
       /* The only skip, and it is an identity check rather than a judgement:
-         picking the account already stored would change nothing. Every other
-         reading of `stored` - including `unknown` - confirms. */
-      setPending(account.kind === stored ? null : account)
+         picking the option already stored would change nothing. Every other
+         reading - including `unknown` - confirms.
+
+         The identity is the pair. On the word alone, picking a *different*
+         folder of the same word would skip the confirmation and then do
+         nothing at all, leaving the card it was clicked on claiming a profile
+         the runs never move to. One extra confirmation is the cheap
+         direction; a silent rebill is not. */
+      setPending(optionId(account) === storedKey ? null : account)
     },
-    [stored],
+    [storedKey],
   )
 
   const cancel = useCallback(() => {
@@ -315,7 +405,7 @@ function useAccountSwitch(
       try {
         await onSwitchAccount(pending)
         clearTimeout(timer.current)
-        setToast({ to: pending, from: stored })
+        setToast({ to: pending, from: storedKey })
         timer.current = setTimeout(() => setToast(null), TOAST_MS)
         setPending(null)
         onSwitched?.()
@@ -325,15 +415,18 @@ function useAccountSwitch(
         setBusy(false)
       }
     })()
-  }, [busy, onSwitchAccount, onSwitched, pending, stored])
+  }, [busy, onSwitchAccount, onSwitched, pending, storedKey])
 
   /* `updateProject` takes "personal" | "work", so there is no way back to
      "nobody has said"; and an account the caller no longer offers has no
      `configDir` to send. Either way the control that would try is not drawn,
      rather than drawn and broken. */
   const undoTarget = useMemo(() => {
-    if (toast === null || toast.from === "unknown") return null
-    return accounts.find((a) => a.kind === toast.from) ?? null
+    if (toast === null || toast.from.startsWith("unknown/")) return null
+    /* Exactly one, or none: two options answering to the stored pair cannot
+       both be where it came from, and guessing between them is a rebill. */
+    const hits = accounts.filter((option) => optionId(option) === toast.from)
+    return hits.length === 1 ? (hits[0] ?? null) : null
   }, [accounts, toast])
 
   const undo = useCallback(() => {
@@ -586,8 +679,26 @@ function confirmProse(name: string, target: AccountOption, stored: Account["kind
     heading: `Switch ${name} to ${target.label}?`,
     body: (
       <>
-        Future runs bill to <strong style={{ fontWeight: 620 }}>{target.label}</strong> and count against its 5-hour
-        window ({usage}).{" "}
+        Future runs bill to <strong style={{ fontWeight: 620 }}>{target.label}</strong>
+        {/* The folder, not only the word. This dialog is the last thing between
+            a click and a real bill, and the word does not identify where the
+            money goes: two options can read "work" and bill to different
+            folders, so "bill to work" would be true of the state being left.
+            `src/spawn.ts` turns exactly this string into `CLAUDE_CONFIG_DIR`,
+            and it is printed verbatim for that reason.
+
+            An option with no folder is the default profile, and saying so
+            beats naming a directory the run will not use. */}
+        {" ("}
+        {target.configDir === undefined ? (
+          "the default profile"
+        ) : (
+          <span className="m" style={{ overflowWrap: "anywhere" }}>
+            {target.configDir}
+          </span>
+        )}
+        {") "}
+        and counts against its 5-hour window ({usage}).{" "}
         {/* The stored account can be one nobody named, and "their history
             under account unknown" is a sentence that invents a fact. */}
         {stored === "unknown"
@@ -602,6 +713,7 @@ function confirmProse(name: string, target: AccountOption, stored: Account["kind
 function SwitchToast({
   name,
   to,
+  profile,
   canUndo,
   animate,
   onUndo,
@@ -609,6 +721,15 @@ function SwitchToast({
 }: {
   name: string
   to: string
+  /**
+   * The folder the runs will now use, printed beside the label.
+   *
+   * The label alone is not the answer to "what changed": two options can read
+   * "work", so a toast saying "now runs as work" would be true of the state it
+   * just left. Absent for an option with no folder, which the caller spells
+   * out instead.
+   */
+  profile?: string
   canUndo: boolean
   animate: boolean
   onUndo: () => void
@@ -641,6 +762,14 @@ function SwitchToast({
       <Check size={16} />
       <span>
         {name} now runs as <strong style={{ fontWeight: 650 }}>{to}</strong>
+        {profile !== undefined && (
+          <>
+            {" · "}
+            <span className="m" style={{ color: "#C9CAD1" }}>
+              {profile}
+            </span>
+          </>
+        )}
       </span>
       {canUndo && (
         <button
@@ -719,6 +848,10 @@ export function AccountSwitch({
   const animate = !reduced
   const name = repoName(project.path)
   const stored = project.account.kind
+  const key = storedId(project)
+  /* `null` when no option answers to the stored pair, or when more than one
+     does. Nothing is drawn as checked in either case. */
+  const checkedKey = storedOption(project, accounts) === null ? null : key
 
   const [open, setOpen] = useState(false)
   const [adding, setAdding] = useState(false)
@@ -738,7 +871,7 @@ export function AccountSwitch({
 
   const confirmRef = useRef<HTMLButtonElement | null>(null)
 
-  const switcher = useAccountSwitch(stored, accounts, onSwitchAccount, () => {
+  const switcher = useAccountSwitch(stored, key, accounts, onSwitchAccount, () => {
     setOpen(false)
     setAdding(false)
     /* The button that was focused is about to unmount. Without this, focus
@@ -818,7 +951,9 @@ export function AccountSwitch({
     })()
   }
 
-  const checkedIndex = accounts.findIndex((a) => a.kind === stored)
+  /* The pair, so a list with two of a word does not hand the roving tab index
+     to whichever of them happens to come first. */
+  const checkedIndex = accounts.findIndex((a) => optionId(a) === checkedKey)
 
   return (
     <span className={`kr${className === undefined ? "" : ` ${className}`}`} style={{ position: "relative", display: "inline-flex" }}>
@@ -916,13 +1051,14 @@ export function AccountSwitch({
 
               <div role="radiogroup" aria-label="Accounts" style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                 {accounts.map((option, index) => {
-                  const checked = option.kind === stored
+                  const checked = checkedKey !== null && optionId(option) === checkedKey
                   return (
                     <button
-                      key={option.kind}
+                      key={optionId(option)}
                       type="button"
                       role="radio"
                       data-opt={option.kind}
+                      data-opt-key={optionId(option)}
                       aria-checked={checked}
                       tabIndex={checked || (checkedIndex === -1 && index === 0) ? 0 : -1}
                       onClick={() => switcher.ask(option)}
@@ -1086,6 +1222,7 @@ export function AccountSwitch({
         <SwitchToast
           name={name}
           to={switcher.toast.to.label}
+          {...(switcher.toast.to.configDir === undefined ? {} : { profile: switcher.toast.to.configDir })}
           canUndo={switcher.undoTarget !== null}
           animate={animate}
           onUndo={switcher.undo}
@@ -1117,6 +1254,7 @@ export function ProjectPanel({
   accounts,
   onSwitchAccount,
   onSaveTestCmd,
+  onClearTestCmd,
   onRemove,
   onRunTest,
   budgetUsd,
@@ -1133,8 +1271,13 @@ export function ProjectPanel({
 
   const name = repoName(project.path)
   const stored = project.account.kind
+  const key = storedId(project)
+  /* `null` when no option answers to the stored pair, or when more than one
+     does - a checked card is a claim about where the money goes. */
+  const checkedKey = storedOption(project, accounts) === null ? null : key
+  const ambiguous = profileAmbiguous(project, accounts)
   const headingId = useId()
-  const switcher = useAccountSwitch(stored, accounts, onSwitchAccount)
+  const switcher = useAccountSwitch(stored, key, accounts, onSwitchAccount)
   const [removeOpen, setRemoveOpen] = useState(false)
   const removeTrigger = useRef<HTMLButtonElement | null>(null)
 
@@ -1178,6 +1321,8 @@ export function ProjectPanel({
           <AccountSection
             name={name}
             stored={stored}
+            checkedKey={checkedKey}
+            ambiguous={ambiguous}
             accounts={accounts}
             animate={animate}
             anim={anim}
@@ -1189,6 +1334,7 @@ export function ProjectPanel({
             anim={anim}
             animate={animate}
             onSaveTestCmd={onSaveTestCmd}
+            {...(onClearTestCmd === undefined ? {} : { onClearTestCmd })}
             {...(onRunTest === undefined ? {} : { onRunTest })}
           />
 
@@ -1233,6 +1379,7 @@ export function ProjectPanel({
         <SwitchToast
           name={name}
           to={switcher.toast.to.label}
+          {...(switcher.toast.to.configDir === undefined ? {} : { profile: switcher.toast.to.configDir })}
           canUndo={switcher.undoTarget !== null}
           animate={animate}
           onUndo={switcher.undo}
@@ -1340,6 +1487,8 @@ const OFF_CARD: CSSProperties = { border: "1px solid #E2E2E7", background: "#FCF
 function AccountSection({
   name,
   stored,
+  checkedKey,
+  ambiguous,
   accounts,
   animate,
   anim,
@@ -1347,6 +1496,10 @@ function AccountSection({
 }: {
   name: string
   stored: Account["kind"]
+  /** The pair to draw as checked, or `null` to check nothing. */
+  checkedKey: string | null
+  /** The stored word names more than one of the options on offer. */
+  ambiguous: boolean
   accounts: readonly AccountOption[]
   animate: boolean
   anim: (classes: string) => string | undefined
@@ -1377,6 +1530,25 @@ function AccountSection({
         </p>
       )}
 
+      {ambiguous && (
+        <p
+          data-ambiguous
+          style={{
+            margin: "0 0 12px",
+            padding: "10px 12px",
+            borderRadius: 12,
+            background: "#F1F1F4",
+            fontSize: 13,
+            lineHeight: 1.5,
+            color: "#3A3D45",
+          }}
+        >
+          More than one account here reads <strong style={{ fontWeight: 620 }}>{stored}</strong>, and the folder this
+          project stores does not match any of them — so kantan cannot tell which profile it runs on and checks none of
+          them. Picking one says which, and future runs bill there.
+        </p>
+      )}
+
       <div
         role="radiogroup"
         aria-label="Claude account"
@@ -1387,14 +1559,15 @@ function AccountSection({
         }}
       >
         {accounts.map((option) => {
-          const checked = option.kind === stored
+          const checked = checkedKey !== null && optionId(option) === checkedKey
           const subtitle = cardSubtitle(option)
           return (
             <button
-              key={option.kind}
+              key={optionId(option)}
               type="button"
               role="radio"
               data-card={option.kind}
+              data-card-key={optionId(option)}
               aria-checked={checked}
               onClick={() => switcher.ask(option)}
               className="focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo"
@@ -1540,37 +1713,100 @@ const BADGE_LOOK: Record<"pass" | "fail" | "unknown", CSSProperties> = {
   unknown: { background: "#F1F1F4", color: "#3A3D45" },
 }
 
+/**
+ * Two states behind one heading, and which one shows is read through
+ * `commandOf` rather than `testCmd === null`.
+ *
+ * With a command: the field, and a blurb promising kantan reads an exit code.
+ * Without one: no field at all, and the sentence that says so. An empty field
+ * behind a `$` is the defect this avoids - it reads as a command that failed
+ * to load, under a promise that is false for this project.
+ *
+ * The transitions between them are deliberate in both directions:
+ *
+ * - **Blank is refused when a command exists.** `sh -c ""` exits 0, so saving
+ *   one would tick every task as tested with nothing run. The message names
+ *   the opt-out instead, and only when something can take it.
+ * - **Blank is not an error when there is none.** Nothing was required, the
+ *   human changed nothing, and the field simply closes again.
+ */
 function TestCommandSection({
   testCmd,
   anim,
   animate,
   onSaveTestCmd,
+  onClearTestCmd,
   onRunTest,
 }: {
-  testCmd: string
+  testCmd: string | null
   anim: (classes: string) => string | undefined
   animate: boolean
   onSaveTestCmd: (cmd: string) => void | Promise<void>
+  onClearTestCmd?: () => void | Promise<void>
   onRunTest?: (cmd: string) => Promise<TestCommandResult>
 }): ReactElement {
-  const [draft, setDraft] = useState(testCmd)
-  const [saved, setSaved] = useState(testCmd)
+  const stored = commandOf(testCmd)
+  const [draft, setDraft] = useState(stored ?? "")
+  const [saved, setSaved] = useState(stored ?? "")
   const [error, setError] = useState<string | null>(null)
-  const [run, setRun] = useState<TestRunState>({ phase: "idle", cmd: testCmd })
+  const [run, setRun] = useState<TestRunState>({ phase: "idle", cmd: stored ?? "" })
+  /** The human asked for a field on a project that has no command yet. */
+  const [opening, setOpening] = useState(false)
+  /**
+   * The opt-out this panel took and the handler accepted, before the props it
+   * came from have been refetched.
+   *
+   * Local because the handler's success is the event: `project.testCmd` is a
+   * copy of the store fetched by whatever mounted this, and waiting for it to
+   * come back `null` would leave the panel printing a command the store no
+   * longer has. Cleared by the effect below the moment the props do change.
+   */
+  const [optedOut, setOptedOut] = useState(false)
+  const [clearing, setClearing] = useState(false)
   /** Monotonic, so an answer from an abandoned request can be dropped. */
   const ticket = useRef(0)
+  const field = useRef<HTMLInputElement>(null)
 
   /* The stored command is the truth; a reload that changes it wins over a
-     draft nobody committed. */
+     draft nobody committed, over a field nobody filled, and over an opt-out
+     this panel is still holding optimistically. */
   useEffect(() => {
-    setDraft(testCmd)
-    setSaved(testCmd)
+    const fresh = commandOf(testCmd)
+    setDraft(fresh ?? "")
+    setSaved(fresh ?? "")
+    setOpening(false)
+    setOptedOut(false)
+    setError(null)
+    ticket.current += 1
+    setRun({ phase: "idle", cmd: fresh ?? "" })
   }, [testCmd])
+
+  useEffect(() => {
+    if (opening) field.current?.focus()
+  }, [opening])
+
+  /** What this project has as far as this panel can tell right now. */
+  const command = optedOut ? null : stored
+  /** Whether the field is on screen: there is a command, or one is being typed. */
+  const open = command !== null || opening
+
+  const blankRefusal = (): string =>
+    onClearTestCmd === undefined
+      ? 'A blank command is not an opt-out. `sh -c ""` exits 0, so kantan would tick every task as tested with nothing run.'
+      : 'A blank command is not an opt-out. `sh -c ""` exits 0, so kantan would tick every task as tested with nothing run. Use "Remove the test command" to say this project has no suite.'
 
   const commit = (): void => {
     const trimmed = draft.trim()
     if (trimmed === "") {
-      setError("A test command is required. kantan branches on its exit code, and there is nothing to branch on without one.")
+      /* Nothing was required and nothing changed, so there is nothing to
+         refuse: the field closes and the section says what it said before. */
+      if (command === null) {
+        setOpening(false)
+        setDraft("")
+        setError(null)
+        return
+      }
+      setError(blankRefusal())
       return
     }
     setError(null)
@@ -1585,13 +1821,35 @@ function TestCommandSection({
     })()
   }
 
+  const clear = (): void => {
+    if (onClearTestCmd === undefined || clearing) return
+    setError(null)
+    setClearing(true)
+    void (async () => {
+      try {
+        await onClearTestCmd()
+        /* Only now. A refused PATCH that had already blanked the field would
+           leave the panel claiming this project has no suite while the store
+           still has a command - the mirror of claiming a verification nobody
+           observed. */
+        setOptedOut(true)
+        setOpening(false)
+        setDraft("")
+        setSaved("")
+        ticket.current += 1
+        setRun({ phase: "idle", cmd: "" })
+      } catch (cause) {
+        setError(messageOf(cause))
+      } finally {
+        setClearing(false)
+      }
+    })()
+  }
+
   const go = (): void => {
     if (onRunTest === undefined) return
     const cmd = draft.trim()
-    if (cmd === "") {
-      setError("A test command is required. kantan branches on its exit code, and there is nothing to branch on without one.")
-      return
-    }
+    if (cmd === "") return
     const mine = ++ticket.current
     setError(null)
     setRun({ phase: "running", cmd })
@@ -1616,12 +1874,70 @@ function TestCommandSection({
 
   return (
     <div style={SECTION} className={anim("bf d2")}>
-      <label htmlFor="kp-testcmd" style={{ display: "block", ...H2 }}>
-        Test command
-      </label>
+      {/* A `for` that names an input which is not on screen points at nothing,
+          so the heading is only a label while the field exists. */}
+      {open ? (
+        <label htmlFor="kp-testcmd" style={{ display: "block", ...H2 }}>
+          Test command
+        </label>
+      ) : (
+        <h3 style={H2}>Test command</h3>
+      )}
       <p style={BLURB}>
-        kantan runs this itself and trusts only its exit code. It never takes the agent&rsquo;s word for it.
+        {open ? (
+          <>kantan runs this itself and trusts only its exit code. It never takes the agent&rsquo;s word for it.</>
+        ) : (
+          <>
+            This project has none, so a fresh agent verifies its own work and the run records that nothing
+            outside it checks the result.
+          </>
+        )}
       </p>
+
+      {!open && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+          <span
+            data-test-cmd
+            className="m"
+            style={{
+              flex: "1 1 260px",
+              display: "flex",
+              alignItems: "center",
+              minHeight: 46,
+              padding: "0 14px",
+              borderRadius: 12,
+              background: "#F4F4F6",
+              fontSize: 13.5,
+              color: "#5F6370",
+              boxSizing: "border-box",
+            }}
+          >
+            {SELF_CHECKED}
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              setOpening(true)
+              setError(null)
+            }}
+            className={PILL_GHOST}
+            style={{
+              height: 46,
+              padding: "0 16px",
+              borderRadius: 999,
+              border: "1px solid #D9D9DF",
+              background: "#fff",
+              fontSize: 14,
+              fontWeight: 560,
+              color: "#1E2026",
+            }}
+          >
+            Set a test command
+          </button>
+        </div>
+      )}
+
+      {open && (
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
         <span
           className="fld"
@@ -1643,6 +1959,7 @@ function TestCommandSection({
           </span>
           <input
             id="kp-testcmd"
+            ref={field}
             className="m"
             value={draft}
             onChange={(e) => {
@@ -1671,7 +1988,7 @@ function TestCommandSection({
             }}
           />
         </span>
-        {onRunTest !== undefined && (
+        {onRunTest !== undefined && draft.trim() !== "" && (
           <button
             type="button"
             onClick={go}
@@ -1696,6 +2013,37 @@ function TestCommandSection({
           </button>
         )}
       </div>
+      )}
+
+      {/* The consequence sits beside the control rather than arriving after
+          the fact, because the opt-out changes what a green run means: from
+          here on nothing outside the agent checks it. */}
+      {command !== null && onClearTestCmd !== undefined && (
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "6px 12px", marginTop: 12 }}>
+          <button
+            type="button"
+            onClick={clear}
+            disabled={clearing}
+            style={{
+              border: 0,
+              padding: 0,
+              background: "none",
+              font: "inherit",
+              fontSize: 13.5,
+              fontWeight: 560,
+              color: "#5B5BD6",
+              cursor: clearing ? "default" : "pointer",
+              textDecoration: "underline",
+              textUnderlineOffset: 3,
+            }}
+          >
+            Remove the test command
+          </button>
+          <span style={{ fontSize: 13, lineHeight: 1.5, color: "#5F6370", maxWidth: "58ch" }}>
+            Then a fresh agent verifies its own work, and every run records that it was never tested.
+          </span>
+        </div>
+      )}
 
       {run.phase === "running" && (
         <div

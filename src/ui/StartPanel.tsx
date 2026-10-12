@@ -98,6 +98,7 @@ import { useCallback, useRef, useState, useSyncExternalStore, type CSSProperties
 import { useReducedMotion } from "motion/react"
 
 import type { Account, TreeTask } from "./Tree.tsx"
+import { commandOf, SELF_CHECKED } from "./testcmd.ts"
 /* Type-only on purpose: a value import drags `node:fs/promises` into the
  * browser bundle. */
 import type { RunState } from "../runindex.ts"
@@ -270,24 +271,6 @@ function usePrefersReducedMotion(): boolean {
  */
 const PLAIN_DECIMAL = /^\d+(?:\.\d+)?$/
 
-/**
- * The command this project actually has, or `null` for a project that has
- * none.
- *
- * Blank strings fold into `null` rather than being printed. The store refuses
- * `""`, `"   "` and `"\t\n"` outright, so they cannot come from a valid
- * record - but this card reads a tree over HTTP rather than the store, and
- * "kantan runs    until it exits 0" is the one reading no value of this field
- * justifies. Under-claiming a verification is the cheap direction here;
- * over-claiming one gets work merged that nothing checked.
- *
- * The command itself is never trimmed for display: it is a shell string handed
- * to `sh -c` verbatim, so its spacing is the user's.
- */
-function commandOf(testCmd: string | null): string | null {
-  if (testCmd === null) return null
-  return testCmd.trim() === "" ? null : testCmd
-}
 
 /** The figure a run may be funded with, or `null` for every other string. */
 function parseCeiling(raw: string): number | null {
@@ -900,7 +883,7 @@ function OpenCard(props: StartShape & Wiring & { draft: string; setDraft: (value
               ...(command === null ? { color: "#5F6370" } : {}),
             }}
           >
-            {command ?? "Self-checked by the agent — no test command"}
+            {command ?? SELF_CHECKED}
           </span>
         </div>
 

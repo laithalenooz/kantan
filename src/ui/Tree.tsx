@@ -24,6 +24,7 @@ import type { KeyboardEvent as ReactKeyboardEvent, ReactElement, ReactNode } fro
  * bundle. The type is borrowed rather than restated, so a change to a run's
  * state becomes a compile error here instead of a row that quietly renders as
  * something else. */
+import { commandOf } from "./testcmd.ts"
 import { verificationOf } from "../runstate.ts"
 import type { VerificationReading } from "../runstate.ts"
 import type { TaskStatus } from "../runindex.ts"
@@ -118,7 +119,9 @@ export interface TreeProject {
    * `null` when the project has no suite and the agent verifies its own work
    * (the user's 2026-10-12 decision; see `CLAUDE.md`). **Never `?? ""`** - that
    * renders a bare `$`, which reads as a command that failed to load rather
-   * than a project that has none.
+   * than a project that has none. Read it through `commandOf` and nothing
+   * else: a stored `""` or `"   "` is that same bare `$`, and `src/ui/testcmd.ts`
+   * carries the enumeration and what a wrong guess costs each way.
    */
   testCmd: string | null
   /**
@@ -1116,6 +1119,7 @@ function ProjectBlock({
   onSelect?: (task: TaskId) => void
 }): ReactElement {
   const repoId = `${idPrefix}-repo`
+  const testCmd = commandOf(project.testCmd)
   return (
     <li
       className={`${reduce ? "" : `${blurFade(order)} `}${first ? "" : "mt-[6px] border-t border-[#ECECEF]"}`.trim()}
@@ -1161,7 +1165,7 @@ function ProjectBlock({
         data-test-cmd
         className={`${ARBITRARY} m pr-[10px] pb-[6px] pl-[34px] font-mono text-xs text-muted-400`}
       >
-        {project.testCmd === null ? "no test suite · the agent checks its own work" : `$ ${project.testCmd}`}
+        {testCmd === null ? "no test suite · the agent checks its own work" : `$ ${testCmd}`}
       </div>
 
       <ul aria-labelledby={repoId} className="m-0 list-none p-0">
