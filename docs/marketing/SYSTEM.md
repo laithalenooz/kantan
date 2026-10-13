@@ -1,216 +1,239 @@
-# kantan — a brief for designing the landing page
+# kantan — everything in the system, for designing the site
 
-Everything here is true of the shipped code. Where a number appears it was
-measured, and where a claim is unusual the file that backs it is named, so
-nothing in the marketing has to be softened later.
+**Hand this whole file to Claude Design.** It is the feature inventory, the
+screenshot inventory, the design tokens, and a copy bank. Everything in it is
+true of the shipped code; every number was measured.
+
+There is a reference landing page at `docs/landing/index.html` — animated with
+Motion 14, two interactive widgets. Treat it as *one* answer, not the answer.
+It exists so you can see the tokens in use and steal anything worth stealing.
+
+---
+
+## 1 · What kantan is
 
 **簡単** *kantan*: simple, brief.
 
----
-
-## One sentence
-
 A local web UI that drives the real `claude` CLI through one coding task at a
-time: it plans, **you approve**, then it implements and runs your tests until
-the exit code says they pass.
+time: it reads your repo and writes a plan, **you approve it**, then a fresh
+agent implements it and kantan runs your tests until the exit code says they
+pass.
 
-## Who it is for
-
-Someone who already uses Claude Code in a terminal, trusts it to write code, and
-does not trust it to decide that it is finished. They want to hand over a task,
-read the plan, say yes, and come back to a commit — not to supervise a
-conversation, and not to configure a fleet of agents.
-
-The emotional pitch is **leaving the room**. You approve a plan and go and do
-something else, because the thing that decides whether the work is done is your
-own test suite's exit code and not the agent's opinion of itself.
-
----
-
-## The four things to lead with, in this order
-
-### 1. "The server runs your tests, not the agent."
-
-kantan spawns your test command itself and branches on the **exit code**. It
-never branches on the agent reporting success. Verification from outside the
-agent cannot be talked out of.
-
-Concrete, immediately legible to a sceptic, and visible in the product: the
-running screen says, in its own words, *"Each pass or fail above is the exit
-code of `npm test`, read by kantan itself. What the agent says about its own
-work is never used."*
-
-### 2. "No surface claims a verification it did not observe."
-
-This is the unusual one, and it is backed by code rather than by a promise.
-
-A project may legitimately have **no** test command — most repositories do not,
-and requiring one excluded them — and then the agent checks its own work. That
-is a weaker claim, so kantan records **which of the two happened**
-(`EndRecord.verifiedBy`), and no screen prints an exit code, a green tick or the
-word "passed" for a run that checked itself. It says **"Self-checked"**. A log
-written before that field existed reads **"unknown"**, never as a pass.
-
-The same rule caught a defect in kantan's own UI this week: a task whose
-checkbox someone had ticked by hand showed **"Passed"** with a green tick, for
-work kantan had never run. It now reads **"Checked off"** in grey, and clicking
-it explains that kantan has no run for it and names the three ways that happens.
-
-Nobody else in this space talks this way. It is the most defensible thing the
-project has.
-
-### 3. "The opposite of an agent framework."
-
-- **No agent org chart.** No CEO, CTO or specialist personas.
-- **No autonomy.** Nothing wakes itself up. No heartbeats, no schedulers.
-- **No multi-agent orchestration.** One task, one agent, one human gate.
-- **No tracker database.** Your backlog is markdown in your own repo, in your
-  own git history. The UI renders and remote-controls; it never owns truth.
-- **No worktree sprawl.** One branch per task, one active run per project.
-
-Every one of those is a reaction to a tool that started well and drifted. The
-ceremony tends to grow faster than the usefulness. Contrarian, memorable, and
-the thing most likely to be quoted.
-
-### 4. The probe findings — the part people share
-
-These cost real money to discover and are useful to someone who will never run
-kantan, which is what gets a post passed around. Every script is rerunnable in
-`docs/probes/`.
-
-- **`AskUserQuestion` does not exist in `-p` mode.** The agent asks in prose and
-  exits `subtype: success`, so a question and a completion are
-  **indistinguishable by message type**. Never infer completion from exit
-  status. kantan requires a sentinel line instead.
-- **`--max-budget-usd` bounds one process, not your run.** Cost resets on every
-  `--resume`, so a ceiling set per process silently restarts at each gate. Track
-  the total yourself and pass `ceiling − spent`.
-- **`--resume` accepts a different `--effort`** and keeps context, which makes
-  effort escalation on a stall possible.
-- **Hook events flood the stream.** Roughly twenty `system/hook_*` messages
-  arrive before the first real one.
-- **Switching models inside one conversation is a trap.** It cold-starts the
-  prompt cache and drops thinking blocks the new model cannot read. kantan runs
-  plan and implement as two conversations for exactly this reason — which is
-  also what lets them run different models.
-
----
-
-## How it works, in the product's own vocabulary
-
-```
- plan --> [YOU APPROVE] --> implement --> test --> done
-             |                             |
-        feedback                    fail, and keep going
-             +--> plan                     +--> refine --> test
-```
-
-It spawns the real `claude` binary. It does not reimplement an agent loop, so
+It spawns the real `claude` binary rather than reimplementing an agent loop, so
 your `CLAUDE.md`, skills, plugins, hooks, settings and auth all load exactly as
-they do in your terminal. **There is nothing to port and nothing to configure
-twice** — a strong line for the page.
+they do in your terminal. Nothing to port, nothing to configure twice.
 
-Four nouns, three of which already exist on the reader's disk:
+Runs on `127.0.0.1`, one process, one port. Talks to no service.
 
-| Noun | Is actually | Lives in |
+**Who it is for:** someone who already uses Claude Code in a terminal, trusts it
+to write code, and does not trust it to decide that it is finished. The feeling
+to sell is **leaving the room** — you approve a plan and go and do something
+else, because what decides whether the work is done is your own suite's exit
+code and not the agent's opinion of itself.
+
+---
+
+## 2 · Feature inventory, screen by screen
+
+Everything here exists and works. This is the complete surface.
+
+### The run, which is the product
+
+| Feature | What it does | Worth showing? |
 |---|---|---|
-| Project | a repo directory, a test command (or none), a Claude account | `~/.kantan/projects.json` |
-| Feature | a markdown file | `<repo>/docs/features/<slug>.md` |
-| Task | a `- [ ]` line in that file | the same file |
-| Run | one task through the pipeline | `~/.kantan/runs/<uuid>.jsonl` |
+| **Plan phase** | An agent reads the repo and writes a plan to `docs/plans/<date>-<task>.md`. Touches no code. | yes |
+| **The gate** | The plan rendered as markdown, with **Approve plan** and **Send back**. Nothing moves until a human decides. ⌘↵ approves. | **the hero** |
+| **Send back with a note** | A reply box beside the buttons. Resumes the *plan* conversation with your words passed through byte for byte. | yes |
+| **Implement phase** | A **fresh** conversation on the task's own `kantan/<task>` branch — fresh so the two phases can run different models without cold-starting the prompt cache. | yes |
+| **Test phase** | kantan runs your command and reads the **exit code**. Never the agent's report. | **lead with this** |
+| **Refine on failure** | A non-zero exit sends it back to refine, then tests again. | yes |
+| **Effort escalation** | The same failure repeating escalates `--effort`, because `--resume` accepts a different one and keeps context. | nice detail |
+| **Stall detection** | Three identical failures at top effort is `stalled` — a calm state, not an error. No red, no cross, because nothing got worse. | yes |
+| **Budget ceiling** | Per-run dollar ceiling. A run that hits it parks for a human instead of dying, and can be **raised in place** and continue. | yes |
+| **Stop and resume** | Stop SIGTERMs the child and leaves the run resumable — the session resumes from the same id, so stopping costs nothing. Resume picks up from the last complete phase. | yes |
+| **Answer a question** | `AskUserQuestion` does not exist in `-p`, so an agent that asks something exits "success". kantan catches that by a missing sentinel, parks the run, and your reply goes back to **the session that asked**. | good story |
+| **Run record** | Every stream-json event as a row: `AGENT`, `READ`, `EDIT`, `SHELL`, `GREP`, tool results, rate-limit events, commits. Virtualised — 10,000 events render 22 rows. Newest at the bottom, with a Following toggle. | yes |
+| **Live digest** | A plain-language "while you were away" summary above the record: *"Still going. The tests have not run yet."* | yes |
+| **Phase rail** | Plan → Gate → Implement → Test → Refine, with per-phase elapsed time and the live one marked. | yes |
+| **Live cost** | Dollars spent against this run's ceiling, with a bar. `--max-budget-usd` bounds one *process*, so kantan tracks the total itself and passes `ceiling − spent`. | yes |
+| **5-hour window** | Which account this run bills to, and where its rate-limit window stood. | yes |
+| **SSE replay** | On connect the server replays the run's JSONL from byte 0, then follows live. Closing the browser is safe; there is no cursor and no reconnect state machine. | mention |
 
-Words the UI uses, which the page should not contradict: **gate**, **needs
-you**, **run record**, **phases**, **checked off**, **self-checked**,
-**grinding** (the same failure three times at top effort), **interrupted**.
+### The task tree (left rail, always present)
+
+| Feature | What it does |
+|---|---|
+| **Projects** | Each with its repo name, its test command, and the Claude account it bills to as a chip. |
+| **Task files** | `docs/features/*.md` in the repo, collapsible. |
+| **Tasks** | Every `- [ ]` line, with a state glyph and label. |
+| **Ten states** | `open`, `running`, `needs-you`, `passed`, `checked-off`, `failed`, `stalled`, `done-unmerged`, `interrupted`, `grinding`. All ten are distinguishable **with colour removed**. |
+| **Add task** | Type it, or have Claude draft several and pick from them. |
+| **New task file** | Describe the work and an agent writes the whole file. |
+| **Keyboard** | Arrow keys move between task rows; the tree is one control. |
+
+### Project settings panel
+
+| Feature | What it does |
+|---|---|
+| **Account switch** | Which Claude account this project bills to. **Always asks first**, in a dialog, because getting it wrong costs real money. |
+| **Test command** | Edit it, **run it once** to prove it works before trusting it, or declare the project has no suite. |
+| **Default ceiling** | The dollar default for new runs. |
+| **Task files** | Which markdown files kantan reads. |
+| **Advanced** | Per-project models and efforts for plan and implement, permission mode, allowed tools. |
+| **Remove project** | Confirmation dialog. Removes the record, keeps the run logs. |
+| **Project summary** | Task counts by state and total spend. |
+
+### Add a repository
+
+| Feature | What it does |
+|---|---|
+| **Checks as you type** | Per keystroke: is it absolute, is it a git repo with a working tree, is it the root, has it any commits, are there task files. Each answer is git's **own sentence**, including the one that locates a typo: *"The deepest part of that path which does exist is /home — check the spelling of what comes after it."* |
+| **Detects the test command** | Reads `package.json` and friends and proposes one. Only ever a **declared** command. |
+| **Account choice** | Personal, work, or "Not sure" — which is recorded as unknown rather than defaulted. |
+| **Run it once** | Tries the command before the project is saved. |
+| **Live preview** | A mock of how the project will appear in the tree. |
+
+### Accounts
+
+| Feature | What it does |
+|---|---|
+| **Per-account usage** | Rate-limit windows per Claude profile, shortest first. |
+| **Honest freshness** | `live`, `last seen`, `window reset`, `never used`. An expired reading draws **no bar** and says "was 90%". A window with no figure says "no figure reported" rather than drawing 0%. |
+| **Profile discovery** | Scans your home directory for folders that look like Claude profiles — keyed on a `.credentials.json` inside, not on the name, because a plugin's `~/.claude-mem` matches every name-based rule. |
+| **Add an account** | Name it and say whether it bills as personal or work. kantan will **not** guess that part. |
+
+### The guarantees, which are features
+
+| Feature | What it does |
+|---|---|
+| **Exit codes, never self-report** | The server runs the tests. |
+| **`verifiedBy` on every run** | Records *which* kind of verification happened. A project may have no suite; then the agent checks itself, and the screen says **"Self-checked"** — never an exit code, a tick, or the word passed. A log written before that field existed reads **"unknown"**, never as a pass. |
+| **"Checked off"** | A ticked checkbox with no run kantan performed reads "Checked off" in grey with an **outline** tick, not "Passed" in green. |
+| **One run per project** | Two agents can never share a working tree. A task that cannot start says why in a sentence. |
+| **Markdown is the truth** | Your backlog is markdown in your repo, in your git history. kantan renders and remote-controls it; it never owns it. |
+| **Local only** | Binds `127.0.0.1`, checks `Host` and `Origin` against exact allowlists, and a per-launch token in an `HttpOnly; SameSite=Strict` cookie. |
+| **Derived permissions** | By default the agent gets the five file tools, `Bash(git *)`, and one rule for the program your tests run. Nothing else — no network, no package installs, no arbitrary shell. |
 
 ---
 
-## What is genuinely true about maturity
+## 3 · Screenshots we have
 
-Do not oversell this. The honest framing is *"it works, and it is rough in
-places"*, which is also more credible than a claim of polish.
+In `docs/screenshots/`, PNG, 1440px wide, no scrollbars. Taken by
+`docs/probes/states.ts`, which boots an ordinary kantan against a scratch home
+— real git repos, real task files, real run logs — so these are **the product,
+not mockups**.
 
-- The pipeline runs end to end against the real binary, from **one process on
-  one port**.
-- **73 modules, 2,576 tests**, one skipped — the live smoke test, which spawns
-  the real CLI and is gated so it cannot spend money in CI.
-- Known rough edges are listed by name in the README rather than hidden: the
-  usage view only sees what kantan's own runs reported, a second Claude account
-  must be named by hand once, `src/run.ts` is 2,695 lines of one state machine,
-  one 731 KB JS bundle, and an event a future CLI adds will render as raw JSON
-  until someone gives it a row.
-- It has only ever been run on one machine (WSL2). A clone-build-run elsewhere
-  has not happened yet.
+| File | Size | What is in the frame | Best used for |
+|---|---|---|---|
+| `gate.png` | 1440×1500 | The full gate: orange **"Needs you"** band across the top with elapsed wait, breadcrumb, *"Is this plan right?"*, the plan rendered as markdown with a numbered change list, the plan's file path and "Planned in 7m 0s · $0.00", a collapsed "Planning also read 1 file", the reply box with **Send back** and the black **Approve plan** pill, then the run record below. Right rail: phase rail, cost against ceiling, 5-hour window, Stop run. | **The fold.** One image is the whole idea. |
+| `running.png` | 1440×1200 | Indigo **"Running"** band, *"Still going."* digest, "You approved the plan", and the sentence *"Each pass or fail above is the exit code of `npm test`, read by kantan itself. What the agent says about its own work is never used."* Run record with AGENT / EDIT / SHELL rows. Rail shows Implement live, cost live. | Claims 1 and 2 together, in the product's own words. |
+| `start.png` | 1440×1100 | The start panel for an open task: three numbered cards (Plan / You decide / Build and test), "Runs as personal", the test command, and a blue notice that another run is in flight with a disabled **Start planning**. | Claim 3 — one task at a time, explained rather than greyed out. |
+| `accounts.png` | 1440×1000 | Per-account rate-limit windows with "window reset" and "was 3%", a found-on-disk profile offered with **Use this folder**, **Add an account**, and the footnote *"kantan only sees what its own runs report."* | Honesty as a product value. |
+| `overview.png` | 1440×1100 | Nothing selected: *"Start a task."*, the three steps, and a floating illustration of a repo card, a task file and a mini gate. | Explaining the model without a diagram. |
 
-Install is three commands and one process:
+### What we do not have yet, and what it would take
 
-```bash
-bun install
-bun run build     # needs Node, for Vite
-bun run server    # 127.0.0.1:3100
-```
+- **A 30–60s screen recording** of plan → gate → approve → green. `states.ts`
+  stages everything up to the gate for free; the approve-to-green half needs one
+  real billed run. This is the highest-value missing asset.
+- **`failed`, `stalled`, `grinding`, `done-unmerged`, `interrupted`** as
+  screenshots. All reachable — add a fixture log to `states.ts`; no money needed.
+- **The add-repository and project-settings panels.** Both reachable by a click
+  in `states.ts`; say the word.
+- **Mobile.** The app is a desktop tool and has no mobile layout. Do not mock one.
 
 ---
 
-## The visual system already in use
+## 4 · Design tokens, already in use
 
-The app has a finished visual language. The landing page should extend it rather
-than invent one. Tokens are `src/ui/tokens.css`.
+Source: `src/ui/tokens.css`. Extend this language rather than inventing one.
 
-**Type.** Geist and Geist Mono, self-hosted — deliberately no Google Fonts
-`<link>`, because that is a third-party request on every load of a tool that
-binds loopback precisely so it talks to nothing.
+**Type.** Geist and Geist Mono, self-hosted (`src/ui/fonts/`). The monospace is
+load-bearing: paths, commands, branch names and exit codes are always mono.
 
 **Light only.** `<meta name="color-scheme" content="only light">`. There is no
 dark variant, by decision.
 
-| Role | Value |
+| Role | Hex |
 |---|---|
 | Page ground | `#f4f4f6` |
-| Card / panel | `#fafafb`, hairline `#eeeef1`, edge `#e7e7eb` |
-| Ink | `#111216`, deep `#1e2026` |
-| Muted text | `#5f6370`, lighter `#6b7080`, lightest `#a3a7b1` |
-| **Attention** — the gate, "needs you" | `#ff6a1a`, tint `#fff1e8`, ink `#9a3b06` |
-| Indigo — links, live/running | `#5b5bd6`, deep `#4b4bc8` |
-| Pass | `#0f8a5f` · Fail | `#d92d3a` |
+| Panel / card | `#fafafb` |
+| Panel alt | `#f0f0f3` |
+| Hairline | `#eeeef1` |
+| Edge / edge-strong | `#e7e7eb` / `#dcdce2` |
+| Ink | `#111216` |
+| Ink deep | `#1e2026` |
+| Muted 900 / 700 / 500 / 400 / 300 | `#3a3d45` / `#4a4e59` / `#5f6370` / `#6b7080` / `#a3a7b1` |
+| **Attention** (the gate, "needs you") | `#ff6a1a`, tint `#fff1e8`, ink `#9a3b06` |
+| Indigo (links, live, running) | `#5b5bd6`, deep `#4b4bc8`, deeper `#3a3aa8`, tint `#dcdcf6` |
+| Pass | `#0f8a5f`, deep `#0f7a54` |
+| Fail | `#d92d3a` |
 | Account chip | tint `#e0f2fe`, ink `#075985` |
-| Easing | `cubic-bezier(.2,.7,.2,1)` |
 
-Shapes: generously rounded (`12–16px` cards, `999px` pills), a dotted ground
-behind the centre column, and a single black pill for the primary action.
+**Shape.** Cards `12–18px`. Pills `999px`. The primary action is a single black
+pill. A dotted ground sits behind the centre column as **its own absolutely
+positioned layer** — it carries a `mask-image`, and a mask on a container
+applies to its children, which faded the content when it was tried that way.
 
-**Motion, and a caution worth carrying into any animated page.** Framer Motion's
-`useReducedMotion()` cannot be trusted alone — probed independently three times,
-its preference is a module-level singleton initialised at the first call
-anywhere in the process, and it answered `false` with `prefers-reduced-motion:
-reduce` actually set. OR it with a live `matchMedia` read. And
-`<MotionConfig reducedMotion="user">` only switches **transform** animations
-off: opacity, filter and anything hand-rolled keep running, so a blur-fade or a
-number ticker has to be gated explicitly.
+**Easing.** `cubic-bezier(.2, .7, .2, 1)`. Fades ~0.45–0.8s, state changes ~0.2s.
 
----
+### Two motion facts worth carrying over
 
-## The screenshots, and what each one is for
+Both cost this project real time, and both apply to any animated page.
 
-In `docs/screenshots/`, all 1440px wide, taken from
-`docs/probes/states.ts` — an ordinary kantan booted against a scratch home, so
-they are the real UI and not a mockup.
+1. **Framer Motion's `useReducedMotion()` cannot be trusted alone.** Probed
+   independently three times: the preference is a module-level singleton
+   initialised at the first call anywhere in the process, and it answered
+   `false` with `prefers-reduced-motion: reduce` actually set. OR it with a live
+   `matchMedia` read.
+2. **`<MotionConfig reducedMotion="user">` only switches *transform* animations
+   off.** Opacity, filter and anything hand-rolled keep running, so a blur-fade
+   or a number ticker has to be gated explicitly.
 
-| File | Shows | Use it for |
-|---|---|---|
-| `gate.png` | The hero. The "Needs you" band, an agent-written plan rendered as markdown, the phase rail, cost against the run's ceiling, and the Approve / Send back pair. | The fold. This one image is the whole idea. |
-| `running.png` | A run mid-implement: phases with Implement live, live cost, the event log, and the "read by kantan itself" note. | Differentiator 1 and 2 together. |
-| `start.png` | The start panel, refusing because another run is in flight, and saying so in a sentence instead of greying a button out. | Differentiator 3 — one task at a time. |
-| `accounts.png` | Rate-limit windows per account, saying "last seen" and "window reset" rather than drawing a stale bar, plus a profile found on disk offered as a suggestion. | Honesty as a product value. |
-| `overview.png` | Nothing selected: the three steps, and the four nouns. | Explaining the model without a diagram. |
-
-**Still to make:** a 30–60 second screen recording of plan → gate → approve →
-green. `states.ts` can stage everything up to the gate; the approve-to-green
-half needs one real billed run.
+And one CSS trap this repo has now hit twice, the second time on the landing
+page itself: **`display: flex` or `display: grid` on a class outranks the user
+agent's `[hidden]` rule.** An element you think you hid stays painted. Add an
+explicit `.thing[hidden] { display: none }`.
 
 ---
 
-## Lines that are already written and already true
+## 5 · Positioning: four claims, in this order
+
+### 1. "The server runs your tests, not the agent."
+Branches on the **exit code**, never on the agent reporting success.
+Verification from outside the agent cannot be talked out of. Concrete and
+immediately legible to a sceptic — and visible in `running.png`.
+
+### 2. "No surface claims a verification it did not observe."
+The unusual one, and backed by code: `verifiedBy`, `verificationOf()` answering
+`"unknown"` for an older log, "Self-checked" instead of a tick, and "Checked
+off" for a hand-ticked box. The same rule caught a defect in kantan's own UI
+this week. **Nobody else in this space talks this way.**
+
+### 3. "The opposite of an agent framework."
+No org chart. No autonomy — nothing wakes itself up. No multi-agent
+orchestration. No tracker database. No worktree sprawl. Every one is a reaction
+to a tool that started well and drifted: the ceremony grows faster than the
+usefulness. Contrarian and the most quotable.
+
+### 4. The probe findings — the part people share
+Cost real money to learn, useful to someone who will never run kantan. Scripts
+in `docs/probes/`.
+
+- **`AskUserQuestion` does not exist in `-p` mode.** The agent asks in prose and
+  exits `subtype: success`, so a question and a completion are
+  **indistinguishable by message type**. Never infer completion from exit status.
+- **`--max-budget-usd` bounds one process, not your run.** Cost resets on every
+  `--resume`, so a per-process ceiling silently restarts at each gate.
+- **`--resume` accepts a different `--effort`** and keeps context, which is what
+  makes escalation-on-stall possible.
+- **Switching models inside one conversation is a trap.** Cold-starts the prompt
+  cache and drops thinking blocks the new model cannot read.
+- **Hook events flood the stream** — ~20 `system/hook_*` before the first real one.
+
+---
+
+## 6 · Copy bank — already written, already true
 
 Usable more or less verbatim.
 
@@ -218,9 +241,7 @@ Usable more or less verbatim.
 > It writes a plan, waits for your OK, then implements it and runs your tests
 > until the exit code says they pass.
 
-> Read it the way you would read a teammate's draft. If you approve, a fresh
-> agent implements it, and kantan runs `bun run check` until the exit code says
-> it passed.
+> Read it the way you would read a teammate's draft.
 
 > The server runs your tests, not the agent. It branches on the exit code and
 > never on the agent reporting success. Verification from outside the agent
@@ -233,13 +254,67 @@ Usable more or less verbatim.
 
 > kantan only sees what its own runs report.
 
+> Each pass or fail above is the exit code of your test command, read by kantan
+> itself. What the agent says about its own work is never used.
+
+> Nothing runs until you press start.
+
+> Your backlog is markdown in your own repo, in your own git history.
+
+Install, which is genuinely three lines:
+
+```bash
+bun install
+bun run build     # needs Node, for Vite
+bun run server    # 127.0.0.1:3100
+```
+
 ---
 
-## Two things the page must not say
+## 7 · Honest limits — and two things the page must not say
 
-1. **Do not imply unconditional verification.** "Always verified by your tests"
-   is false for a project with no test command, and the whole of differentiator
-   2 is that kantan refuses to blur that line. Say "your tests decide, and when
-   there are none it says so."
-2. **Do not call it autonomous, or an agent swarm, or self-improving.** The
-   absence of those is the product.
+Maturity, framed the way the README frames it: **"it works, and it is rough in
+places."** More credible than a claim of polish.
+
+- Pipeline runs end to end against the real binary, one process, one port.
+- **73 modules, 2,576 tests**, one skipped — the live smoke test, gated so it
+  cannot spend money in CI.
+- Rough edges, listed by name rather than hidden: the usage view only sees what
+  kantan's own runs reported; a second account must be named by hand once;
+  `src/run.ts` is 2,695 lines of one state machine; one 731 KB bundle, no code
+  splitting; an event a future CLI adds renders as raw JSON until someone gives
+  it a row.
+- **It has only ever been run on one machine** (WSL2). No clone-build-run
+  elsewhere yet.
+
+**Do not say:**
+
+1. **Anything implying unconditional verification.** "Always verified by your
+   tests" is false for a project with no test command, and refusing to blur that
+   line is the whole of claim 2. Say *"your tests decide, and when there are none
+   it says so."*
+2. **Autonomous, agent swarm, self-improving, AI employee.** The absence of all
+   of that is the product.
+
+---
+
+## 8 · A starting shape, to take or leave
+
+1. **Hero** — headline, one-sentence lede, the three install lines, `gate.png`
+   full width. The gate is the idea; show it above the fold.
+2. **How it works** — the five stages with the human one marked, and the
+   four-noun table (Project / Feature / Task / Run). Three of the four already
+   exist on the reader's disk, which is the point.
+3. **The three claims** — as cards, each with the mechanism named, not just the
+   promise. `running.png` and `start.png` alongside.
+4. **What this is not** — the five negatives, as a list. Short, blunt, quotable.
+5. **What we learned about `claude -p`** — the probe findings. This is the
+   section that gets the post shared, including by people who will never install
+   it.
+6. **Honest status** — the test count, and the rough edges by name. Ending on
+   candour is the right note for this audience.
+
+Interaction worth having, if you want it: the five stages clickable, and a
+toggle for "does this project have a test command" that switches a status row
+between `Passed · exit 0` and `Self-checked`. Both are in the reference page —
+the second one teaches claim 2 in a single click, which no paragraph does.
