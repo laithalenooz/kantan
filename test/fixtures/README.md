@@ -8,6 +8,33 @@ compact JSON with raw UTF-8. Every **value** is the capture's, but the bytes are
 These exist so the phase machine, gate, resume logic, stall detector and budget arithmetic can be
 tested at **zero API cost**. Task 5 builds a fake `claude` binary that replays them.
 
+## Scrub a new recording before you commit it
+
+```bash
+bun run docs/probes/scrub-init.ts --check test/fixtures/*.jsonl   # in CI, or before a commit
+bun run docs/probes/scrub-init.ts test/fixtures/<new>.jsonl       # to fix one
+```
+
+A real run opens with `system/init`, which is an **inventory of the machine it
+ran on**: every skill and slash command by name, every tool so every connected
+integration, every MCP server with its connection status, every plugin with its
+version and cache path, the auto-memory directory, and a socket path holding a
+uid and a pid. `system/hook_response` is worse — it embeds whatever that
+machine's SessionStart hooks inject, which here was the full text of a personal
+skill.
+
+All of it was published for two days before anyone looked. The redaction below
+rewrote the home directory, so a search for the username came up clean while the
+inventory sat untouched two fields away: **look for the shape of private data,
+not for the strings you happen to remember.**
+
+The scrubber keeps every array's length and every field's type, because
+`system()` in `src/stream.ts` reads `count(tools)` and `count(skills)` and the
+UI renders both. Built-in names stay, since `Bash` and `doctor` are the same on
+every machine; only what is installed, connected or personal is replaced. The
+unscrubbed originals are in a private repo, as the only record of the exact
+envelope a real CLI produced.
+
 | Fixture | Events | Proves |
 |---|---|---|
 | `plan-success.jsonl` | 43 | A plan phase honouring the sentinel. Final line is exactly `ORCH: done`, the plan was written to the dictated path, and nothing was implemented. Captured on `claude-sonnet-5-5` at effort `high`. |

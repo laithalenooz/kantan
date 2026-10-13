@@ -154,10 +154,12 @@ head2 "Every documented one-liner survives the redirect"
 # So the rule is the class, not the instance: anything piped into a shell must
 # name its scheme or pass -L. Checked across every file a reader copies from.
 bare=0
-for f in README.md CONTRIBUTING.md kantan.sh docs/marketing/SYSTEM.md \
-         docs/marketing/POSTS.md docs/marketing/posts/reddit.md \
-         docs/marketing/posts/devto.md docs/marketing/posts/discord.txt \
-         docs/marketing/posts/linkedin.txt; do
+# The marketing files this once also covered moved to a private repo on
+# 2026-10-13. The same rule applies to them there, and the posts drafted in
+# them are where a bare one-liner would reach the most people - worth a glance
+# before posting.
+for f in README.md CONTRIBUTING.md kantan.sh docs/media/README.md \
+         docs/probes/README.md test/fixtures/README.md; do
   [ -f "$REPO_ROOT/$f" ] || continue
   # Lines that pipe curl into a shell, minus the one sentence in kantan.sh that
   # quotes the broken form in order to warn about it.

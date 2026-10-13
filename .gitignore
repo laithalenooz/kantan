@@ -1,3 +1,11 @@
 node_modules/
 dist/
 .kantan-test/
+
+# Moved to the private kantan-private repo on 2026-10-13: a launch plan, a
+# first-person design brief, and a stale resume note. Ignored rather than only
+# deleted, so a local copy cannot be swept back into a public commit by a
+# `git add -A`.
+docs/marketing/
+docs/DESIGN-BRIEF.md
+docs/RESUME.md
