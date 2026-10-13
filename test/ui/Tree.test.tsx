@@ -49,6 +49,7 @@ const {
   StateLabel,
   Tree,
   taskStateOf,
+  nothingToShow,
   canStart,
   canResume,
   TASK_STATES,
@@ -256,15 +257,18 @@ function recolour(root: Element): Element {
   return clone
 }
 
-// --- The nine states --------------------------------------------------------
+// --- The ten states ---------------------------------------------------------
 
-describe("the nine state glyphs", () => {
+describe("the ten state glyphs", () => {
   test("every state has a glyph", () => {
     expect(TASK_STATES).toEqual([
       "open",
       "running",
       "needs-you",
       "passed",
+      /* Between `passed` and `failed` because that is where it sits in
+         meaning: a finished row making no claim about how it finished. */
+      "checked-off",
       "failed",
       "stalled",
       "done-unmerged",
@@ -273,7 +277,7 @@ describe("the nine state glyphs", () => {
     ])
   })
 
-  test("all nine are distinguishable with colour removed", () => {
+  test("all ten are distinguishable with colour removed", () => {
     const seen = new Map<string, TaskState>()
     for (const state of TASK_STATES) {
       const signature = shapeSignature(only(render(<StateGlyph state={state} />)))
@@ -369,8 +373,37 @@ describe("taskStateOf", () => {
     expect(taskStateOf(task())).toBe("open")
   })
 
-  test("a ticked task with no run has passed, because only a passing run ticks it", () => {
-    expect(taskStateOf(task({ done: true }))).toBe("passed")
+  /**
+   * **A ticked box is not a verification kantan performed.**
+   *
+   * This read used to be `"passed"`, on the reasoning that only a passing run
+   * ticks a box. It does not hold: a run log lives in `~/.orch/runs` and stays
+   * there, so a ticked task whose run kantan knows about arrives here *with* a
+   * run and is handled below. A ticked task with **no** run is one of
+   *
+   * - ticked by hand, in an editor or by another agent,
+   * - ticked before kantan ever saw the repository,
+   * - a run whose log was deleted.
+   *
+   * None of those is something kantan observed. Printing "Passed" and a green
+   * tick for them is the claim `CLAUDE.md` forbids outright - the same rule
+   * that stops a self-checked run printing one - and it was reported from use
+   * the other way round: five tasks ticked by hand all read "Passed".
+   *
+   * The costs are not close. Saying "checked off" about a task that really did
+   * pass understates it by one word, in a row that still shows as finished.
+   * Saying "Passed" about a box someone ticked by hand is kantan vouching for
+   * work it never ran.
+   */
+  test("a ticked task with no run is checked off, not passed", () => {
+    expect(taskStateOf(task({ done: true }))).toBe("checked-off")
+  })
+
+  test("a ticked task kantan did run still reports what the run says", () => {
+    // The log outranks the checkbox, as before: this is not a widening of the
+    // rule above, it is the half of it that was already right.
+    expect(taskStateOf(task({ done: true, run: ran({ kind: "done", merged: true }) }))).toBe("passed")
+    expect(taskStateOf(task({ done: true, run: ran({ kind: "failed", why: "the tests never passed" }) }))).toBe("failed")
   })
 
   test("every phase of a live run is running", () => {
@@ -455,6 +488,58 @@ describe("taskStateOf", () => {
   })
 })
 
+/**
+ * Reported from use: *"When a ticket is passed and I click on it I see empty
+ * page."* Clicking a ticked task rendered the breadcrumb and then nothing at
+ * all - no card, no message, no explanation.
+ *
+ * The cause is three independent `null`s in `App.tsx`'s centre column:
+ * `startPanel` is null because a finished task cannot be started or resumed,
+ * `gate` is null, and `view` is null because there is no run. Every branch
+ * declines and the column renders empty.
+ *
+ * So the guard is a **catch-all**, not a case for the state that was reported.
+ * The dimension is "which of the three branches matched", and its values are
+ * every combination of them - which this module cannot enumerate, because two
+ * of the three depend on a fetch. The costs are lopsided to the point of being
+ * obvious: a blank page tells a person nothing and reads as a crash, while an
+ * explanation for a combination nobody predicted is at worst slightly vague
+ * prose. So anything that leaves the column empty gets a sentence.
+ */
+describe("why there is nothing to show", () => {
+  const task = (over: Partial<TreeTask> = {}): TreeTask => ({
+    ref: "T1",
+    text: "Parse the manifest",
+    done: false,
+    ...over,
+  })
+
+  test("a ticked task with no run says so, rather than rendering nothing", () => {
+    expect(nothingToShow(task({ done: true }))).toBe("checked-off")
+  })
+
+  test("a task line with no ref cannot be addressed, and says that instead", () => {
+    // `canStart` requires a ref, so this is the other way the column empties -
+    // and it was already reachable before the report.
+    expect(nothingToShow(task({ ref: null }))).toBe("no-ref")
+  })
+
+  test("anything else that gets this far is still given a sentence", () => {
+    // The catch-all. A state with a run behind it does not normally reach here
+    // at all, because the record renders - so if it does, something is off and
+    // saying so beats a blank column.
+    expect(nothingToShow(task({ run: { state: { kind: "done", merged: true }, branch: "orch/x-t1-0000" } }))).toBe(
+      "no-run",
+    )
+  })
+
+  test("a startable task is not given one, because the start panel is there", () => {
+    // The one case that must stay `null`, or the explanation would sit
+    // underneath a perfectly good start button and contradict it.
+    expect(nothingToShow(task())).toBeNull()
+  })
+})
+
 describe("what can be started, and what cannot", () => {
   const forState = (state: TaskState): TreeTask => {
     const ref = "T1"
@@ -488,6 +573,10 @@ describe("what can be started, and what cannot", () => {
         }
       case "passed":
         return { ref, text, done: false, run: { state: { kind: "done", merged: true }, branch } }
+      case "checked-off":
+        // The only state with no run at all besides `open`: the ticked box is
+        // the whole of what is known about it.
+        return { ref, text, done: true }
       case "done-unmerged":
         return { ref, text, done: false, run: { state: { kind: "done", merged: false }, branch } }
       case "failed":
@@ -544,12 +633,21 @@ describe("StateLabel", () => {
       "Running",
       "Needs you",
       "Passed",
+      "Checked off",
       "Failed",
       "Stalled",
       "Done · unmerged",
       "Interrupted",
       "×6",
     ])
+  })
+
+  test("a checked-off task never prints an exit code, even if given one", () => {
+    /* There is no run behind this state, so any code reaching it came from
+     * somewhere else - and borrowing one is the failure `CLAUDE.md` names. The
+     * same guard "Self-checked" has, for the same reason. */
+    expect(only(render(<StateLabel state="checked-off" exitCode={0} />)).textContent).toBe("Checked off")
+    expect(only(render(<StateLabel state="checked-off" exitCode={1} />)).textContent).toBe("Checked off")
   })
 
   test("an exit code is printed, never paraphrased", () => {

@@ -40,6 +40,13 @@ export const TASK_STATES = [
   "running",
   "needs-you",
   "passed",
+  /**
+   * The checkbox is ticked and kantan has **no run** for the task.
+   *
+   * Its own state rather than `passed`, because those are different claims and
+   * only one of them is kantan's to make. See `taskStateOf`.
+   */
+  "checked-off",
   "failed",
   "stalled",
   "done-unmerged",
@@ -56,12 +63,23 @@ export function isGrinding(testAttempts: number | undefined): boolean {
 /**
  * Which of the nine a task reads as.
  *
- * The run log outranks the checkbox, because on `done` the checkout returns to
- * base and the tick lives on the task branch (design §3.6) - so a ticked box
- * with no run is a task that passed and was merged, while a ticked box with a
- * newer run is the run's business.
+ * The run log outranks the checkbox: a ticked box with a run is the run's
+ * business, whatever the box says.
  *
- * Two readings are judgments rather than lookups:
+ * Three readings are judgments rather than lookups:
+ *
+ * - **A ticked box with no run is `checked-off`, not `passed`.** This used to
+ *   read `passed`, on the reasoning that only a passing run ticks a box. That
+ *   does not hold - a run log lives in `~/.orch/runs` and stays there, so a
+ *   task kantan really did finish arrives here *with* its run. A ticked box
+ *   with no run is one ticked by hand, ticked before kantan saw the repo, or
+ *   one whose log was deleted. None is something kantan observed, and printing
+ *   "Passed" with a green tick for them is the claim `CLAUDE.md` forbids
+ *   outright - the same rule that stops a self-checked run printing one.
+ *   Reported from use: five tasks ticked by hand all read "Passed".
+ *   The costs are not close. "Checked off" understates a task that really did
+ *   pass by one word, in a row that still reads as finished; "Passed" on a box
+ *   somebody ticked in an editor is kantan vouching for work it never ran.
  *
  * - **`waiting(blocked)` is `needs you`, not `failed`.** `src/run.ts` parks a
  *   blocked run (`park(run, phase, "blocked", reason)`) and `answer()` accepts
@@ -75,7 +93,7 @@ export function isGrinding(testAttempts: number | undefined): boolean {
  */
 export function taskStateOf(task: TreeTask): TaskState {
   const run = task.run
-  if (!run) return task.done ? "passed" : "open"
+  if (!run) return task.done ? "checked-off" : "open"
   const state = run.state
   switch (state.kind) {
     case "running":
@@ -177,6 +195,7 @@ export function projectSummary(project: TreeProject, runs: RunCosts = {}): Proje
     running: 0,
     "needs-you": 0,
     passed: 0,
+    "checked-off": 0,
     failed: 0,
     stalled: 0,
     "done-unmerged": 0,
@@ -230,4 +249,39 @@ export function projectSummary(project: TreeProject, runs: RunCosts = {}): Proje
  */
 export function fileKey(projectPath: string, featureFile: string): string {
   return `${projectPath}\u0000${featureFile}`
+}
+
+/**
+ * Why the centre column has nothing to render for `task`, or `null` when it
+ * does.
+ *
+ * Reported from use: clicking a ticked task drew the breadcrumb and then an
+ * empty page. Three branches in `App.tsx` each declined - no start panel
+ * because a finished task cannot be started, no gate, no run record because
+ * there is no run - and nothing said so.
+ *
+ * **A catch-all rather than a case for the state that was reported.** The
+ * dimension is which of those branches matched, and its values cannot be
+ * enumerated from here because two of them depend on a fetch. The costs settle
+ * it: a blank column tells a person nothing and reads as a crash, while a
+ * slightly vague sentence for a combination nobody predicted still tells them
+ * where they are. So everything that gets this far is given one.
+ *
+ * `null` for a task that can be started, which is the one case that must not
+ * get a sentence: it would sit under a working start button and contradict it.
+ */
+export type NothingToShow =
+  /** Ticked in the task file, with no run kantan can show. */
+  | "checked-off"
+  /** The line carries no `T<n>`, so nothing can address it as a task. */
+  | "no-ref"
+  /** Anything else. Honest about being unexplained rather than silent. */
+  | "no-run"
+
+export function nothingToShow(task: TreeTask): NothingToShow | null {
+  if (canStart(task) || canResume(task)) return null
+  const state = taskStateOf(task)
+  if (state === "checked-off") return "checked-off"
+  if (task.ref === null) return "no-ref"
+  return "no-run"
 }

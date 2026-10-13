@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { Tree, canResume, canStart, projectSummary, type Account, type AdvancedSettings, type TaskId, type TreeProject, type TreeTask } from "./Tree.tsx"
+import { Tree, canResume, canStart, nothingToShow, projectSummary, type Account, type AdvancedSettings, type TaskId, type TreeProject, type TreeTask } from "./Tree.tsx"
 import { Gate, type GateProps } from "./Gate.tsx"
 import { Stream } from "./Stream.tsx"
 import { Sidebar, sumProcessCost, type AccountWindow } from "./Sidebar.tsx"
@@ -11,6 +11,7 @@ import { AddRepo, type Detection } from "./AddRepo.tsx"
 import { AddTasks } from "./AddTasks.tsx"
 import { ProjectPanel, accountOptionsFor, type AccountOption } from "./ProjectPanel.tsx"
 import { StartPanel } from "./StartPanel.tsx"
+import { NothingToShow } from "./NothingToShow.tsx"
 import { act, addTasks, detectPath, draftFeature, proposeTasks, registerProject, removeProject, removeTask, runTestCommand, startRun, summaryOf, taskKeyOf, updateProject, type RunView } from "./live.ts"
 import { useAction, usePlan, useRun, useTree } from "./useRun.ts"
 import { useAccounts, useNewTaskFile, useProjectSettings, useRepoTrial, useRunStart, useTaskRemoval } from "./actions.ts"
@@ -905,6 +906,17 @@ export function App() {
         {view !== null && (
           <Stream rows={view.rows} maxHeight={atGate ? 520 : 640} footer={footerFor(view)} />
         )}
+
+        {/* The last word, and the only branch here that cannot decline.
+            Reported from use: clicking a ticked task drew this breadcrumb and
+            then nothing, because the three branches above each had nothing to
+            render and none of them said so. Its condition is the negation of
+            all three rather than a state test, so a combination nobody
+            predicted gets a sentence instead of a blank column. */}
+        {startPanel === null && gate === null && view === null && task !== null && selected !== null && (() => {
+          const reason = nothingToShow(task)
+          return reason === null ? null : <NothingToShow reason={reason} featureFile={selected.featureFile} />
+        })()}
 
 
 

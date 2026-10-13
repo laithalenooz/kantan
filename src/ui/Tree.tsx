@@ -28,13 +28,14 @@ import { commandOf } from "./testcmd.ts"
 import { verificationOf } from "../runstate.ts"
 import type { VerificationReading } from "../runstate.ts"
 import type { TaskStatus } from "../runindex.ts"
-import { TASK_STATES, canResume, canStart, fileKey, isGrinding, projectSummary, taskStateOf } from "./taskstate.ts"
+import { TASK_STATES, canResume, canStart, fileKey, isGrinding, nothingToShow, projectSummary, taskStateOf } from "./taskstate.ts"
 import type { ProjectSummary, RunCosts, TaskState } from "./taskstate.ts"
 
 /* Re-exported: every one of these was imported from this module before it was
    split out, by `App.tsx`, `ProjectPanel.tsx` and three test files. The move
    was a refactor rather than a rename. */
-export { TASK_STATES, canResume, canStart, projectSummary, taskStateOf }
+export { TASK_STATES, canResume, canStart, nothingToShow, projectSummary, taskStateOf }
+export type { NothingToShow } from "./taskstate.ts"
 export type { ProjectSummary, RunCosts, TaskState }
 
 /**
@@ -206,6 +207,8 @@ const DESCRIPTIONS: Record<TaskState, string> = {
   running: "An agent is working right now. One task at a time, so at most one of these anywhere.",
   "needs-you": "Waiting at the gate, or the agent asked a question.",
   passed: "Tests passed, judged by exit code 0. What the agent says about its own work never counts.",
+  "checked-off":
+    "The checkbox in the task file is ticked and kantan has no run for this task - so it was ticked by hand, ticked before kantan saw this repo, or its run log is gone. kantan is not reporting a result of its own here.",
   failed:
     "Tests failed with a non-zero exit, or the agent couldn't continue. The exit code is always printed next to it.",
   stalled:
@@ -431,6 +434,27 @@ export function StateGlyph({
           </svg>
         </span>
       )
+    case "checked-off":
+      /* An **outline** tick in grey, and the two choices there are the point.
+         The shape says the box is ticked, which is a fact read off the file.
+         The filled green circle next to `passed` is what this screen uses to
+         mean "kantan ran the tests and they passed", so wearing it here would
+         say something kantan cannot say. Grey and hollow claims nothing. */
+      return (
+        <svg
+          aria-hidden
+          viewBox="0 0 24 24"
+          className={`ic text-muted-400 ${ICON}`}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <circle cx="12" cy="12" r="9" />
+          <path d="m8.5 12.2 2.4 2.4 4.6-4.9" />
+        </svg>
+      )
     case "done-unmerged":
       return (
         <svg
@@ -583,6 +607,14 @@ export function StateLabel({
       return (
         <span className={`${LABEL} text-[#93307A]`} title={DESCRIPTIONS.stalled}>
           Stalled
+        </span>
+      )
+    case "checked-off":
+      /* No exit code even if one is supplied, for the same reason
+         "Self-checked" prints none: there is no run here to have produced it. */
+      return (
+        <span className={`${LABEL} text-muted-500`} title={DESCRIPTIONS["checked-off"]}>
+          Checked off
         </span>
       )
     case "done-unmerged":
