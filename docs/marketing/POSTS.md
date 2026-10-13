@@ -90,15 +90,66 @@ copy was drawn from.
 
 ## Where to post
 
-- **`r/ClaudeAI` first.** It is the audience that already knows what `claude -p`
-  is, and the post needs no explaining there. `r/LocalLLaMA` and
-  `r/ExperiencedDevs` are plausible seconds with a reworked opening.
-  **`r/programming` has a hard self-promotion rule and will remove it** — don't.
+### Discord
+
+**Anthropic's own Claude Discord: <https://discord.com/invite/6PPFFzqPDZ>**
+(`discord.com/invite/anthropic` is the vanity alias for the same server). This is
+the primary venue, and not by guesswork — Anthropic's own community page
+describes it as *"real-time help, project sharing, and active discussions with
+thousands of developers"*, so showing a project is something the server is for
+rather than something you are getting away with.
+
+**Find the channel by reading, not by assuming.** Server layouts get
+reorganised, so look for whatever the sidebar currently calls showcase /
+share-your-project / built-with-claude, and read that channel's pinned message
+before posting. If there is no obvious one, ask in a general channel where
+projects go — that question is cheap and being moved by a mod is not.
+
+**Bun's Discord is a real second: <https://bun.com/discord>.** kantan is a Bun
+project and the post has something specific for that audience — the
+`bun --watch` finding in `docs/probes/`, which is a genuine contribution to
+them rather than a plug. If you post there, lead with the finding and mention
+the tool second. The current `discord.txt` leads with the tool, so rewrite the
+opening for that server.
+
+Same rule as Reddit: **don't paste identical copy into several servers.**
+
+### Reddit
+
+- **`r/ClaudeAI` first.** Anthropic's community page points at it for *"long-form
+  discussions, project showcases, and community knowledge that sticks around"*,
+  and it is the audience that already knows what `claude -p` is, so the post
+  needs no explaining there.
+- `r/LocalLLaMA` and `r/ExperiencedDevs` are plausible seconds **with a reworked
+  opening**.
+- **`r/programming` has a hard self-promotion rule and will remove it** — don't.
 - **Read the subreddit's rules the day you post.** Several now require a flair,
   and `r/ClaudeAI` has one for projects.
 - **Don't cross-post identical copy.** It is the fastest way to get all of them
-  removed. If you want a second subreddit, rewrite the opening.
-- **Discord:** a showcase channel in a server you already participate in.
+  removed.
+
+### Anthropic's "share your build" form, with a caveat
+
+<https://form.typeform.com/to/VIUAjxNi> — a community spotlight that can get a
+project featured on Claude's own channels. Not a contest: no prize, no judging,
+no deadline, and no guarantee anyone reads it.
+
+**Read what you are agreeing to before you submit it**
+([the terms](https://support.claude.com/en/articles/15485501-submit-your-build-how-it-works-and-what-you-re-agreeing-to)).
+You keep ownership, but the licence you grant is non-exclusive, royalty-free,
+worldwide, **perpetual and irrevocable**, it covers the content behind your links
+as well as what you upload, it includes your name, handle and likeness, it is
+sublicensable to partners and platforms, and **it cannot be withdrawn once
+given**. They may also feature it with no advance notice. For an MIT repository
+and a landing page that are already public, none of that costs you anything you
+had — which is exactly why it is worth doing *here* and worth reading carefully
+anywhere else.
+
+One thing it asks for that applies to kantan: the form has an "anything we should
+know?" field for third-party content. Say that `flow.gif` and `flow.mp4` contain
+a re-enacted agent, and link `docs/media/README.md`. The whole argument of the
+project is that it does not claim verification it did not observe; a spotlight
+submission is a poor place to make an exception.
 
 ## Order, and being around
 
