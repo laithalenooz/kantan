@@ -12,7 +12,7 @@ import { AddTasks } from "./AddTasks.tsx"
 import { ProjectPanel, accountOptionsFor, type AccountOption } from "./ProjectPanel.tsx"
 import { StartPanel } from "./StartPanel.tsx"
 import { NothingToShow } from "./NothingToShow.tsx"
-import { act, addTasks, detectPath, draftFeature, proposeTasks, registerProject, removeProject, removeTask, runTestCommand, startRun, summaryOf, taskKeyOf, updateProject, type RunView } from "./live.ts"
+import { act, addTasks, detectPath, draftFeature, proposeTasks, recordAccount, registerProject, removeProject, removeTask, runTestCommand, startRun, summaryOf, taskKeyOf, updateProject, type RunView } from "./live.ts"
 import { useAction, usePlan, useRun, useTree } from "./useRun.ts"
 import { useAccounts, useNewTaskFile, useProjectSettings, useRepoTrial, useRunStart, useTaskRemoval } from "./actions.ts"
 import type { RunPhase } from "../runlog.ts"
@@ -384,7 +384,33 @@ export function App() {
      "personal" made two options with the same id, which is the duplicate React
      key that hangs a render, and made the panel claim it could not tell which
      profile an unambiguous project used. */
-  const accountOptions: AccountOption[] = useMemo(() => accountOptionsFor(projects), [projects])
+  const accountOptions: AccountOption[] = useMemo(
+    () => accountOptionsFor(projects, tree?.accounts ?? []),
+    [projects, tree?.accounts],
+  )
+
+  /**
+   * Recording an account, which is what "Add another account" needed.
+   *
+   * The control was written in both panels and hidden in both, because
+   * `onAddAccount` was a prop nothing passed - and nothing could pass it, since
+   * there was nowhere to put the answer. `POST /api/accounts` is that place.
+   *
+   * It **rethrows**, which both forms depend on: each catches into its own
+   * inline error line beside the fields someone is still filling in, and
+   * resolving on a refusal would close the form as though the add had worked.
+   */
+  const onAddAccount = useCallback(
+    async (account: { kind: Account["kind"]; label: string; configDir: string }): Promise<void> => {
+      if (account.kind !== "personal" && account.kind !== "work") {
+        // `unknown` is the absence of an answer, not a third account to record.
+        throw new Error("an account has to be personal or work")
+      }
+      await recordAccount({ kind: account.kind, label: account.label, configDir: account.configDir })
+      reload()
+    },
+    [reload],
+  )
 
 
 
@@ -620,6 +646,8 @@ export function App() {
           accounts={accounts.accounts}
           error={accounts.error}
           busy={accounts.busy}
+          found={accounts.found}
+          onAdd={onAddAccount}
           onRefresh={accounts.refresh}
           onClose={() => setPanel(null)}
         />
@@ -634,7 +662,11 @@ export function App() {
           summary={projectSummary(panelProject, tree?.runs ?? {})}
           accounts={accountOptions}
           onSwitchAccount={(account) => settings.switchAccount(panelProject.path, account)}
-          onAddAccount={(account) => settings.addAccount(panelProject.path, account)}
+          /* `onAddAccount` records; `onSwitchAccount` above is what moves this
+             project's billing, and it asks first. They used to be the same
+             call, which is why adding an account silently re-billed a project
+             and dropped the name you typed. */
+          onAddAccount={onAddAccount}
           onSaveTestCmd={(cmd) => settings.saveTestCmd(panelProject.path, cmd)}
           /* `null`, which is the only spelling the store accepts for "no
              suite" - it refuses `""`, because `sh -c ""` exits 0. */
@@ -696,6 +728,12 @@ export function App() {
             trial.reset()
           }}
           accounts={accountOptions}
+          /* This button takes no account, because it is not a form: it is the
+             way out of a dead end. Someone adding a repository who needs an
+             account that is not on the list goes to the accounts screen, which
+             is the one place that can record one and the only screen reachable
+             without a project. */
+          onAddAccount={() => setPanel({ kind: "accounts" })}
           /* "Run it once", which was drawn and documented and inert because
              `POST /api/test` wanted a registered project - and nothing is
              registered on this screen yet. The command comes from the panel's

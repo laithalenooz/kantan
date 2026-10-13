@@ -531,6 +531,21 @@ export interface TreePayload {
   projects: TreeProject[]
   /** Keyed by `taskKey` from `src/runindex.ts`: the three parts joined by NUL. */
   runs: Readonly<Record<string, RunRef>>
+  /**
+   * Accounts the user has recorded, from `~/.orch/accounts.json`.
+   *
+   * Separate from `foundAccounts` because they are different claims: this is
+   * what somebody told kantan, that is what a directory scan suspects.
+   */
+  accounts: StoredAccount[]
+  /** Folders that look like Claude profiles. A **suggestion**, not a record. */
+  foundAccounts: string[]
+}
+
+export interface StoredAccount {
+  kind: "personal" | "work"
+  label: string
+  configDir: string
 }
 
 export interface RunRef {
@@ -613,7 +628,38 @@ export async function openSession(fetcher: typeof fetch = fetch): Promise<Sessio
 export async function fetchTree(fetcher: typeof fetch = fetch): Promise<TreePayload> {
   const res = await withSession(fetcher, (f) => f(`${API}/projects`, { cache: "no-store" }))
   if (!res.ok) throw new Error(`the project tree could not be read: ${res.status} ${await text(res)}`)
-  return (await res.json()) as TreePayload
+  const body = (await res.json()) as Partial<TreePayload>
+
+  /**
+   * The two account lists are **read, not asserted**, unlike the rest of this
+   * body - which is still a cast and is older than the lesson.
+   *
+   * `fetchPlan` is why: it cast an envelope straight to its payload type,
+   * `status` came back `undefined`, and the gate told a human "this run
+   * recorded no plan file" while the server was answering 14 kB of markdown.
+   * A cast is not a parse. These two are new, so they get the newer rule - and
+   * they are fed to a React list keyed on `(kind, configDir)`, where a missing
+   * field would produce duplicate keys, which is the defect that hung a render
+   * and took two editor sessions with it.
+   */
+  const account = (value: unknown): StoredAccount | null => {
+    if (typeof value !== "object" || value === null) return null
+    const r = value as Record<string, unknown>
+    const kind = r["kind"]
+    if (kind !== "personal" && kind !== "work") return null
+    if (typeof r["label"] !== "string" || typeof r["configDir"] !== "string") return null
+    if (r["configDir"] === "") return null
+    return { kind, label: r["label"], configDir: r["configDir"] }
+  }
+
+  return {
+    projects: Array.isArray(body.projects) ? body.projects : [],
+    runs: typeof body.runs === "object" && body.runs !== null ? body.runs : {},
+    accounts: (Array.isArray(body.accounts) ? body.accounts : []).map(account).filter((a): a is StoredAccount => a !== null),
+    foundAccounts: (Array.isArray(body.foundAccounts) ? body.foundAccounts : []).filter(
+      (d): d is string => typeof d === "string" && d !== "",
+    ),
+  }
 }
 
 /**
@@ -770,6 +816,37 @@ export async function draftFeature(
  * "that project could not be removed" for a project that is now gone is the
  * confusing direction.
  */
+/**
+ * Records an account kantan may run under.
+ *
+ * **It records, and does not switch.** What it replaces did both: the panel's
+ * add-account form PATCHed the *project* to the new `(account, configDir)`, on
+ * the reasoning its own comment gave - *"kantan keeps no account registry, so
+ * the way to make a new one exist is to put a project on it"*. Two things were
+ * wrong with that, and together they are the report *"if I try to add a new
+ * account nothing happens"*:
+ *
+ * - **The label was thrown away.** The server derives the chip from
+ *   `configDir`, so an account added as "Acme" came back as `.claude-acme`,
+ *   and adding one you were already on changed nothing visible at all.
+ * - **It moved the project's billing**, silently. The switch flow next to it
+ *   asks first, in a dialog, because - in the panel's own words - getting this
+ *   wrong costs real money. Adding an account should not be the one path that
+ *   skips the question.
+ *
+ * The refusal comes straight through: the store names the field and says why a
+ * relative folder cannot work, and the form prints it beside the inputs.
+ */
+export async function recordAccount(
+  account: { kind: "personal" | "work"; label: string; configDir: string },
+  fetcher: typeof fetch = fetch,
+): Promise<void> {
+  const res = await withSession(fetcher, (f) =>
+    f(`${API}/accounts`, { method: "POST", cache: "no-store", body: JSON.stringify(account) }),
+  )
+  if (!res.ok) throw new Error(`that account could not be added: ${res.status} ${await text(res)}`)
+}
+
 export async function removeProject(path: string, fetcher: typeof fetch = fetch): Promise<void> {
   const res = await withSession(fetcher, (f) =>
     f(`${API}/projects`, { method: "DELETE", cache: "no-store", body: JSON.stringify({ path }) }),
@@ -860,10 +937,10 @@ export interface AccountUsage {
  * that ignores it and prints the percentage would claim a window that may have
  * reset hours ago.
  */
-export async function fetchAccounts(fetcher: typeof fetch = fetch): Promise<AccountUsage[]> {
+export async function fetchAccounts(fetcher: typeof fetch = fetch): Promise<AccountsAnswer> {
   const res = await withSession(fetcher, (f) => f(`${API}/accounts`, { cache: "no-store" }))
   if (!res.ok) throw new Error(`the accounts could not be read: ${res.status} ${await text(res)}`)
-  const body = (await res.json()) as { accounts?: unknown }
+  const body = (await res.json()) as { accounts?: unknown; found?: unknown }
   const accounts = body.accounts
   /* Read, not cast - the lesson `fetchPlan` paid for. An answer this page
      cannot read is an error, never an empty list: "no accounts" and "the
@@ -872,7 +949,19 @@ export async function fetchAccounts(fetcher: typeof fetch = fetch): Promise<Acco
   if (!Array.isArray(accounts)) {
     throw new Error("the server's answer carried no accounts; it may be running a different version than this page")
   }
-  return accounts as AccountUsage[]
+  return {
+    accounts: accounts as AccountUsage[],
+    /* `found` is treated the opposite way on purpose: it is a convenience, so
+       an answer without it is an older server with nothing to suggest, not an
+       error worth stopping the page for. */
+    found: (Array.isArray(body.found) ? body.found : []).filter((d): d is string => typeof d === "string" && d !== ""),
+  }
+}
+
+export interface AccountsAnswer {
+  accounts: AccountUsage[]
+  /** Folders that look like profiles kantan has not been told about. */
+  found: string[]
 }
 
 /** What `POST /api/test` answers. */

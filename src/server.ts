@@ -1,5 +1,6 @@
 import { randomBytes, timingSafeEqual } from "node:crypto"
 import { constants } from "node:fs"
+import { homedir } from "node:os"
 import { mkdir, open, realpath, stat, writeFile } from "node:fs/promises"
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path"
 import type { Server } from "bun"
@@ -95,7 +96,7 @@ import {
 } from "./routes/features"
 import { runTestCommand } from "./routes/test"
 import { detectRepoPath } from "./routes/detect"
-import { readAccounts } from "./routes/accounts"
+import { addAccount, readAccounts } from "./routes/accounts"
 import { builtIndex, DEFAULT_DIST, readAsset } from "./routes/assets"
 export type { PlanSource } from "./routes/plan"
 import type { FileRead } from "./http/readinside"
@@ -346,6 +347,10 @@ export const ROUTES: Record<string, RouteHandler> = {
    * source there is: `claude` has no subcommand that reports usage, so the
    * `rate_limit_event` a run emits is all anyone has. */
   "GET /api/accounts": (_req, ctx) => readAccounts(ctx),
+
+  /** Records an account kantan may run under - what "Add another account"
+   *  needed, and had nowhere to send its answer. */
+  "POST /api/accounts": (req, ctx) => addAccount(req, ctx),
 }
 
 /**
@@ -432,6 +437,7 @@ export function createServer(opts: ServerOptions = {}): Launch {
     devPort,
     runsDir: opts.runsDir ?? defaultRunsDir(),
     distDir: opts.distDir ?? DEFAULT_DIST,
+    homeDir: opts.homeDir ?? homedir(),
     streamPollMs: opts.streamPollMs ?? DEFAULT_STREAM_POLL_MS,
     streamKeepAliveMs: opts.streamKeepAliveMs ?? DEFAULT_STREAM_KEEP_ALIVE_MS,
     // `null` rather than left undefined, so the 503 branch in every action is

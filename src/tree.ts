@@ -29,6 +29,8 @@ import { listFeatureFiles } from "./featurefile"
 import { taskBranchName } from "./git"
 import { loadProjects } from "./projects"
 import type { Project } from "./projects"
+import { accountsFile, discoverProfiles, loadProfiles } from "./profiles"
+import type { Profile } from "./profiles"
 import { indexRuns, taskKey } from "./runindex"
 import type { TaskStatus } from "./runindex"
 import { noStore, refuse } from "./http/guards"
@@ -158,10 +160,39 @@ export async function readProjects(ctx: RouteContext): Promise<Response> {
     })
   }
 
+  /**
+   * The accounts a project may be switched to, and the ones kantan merely
+   * suspects. **Two keys, because they are two different claims.**
+   *
+   * `accounts` is what the user told kantan, from the registry.
+   * `foundAccounts` is what a scan of the home directory suggests. Merging
+   * them would make a guess look like a record - and the scan is deliberately
+   * conservative, since typing a folder by hand is always available.
+   *
+   * Carried on the tree rather than fetched separately because this is where
+   * the picker's data already comes from: `accountOptionsFor` builds its
+   * options from this response, and a reload after an add refreshes them
+   * without a second endpoint or a second poll.
+   *
+   * Neither can fail the tree. A damaged registry reads as empty here and the
+   * add route answers the real error where somebody is looking at it, and
+   * discovery never throws at all.
+   */
+  let accounts: Profile[] = []
+  try {
+    accounts = await loadProfiles(accountsFile(projectsFile))
+  } catch (cause) {
+    warnings.push(
+      `${accountsFile(projectsFile)} could not be read, so no extra accounts are offered: ${(cause as Error).message}`,
+    )
+  }
+
   return Response.json(
     {
       ok: true,
       projects,
+      accounts,
+      foundAccounts: await discoverProfiles(ctx.homeDir),
       // Every task the logs know about, not only the ones a tree row joined: a
       // run whose feature file has since been renamed is still a run, and
       // filtering the mapping down to what happens to be on screen would make

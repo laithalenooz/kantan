@@ -2276,6 +2276,49 @@ describe("accountOptionsFor", () => {
     expect(api.accountOptionsFor([])).toEqual([{ kind: "personal", label: "default profile" }])
   })
 
+  /**
+   * Reported from use: *"why other accounts are not detected?"*
+   *
+   * Because this function's only source was the registered projects. An
+   * account could be offered if some project already billed to it, which made
+   * adding one circular - you needed a project using the account to be able to
+   * choose the account. The registry is the second source, and it is the one
+   * that breaks the circle.
+   */
+  test("a recorded account is offered with no project using it", () => {
+    const options = api.accountOptionsFor([], [
+      { kind: "work", label: "Acme", configDir: "/home/dev/.claude-acme" },
+    ])
+    expect(options).toEqual([
+      { kind: "personal", label: "default profile" },
+      { kind: "work", label: "Acme", configDir: "/home/dev/.claude-acme" },
+    ])
+  })
+
+  test("a recorded account and a project on the same folder are one option", () => {
+    // The dedupe rule does not change: identity is `(kind, configDir)`
+    // whichever source the option came from, or the list grows a duplicate
+    // React key - the defect that hung a render.
+    const options = api.accountOptionsFor(
+      [p("work", "/home/dev/.claude-acme", "from the project")],
+      [{ kind: "work", label: "Acme", configDir: "/home/dev/.claude-acme" }],
+    )
+    const ids = options.map((o: { kind: string; configDir?: string }) => `${o.kind}/${o.configDir ?? ""}`)
+    expect(new Set(ids).size).toBe(ids.length)
+    expect(options.filter((o) => o.kind === "work")).toHaveLength(1)
+  })
+
+  test("the recorded label wins, because somebody typed it on purpose", () => {
+    // A project's label is whatever was stored with the project; the registry
+    // entry is what the user wrote in the add form for this account. When they
+    // disagree, the deliberate one is the newer and more specific answer.
+    const options = api.accountOptionsFor(
+      [p("work", "/home/dev/.claude-acme", "stale name")],
+      [{ kind: "work", label: "Acme", configDir: "/home/dev/.claude-acme" }],
+    )
+    expect(options.find((o) => o.kind === "work")?.label).toBe("Acme")
+  })
+
   test("never produces two options with the same id, which is the whole point", () => {
     const options = api.accountOptionsFor([
       p("personal"),

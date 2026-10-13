@@ -78,6 +78,21 @@ export function optionId(option: { kind: Account["kind"]; configDir?: string }):
  */
 export function accountOptionsFor(
   projects: ReadonlyArray<{ account: Account; configDir?: string }>,
+  /**
+   * The accounts the user recorded, from `~/.orch/accounts.json`.
+   *
+   * **The second source, and the one that makes this list usable.** Reported
+   * from use: *"why other accounts are not detected?"* - because the only
+   * source was the projects above, so an account could be offered when some
+   * project already billed to it. Which made adding one circular: to choose an
+   * account you needed a project already using that account.
+   *
+   * Applied **after** the projects, so a recorded label wins where the two
+   * disagree. A project's label is whatever was stored alongside the project;
+   * a registry entry is what somebody typed into the add form for this
+   * account, which is the more deliberate and more specific answer.
+   */
+  recorded: ReadonlyArray<{ kind: "personal" | "work"; label: string; configDir: string }> = [],
 ): AccountOption[] {
   const byId = new Map<string, AccountOption>()
   /* Seeded first so a project that genuinely runs on the default profile
@@ -93,6 +108,13 @@ export function accountOptionsFor(
       label: project.account.label ?? kind,
       ...(project.configDir === undefined ? {} : { configDir: project.configDir }),
     }
+    byId.set(optionId(option), option)
+  }
+  /* Keyed by `optionId` like the projects, so a recorded account and a project
+     on the same folder are one option rather than two rows with one identity -
+     which is a duplicate React key, which hung a render. */
+  for (const account of recorded) {
+    const option: AccountOption = { kind: account.kind, label: account.label, configDir: account.configDir }
     byId.set(optionId(option), option)
   }
   return [...byId.values()]

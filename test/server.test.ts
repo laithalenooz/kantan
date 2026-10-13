@@ -57,7 +57,18 @@ function serve(opts: Parameters<typeof createServer>[0] = {}): Launch {
    * the default is the repo's real `dist/`, so without this every test that
    * loads a page would pass or fail on whether the developer had run `bun run
    * build`. The build's own route is covered by `test/assets.test.ts`. */
-  const l = createServer({ port: 0, ask: NO_MODEL, distDir: join(tmpdir(), "orch-no-dist"), ...opts })
+  /* `homeDir` points at an empty scratch directory for the reason `distDir`
+   * does, and it was not injected at first: `discoverProfiles` defaults to the
+   * real home, so the tree answered the developer's own `~/.claude-work`
+   * inside `bun test` and the suite's result depended on whose machine it ran
+   * on. `test/profiles.test.ts` builds a fake home to test discovery itself. */
+  const l = createServer({
+    port: 0,
+    ask: NO_MODEL,
+    distDir: join(tmpdir(), "orch-no-dist"),
+    homeDir: join(tmpdir(), "orch-no-home"),
+    ...opts,
+  })
   launched.push(l)
   return l
 }
@@ -1308,8 +1319,11 @@ test("an id runLogPath refuses becomes a 400, not an unhandled rejection", async
     hosts: new Set(),
     origins: new Set(),
     runsDir: dir,
-    /* No build involved: these two contexts exercise the run-id refusal. */
+    /* No build and no profile scan involved: these two contexts exercise the
+     * run-id refusal. Both point at the scratch directory rather than being
+     * omitted, so neither can reach the developer's own files. */
     distDir: dir,
+    homeDir: dir,
     streamPollMs: 2,
     streamKeepAliveMs: 1000,
     runner: null,
@@ -1853,8 +1867,11 @@ test("an id runLogPath refuses is a 4xx and never reaches the machine", async ()
     hosts: new Set(),
     origins: new Set(),
     runsDir: dir,
-    /* No build involved: these two contexts exercise the run-id refusal. */
+    /* No build and no profile scan involved: these two contexts exercise the
+     * run-id refusal. Both point at the scratch directory rather than being
+     * omitted, so neither can reach the developer's own files. */
     distDir: dir,
+    homeDir: dir,
     streamPollMs: 2,
     streamKeepAliveMs: 1000,
     runner: fake.runner,
@@ -3419,6 +3436,9 @@ interface TreeBody {
   projects?: TreeProject[]
   runs?: Record<string, { runId: string; costUsd: number; attempts: number }>
   warnings?: string[]
+  /** What the user recorded, and what a scan suspects. Two keys, two claims. */
+  accounts?: Array<{ kind: string; label: string; configDir: string }>
+  foundAccounts?: string[]
   error?: string
 }
 
@@ -3562,7 +3582,11 @@ test("a fresh install is an empty tree rather than a 404, and is never cached", 
   const { status, body, headers } = await getTree(l)
 
   expect(status).toBe(200)
-  expect(body).toEqual({ ok: true, projects: [], runs: {}, warnings: [] })
+  /* `accounts` and `foundAccounts` are both empty here, and that they are
+   * *listed* is the point: the exact-shape assertion is what caught this route
+   * reading the real home directory, so it keeps asserting the whole body
+   * rather than the keys this test happens to care about. */
+  expect(body).toEqual({ ok: true, projects: [], runs: {}, warnings: [], accounts: [], foundAccounts: [] })
   // Nothing here is cached: a run moves between page loads, and a cached tree
   // would show the previous one's state.
   expect(headers.get("cache-control")).toBe("no-store")
@@ -4683,6 +4707,106 @@ test("a file edited since the draft is numbered against what is on disk now", as
   const after = await readFile(path, "utf8")
   expect(after).toContain("- [ ] T8 Drafted earlier")
   expect(after).toContain("- [ ] T7 Typed by hand")
+})
+
+/* ========================================================================== */
+/* The account registry                                                        */
+/* ========================================================================== */
+
+/**
+ * Reported from use: *"why other accounts are not detected?"* and *"if I try
+ * to add a new account nothing happens?"*
+ *
+ * One cause. The account list was derived from projects already registered, so
+ * a profile no project had run with could not appear - and the only way to add
+ * one was to already have a project using it.
+ */
+
+function addAccount(l: Launch, body: unknown): Promise<{ status: number; headers: Headers; body: string }> {
+  return call(l, { path: "/api/accounts", method: "POST", body: JSON.stringify(body) })
+}
+
+test("the account route is registered behind the guards and not token-exempt", () => {
+  expect(Object.keys(ROUTES)).toContain("POST /api/accounts")
+  expect(TOKEN_EXEMPT.has("POST /api/accounts")).toBe(false)
+})
+
+test("an added account is offered by the tree, with no project using it", async () => {
+  // The circle this breaks: before the registry, an account could only be
+  // offered if a registered project already billed to it.
+  const store = await storeFile()
+  const l = await withTree(store)
+
+  const added = await addAccount(l, { kind: "work", label: "Acme", configDir: "/tmp/orch-acme" })
+  expect(added.status).toBe(200)
+
+  const tree = JSON.parse((await call(l, { path: "/api/projects" })).body) as {
+    accounts: Array<{ kind: string; label: string; configDir: string }>
+  }
+  expect(tree.accounts).toEqual([{ kind: "work", label: "Acme", configDir: "/tmp/orch-acme" }])
+})
+
+test("an added account appears in the usage view before it has ever run", async () => {
+  /* The other half of "not detected". `GET /api/accounts` built its profile
+   * list from the store's projects, so an account with no project reported
+   * nothing - and a page cannot tell "nothing to report" from "no such
+   * account" unless the account is listed. */
+  const store = await storeFile()
+  const l = await withTree(store)
+  await addAccount(l, { kind: "work", label: "Acme", configDir: "/tmp/orch-acme" })
+
+  const body = JSON.parse((await call(l, { path: "/api/accounts" })).body) as {
+    accounts: Array<{ profile: string | null; freshness: string }>
+  }
+  const acme = body.accounts.find((a) => a.profile === "/tmp/orch-acme")
+  expect(acme).toBeDefined()
+  /* "never", not absent, and that distinction is the whole reason the registry
+   * feeds this route: a page can say "kantan has not seen this account run"
+   * only if the account is listed. An unlisted one is indistinguishable from
+   * one that does not exist. */
+  expect(acme?.freshness).toBe("never")
+})
+
+test("a bad account is refused in the store's own words, and nothing is written", async () => {
+  const store = await storeFile()
+  const l = await withTree(store)
+
+  for (const body of [
+    {},
+    { kind: "work", label: "Acme" },
+    { kind: "work", label: "", configDir: "/tmp/x" },
+    { kind: "nope", label: "Acme", configDir: "/tmp/x" },
+    // The refusal that matters most: a relative folder cannot be resolved
+    // against anything the person typing it can see.
+    { kind: "work", label: "Acme", configDir: "relative/path" },
+  ]) {
+    const res = await addAccount(l, body)
+    expect({ body, status: res.status }).toEqual({ body, status: 400 })
+  }
+
+  const tree = JSON.parse((await call(l, { path: "/api/projects" })).body) as { accounts: unknown[] }
+  expect(tree.accounts).toEqual([])
+})
+
+test("a launch with no project store cannot hold accounts, and says so", async () => {
+  // The registry lives beside `projects.json`, so without one there is nowhere
+  // to put it. 503 like every other store-less refusal, not 500.
+  const l = serve({ runsDir: await runsDir() })
+  const res = await addAccount(l, { kind: "work", label: "Acme", configDir: "/tmp/x" })
+  expect(res.status).toBe(503)
+})
+
+test("the tree reports the profiles found on disk separately from the ones added", async () => {
+  /* Two different claims, kept apart: `accounts` is what the user told kantan,
+   * `foundAccounts` is what a directory scan suggests. Merging them would make
+   * a guess look like a record - and the scan is deliberately conservative,
+   * because typing the path by hand is always available. */
+  const store = await storeFile()
+  const l = await withTree(store)
+  const tree = JSON.parse((await call(l, { path: "/api/projects" })).body) as Record<string, unknown>
+
+  expect(Array.isArray(tree["accounts"])).toBe(true)
+  expect(Array.isArray(tree["foundAccounts"])).toBe(true)
 })
 
 /* ========================================================================== */

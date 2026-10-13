@@ -240,6 +240,16 @@ export interface ServerOptions {
    * so rather than failing.
    */
   distDir?: string
+  /**
+   * The home directory `discoverProfiles` scans for Claude profiles.
+   *
+   * Injectable for the reason `runsDir` and `distDir` are, and it was not at
+   * first: the tree answered the **developer's own** `~/.claude-work` inside
+   * `bun test`, so the suite's result depended on what happened to be in the
+   * home directory of whoever ran it. Caught by an exact-shape assertion on
+   * the tree body, which is the only reason it was caught at all.
+   */
+  homeDir?: string
   /** How often a followed run log is checked for appended bytes. */
   streamPollMs?: number
   /** How often an idle run stream sends a keep-alive comment. */
@@ -313,6 +323,8 @@ export interface RouteContext {
    * so it is present whether or not anything is there - and it is the
    * *spelling*, which `src/routes/assets.ts` canonicalises per request. */
   distDir: string
+  /** Where to look for Claude profiles. Resolved, like `runsDir`. */
+  homeDir: string
   streamPollMs: number
   streamKeepAliveMs: number
   /** `null` when the server was launched without one. Nullable rather than

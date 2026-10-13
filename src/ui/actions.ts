@@ -183,7 +183,6 @@ export interface ProjectSettings {
   error: Failure
   clearError: () => void
   switchAccount: (path: string, account: AccountOption) => Promise<void>
-  addAccount: (path: string, account: { kind: "personal" | "work"; label: string; configDir: string }) => Promise<void>
   saveTestCmd: (path: string, testCmd: string | null) => Promise<void>
   saveAdvanced: (path: string, change: Partial<AdvancedSettings>) => Promise<void>
   saveBudget: (path: string, budgetUsd: number) => Promise<void>
@@ -232,15 +231,6 @@ export function useProjectSettings(reload: () => void): ProjectSettings {
            reads it to decide what gets billed. `null` is how an option with no
            folder sends the project back to the default profile. */
         await guard(() => updateProject(path, { account: account.kind, configDir: account.configDir ?? null })),
-      [guard],
-    ),
-    addAccount: useCallback(
-      async (path, account) =>
-        /* An add *and* a switch, because kantan keeps no account registry: the
-           options are derived from the pairs in use, so the way to make a new
-           one exist is to put a project on it. The label is not stored -
-           `accountOf` on the server derives what the chip prints. */
-        await guard(() => updateProject(path, { account: account.kind, configDir: account.configDir })),
       [guard],
     ),
     saveTestCmd: useCallback(
@@ -386,6 +376,9 @@ export function useRepoTrial(): RepoTrial {
 
 export interface Accounts {
   accounts: AccountUsage[] | null
+  /** Profiles on disk kantan has not been told about. `[]` until the first
+   *  answer, and `[]` from a server too old to report any. */
+  found: string[]
   error: Failure
   /** Refetches now. The button beside the list, and what the poll calls. */
   refresh: () => void
@@ -416,6 +409,7 @@ const POLL_MS = 10_000
  */
 export function useAccounts(open: boolean): Accounts {
   const [accounts, setAccounts] = useState<AccountUsage[] | null>(null)
+  const [found, setFound] = useState<string[]>([])
   const [error, setError] = useState<Failure>(null)
   const [busy, setBusy] = useState(false)
   const [nonce, setNonce] = useState(0)
@@ -428,7 +422,8 @@ export function useAccounts(open: boolean): Accounts {
       try {
         const got = await fetchAccounts()
         if (alive) {
-          setAccounts(got)
+          setAccounts(got.accounts)
+          setFound(got.found)
           setError(null)
         }
       } catch (cause) {
@@ -448,5 +443,5 @@ export function useAccounts(open: boolean): Accounts {
     }
   }, [open, nonce])
 
-  return { accounts, error, busy, refresh: useCallback(() => setNonce((n) => n + 1), []) }
+  return { accounts, found, error, busy, refresh: useCallback(() => setNonce((n) => n + 1), []) }
 }

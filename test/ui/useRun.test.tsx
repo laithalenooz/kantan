@@ -73,7 +73,7 @@ function stub(answers: Record<string, () => Response>): { fetcher: typeof fetch;
   return { fetcher, urls }
 }
 
-const EMPTY_TREE: TreePayload = { projects: [], runs: {} }
+const EMPTY_TREE: TreePayload = { projects: [], runs: {}, accounts: [], foundAccounts: [] }
 
 describe("useTree", () => {
   test("gets the cookie before asking for the tree", async () => {
