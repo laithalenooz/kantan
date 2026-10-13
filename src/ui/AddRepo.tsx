@@ -314,6 +314,18 @@ export type TestRun =
   | { phase: "idle" }
   | { phase: "running"; cmd: string }
   | { phase: "done"; cmd: string; exitCode: number; summary?: string }
+  /**
+   * The command did **not** run, and `why` says so in the server's words.
+   *
+   * A distinct phase rather than an exit code, because a refusal is not a
+   * result: a run in flight in the same working tree and a command that could
+   * not be started are both reasons nothing executed, and `runTestCommand`
+   * throws on them for exactly that reason. Folding either into `done` would
+   * print a number beside a command that never ran, which is the claim
+   * `CLAUDE.md` forbids outright. Without this phase the shell could only
+   * swallow the refusal, leaving a button that looks dead.
+   */
+  | { phase: "refused"; cmd: string; why: string }
 
 /**
  * A Claude account the shell can offer.
@@ -371,8 +383,20 @@ export interface AddRepoProps {
   /** Defaults to the two `Project.account` accepts, with no profile and no ring. */
   accounts?: readonly AccountOption[]
   testRun?: TestRun
-  /** Absent hides "Run it once"; there is no route for it yet. */
-  onRunTests?: () => void
+  /**
+   * Tries the command in the field. Absent hides "Run it once".
+   *
+   * **It is handed the command**, because this panel owns that field and the
+   * shell cannot see into it - and there is nowhere else the shell could get
+   * one, since the whole premise of this screen is that the project is not
+   * saved yet. It is the typed draft rather than whatever detection found,
+   * for the reason `POST /api/test` takes its command from the body: the
+   * control proves a command *before* it is trusted, so running anything but
+   * the string on screen would answer a question nobody asked.
+   *
+   * The phase it reports arrives back as `testRun`, which the shell owns.
+   */
+  onRunTests?: (cmd: string) => void
   /** Absent hides "Add another account". */
   onAddAccount?: () => void
   /** Absent hides "Start a new task file instead". */
@@ -1141,7 +1165,7 @@ export function AddRepo({
                     {onRunTests !== undefined && (
                       <button
                         type="button"
-                        onClick={onRunTests}
+                        onClick={() => onRunTests(cmd)}
                         className={PILL}
                         style={{ ...PILL_BOX, padding: "0 16px 0 14px", display: "inline-flex", alignItems: "center", gap: 8 }}
                       >
@@ -1604,6 +1628,16 @@ function AccountCard({
  */
 function TestOutcome({ run, cmd, reduced }: { run: TestRun | undefined; cmd: string; reduced: boolean }): ReactNode {
   if (run === undefined || run.phase === "idle" || run.cmd !== cmd) return null
+  if (run.phase === "refused") {
+    /* The server's own sentence, forwarded: it names the run that is in flight
+       or the reason the command could not start, and either is the only thing
+       the reader can act on. No chip and no number - nothing ran. */
+    return (
+      <div role="status" className={reduced ? "" : "pop"} style={{ ...STATUS_ROW, marginTop: 10, color: "#9A3412" }}>
+        {run.why}
+      </div>
+    )
+  }
   if (run.phase === "running") {
     return (
       <div role="status" className={reduced ? "" : "pop"} style={{ ...STATUS_ROW, marginTop: 10 }}>

@@ -24,10 +24,11 @@
  *   repository" and that sentence must not appear for a budget edit.
  */
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 
-import { draftFeature, fetchAccounts, removeTask, startRun, updateProject } from "./live.ts"
+import { draftFeature, fetchAccounts, removeTask, runTestCommand, startRun, summaryOf, updateProject } from "./live.ts"
 import type { AccountUsage } from "./live.ts"
+import type { TestRun } from "./AddRepo.tsx"
 import type { AccountOption } from "./ProjectPanel.tsx"
 import type { AdvancedSettings } from "./Tree.tsx"
 import type { TaskId } from "./Tree.tsx"
@@ -320,6 +321,68 @@ export function useRunStart(): RunStart {
   return { started, error, dirtyRefusal, start, dismissDirty: useCallback(() => setDirtyRefusal(null), []) }
 }
 
+
+export interface RepoTrial {
+  /** The phase `AddRepo` draws. `idle` until someone presses the button. */
+  run: TestRun
+  /** Tries `cmd` in `projectPath`. Fire and forget: the phase is the answer. */
+  start: (projectPath: string, cmd: string) => void
+  /** Back to `idle`, for when the panel closes. */
+  reset: () => void
+}
+
+/**
+ * Trying a test command once, from the add-repository panel.
+ *
+ * This is what wires "Run it once", which was drawn, documented and inert
+ * because `POST /api/test` required a *registered* project - and the premise of
+ * that screen is that the project is not saved yet. The route now accepts an
+ * unregistered path that passes the same two gates registration uses.
+ *
+ * Two things this hook owes the screen:
+ *
+ * - **A refusal is a phase, not an exit code.** `runTestCommand` throws on a
+ *   409 or a 400 rather than folding it into an outcome, because a run in
+ *   flight and a command that could not start are not test results. Swallowing
+ *   one would leave a button that looks dead; inventing a code for one would
+ *   claim a verification nobody observed.
+ * - **Only the newest attempt may write.** Someone can press this twice, and
+ *   the first answer arriving after the second click would replace a running
+ *   spinner with a finished result for a command they have moved on from.
+ *   `TestOutcome` already hides a result whose `cmd` is not the one in the
+ *   field, which covers an edited command but not two clicks on the same one -
+ *   so the attempt is counted and a stale resolution is dropped.
+ */
+export function useRepoTrial(): RepoTrial {
+  const [run, setRun] = useState<TestRun>({ phase: "idle" })
+  /** Which attempt is current. Compared, never rendered. */
+  const attempt = useRef(0)
+
+  const start = useCallback((projectPath: string, cmd: string): void => {
+    const mine = ++attempt.current
+    setRun({ phase: "running", cmd })
+    void (async () => {
+      try {
+        const answer = await runTestCommand({ projectPath, testCmd: cmd })
+        if (attempt.current !== mine) return
+        const summary = summaryOf(answer)
+        setRun({ phase: "done", cmd, exitCode: answer.exitCode, ...(summary === undefined ? {} : { summary }) })
+      } catch (cause) {
+        if (attempt.current !== mine) return
+        setRun({ phase: "refused", cmd, why: reason(cause) })
+      }
+    })()
+  }, [])
+
+  const reset = useCallback((): void => {
+    // Bumped as well, or an answer in flight would arrive into the next
+    // panel's idle state and show a result nobody asked for.
+    attempt.current++
+    setRun({ phase: "idle" })
+  }, [])
+
+  return { run, start, reset }
+}
 
 export interface Accounts {
   accounts: AccountUsage[] | null

@@ -184,11 +184,53 @@ for (const arg of rest) {
   if (arg.startsWith("type:")) {
     /* Real key events, so React's onChange fires: setting `value` directly
        does not, and a controlled input would snap back. */
-    const [sel, ...text] = arg.slice(5).split("=")
-    const value = text.join("=")
-    await send("Runtime.evaluate", {
-      expression: `document.querySelector(${JSON.stringify(sel)})?.focus()`,
+    /**
+     * Split at the first `=` **outside** any brackets, not at the first `=`.
+     *
+     * `split("=")` was the first version and it cannot express the selector
+     * this probe most needs: `input[data-addrepo="path"]` contains an `=`, so
+     * the selector came out as `input[data-addrepo` and the value as
+     * `"path"]=/the/real/value`. The whole lot then went into whichever input
+     * that broken selector happened to match, which looked exactly like a UI
+     * bug - a path field containing a selector and a shell command.
+     */
+    const raw = arg.slice(5)
+    let depth = 0
+    let cut = -1
+    for (const [i, ch] of [...raw].entries()) {
+      if (ch === "[") depth++
+      else if (ch === "]") depth--
+      else if (ch === "=" && depth === 0) {
+        cut = i
+        break
+      }
+    }
+    if (cut === -1) throw new Error(`type: needs <selector>=<value>, got ${JSON.stringify(raw)}`)
+    const sel = raw.slice(0, cut)
+    const value = raw.slice(cut + 1)
+    /**
+     * Refuse to type when the selector matches nothing.
+     *
+     * `?.focus()` on a missing element is a no-op, so focus stayed on
+     * whatever was focused before and `Input.insertText` typed into *that*.
+     * Hit for real: a step aimed at a field inside a section the panel had not
+     * rendered yet appended a shell command to the path field above it, and
+     * the screenshot showed a path with a command glued to the end of it -
+     * indistinguishable from a UI bug, and the probe reported success.
+     */
+    const found = await send("Runtime.evaluate", {
+      returnByValue: true,
+      expression: `(() => {
+        const el = document.querySelector(${JSON.stringify(sel)})
+        if (el === null) return false
+        el.scrollIntoView({ block: "center" })
+        el.focus()
+        return document.activeElement === el
+      })()`,
     })
+    if ((found["result"] as { value?: unknown } | undefined)?.value !== true) {
+      throw new Error(`type: nothing matched ${sel}, so nothing was typed - the step before it may not have landed`)
+    }
     /* `insertText`, not a keyDown/char/keyUp triple: a `keyDown` carrying
        `text` inserts the character *and* so does the `char` that follows it,
        so the triple typed everything twice - `/home` arrived as `//hhoommee`.

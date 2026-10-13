@@ -4774,11 +4774,104 @@ test("a run in flight refuses a trial, which would share its working tree", asyn
   expect(res.body).toContain(live)
 })
 
-test("an unregistered project cannot have a command run in it", async () => {
+/**
+ * An unregistered path is allowed, **if and only if it passes the same check
+ * registration makes**. This is what wires `AddRepo`'s "Run it once": the
+ * button exists to prove a command works before the project is saved, so by
+ * construction there is no record to look it up in.
+ *
+ * It is a widening, so the reasoning is here rather than in a commit message:
+ *
+ * - It grants no new capability. Anything holding the token can register a
+ *   usable repo and then run a command in it, through this same `sh -c`. The
+ *   widening removes a round trip, not a boundary.
+ * - What it must not do is widen *where*. `requireUsableRepo` is the only
+ *   gate, and it is the same one registration uses - so the set of directories
+ *   a trial can run in is exactly the set a project can be registered at, and
+ *   not one path more. `/` and a home directory are both refused by it.
+ * - `POST /api/detect`'s precedent is deliberately not the argument. Detect is
+ *   read-only and running a command is not.
+ */
+test("an unregistered but usable repo can have a command tried in it", async () => {
+  const repo = await cleanRepo()
+  const store = await storeFile()
+  const l = await withTree(store)
+
+  const res = await runTest(l, { projectPath: repo, testCmd: "echo tried; exit 0" })
+  expect(res.status).toBe(200)
+  const out = JSON.parse(res.body) as { exitCode: number; stdout: string }
+  expect(out.exitCode).toBe(0)
+  expect(out.stdout).toContain("tried")
+
+  // Trying is not saving. The whole point is to find out before committing to
+  // it, so a trial that registered the project would defeat its own purpose.
+  expect(await loadProjects(store)).toEqual([])
+})
+
+test("an unregistered trial runs in the directory it named", async () => {
   const repo = await cleanRepo()
   const l = await withTree(await storeFile())
+  const res = await runTest(l, { projectPath: repo, testCmd: "pwd" })
+  expect((JSON.parse(res.body) as { stdout: string }).stdout.trim()).toBe(repo)
+})
+
+/**
+ * The refusal prose is the reason this goes through `requireUsableRepo` rather
+ * than a `stat`. `src/git.ts` names the deepest ancestor that does exist, which
+ * is the sentence that locates a typo - the production failure `AddRepo` was
+ * built for was a four-character mistake in a home directory answered with a
+ * sentence about git.
+ */
+test("an unregistered path that is not a usable repo is refused, in git's own words", async () => {
+  const l = await withTree(await storeFile())
+  const res = await runTest(l, { projectPath: "/nonexistent-aaa/bbb/ccc", testCmd: "exit 0" })
+
+  expect(res.status).toBe(400)
+  // Not a bare "no such project": the part a person can act on.
+  expect(res.body).toContain("/nonexistent-aaa/bbb/ccc")
+
+  // And the clause that locates the typo, which only appears when there is a
+  // meaningful ancestor to name - `/` is suppressed, because naming it tells
+  // nobody anything. Asserted on a path that has one.
+  const typo = await runTest(l, { projectPath: "/tmp/nonexistent-aaa/bbb", testCmd: "exit 0" })
+  expect(typo.status).toBe(400)
+  expect(typo.body).toContain("/tmp")
+  expect(typo.body).toContain("check the spelling")
+})
+
+/**
+ * The value no other test here produces, and the one that caught a real
+ * widening: `requireUsableRepo(".")` is **accepted**, resolving to whatever
+ * directory the server was launched from. So validating with that call alone
+ * would have let a trial run a command in kantan's own checkout - a directory
+ * `registerProject` refuses, because it runs `defaults` first and `defaults`
+ * owns the absolute-path rule.
+ *
+ * Both gates, in registration's order, is therefore the requirement. This test
+ * is what says so.
+ */
+test("a relative path is refused rather than resolved against the server's cwd", async () => {
+  const l = await withTree(await storeFile())
+  for (const projectPath of [".", "./", "src", "some/relative/path", ".."]) {
+    const res = await runTest(l, { projectPath, testCmd: "exit 0" })
+    expect({ projectPath, status: res.status }).toEqual({ projectPath, status: 400 })
+  }
+})
+
+test("a run in flight refuses a trial in an unregistered repo too", async () => {
+  // The reason is the working tree, not the record: a live run may be
+  // verifying its own work in that same checkout, and two suites writing one
+  // tree produce a failure neither of them caused. Nothing about that changes
+  // when the project happens not to be registered yet.
+  const repo = await cleanRepo()
+  const dir = await runsDir()
+  const live = "77777777-7777-4777-8777-777777777777"
+  const l = serve({ runsDir: dir, projectsFile: await storeFile(), liveRunIds: () => [live] })
+  await logNamingProject(dir, live, (await requireUsableRepo(repo)).root)
+
   const res = await runTest(l, { projectPath: repo, testCmd: "exit 0" })
-  expect(res.status).toBe(404)
+  expect(res.status).toBe(409)
+  expect(res.body).toContain(live)
 })
 
 /**

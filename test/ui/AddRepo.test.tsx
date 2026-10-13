@@ -1183,6 +1183,85 @@ describe("the test command", () => {
     expect(runs).toBe(1)
   })
 
+  /**
+   * **The command has to come out with the click.** This panel owns the field,
+   * so the shell cannot know what is in it - and a callback taking no argument
+   * leaves the shell with two bad options: run nothing, or run the command
+   * from somewhere else. There is no "somewhere else" here, because the whole
+   * point of this screen is that the project is not saved yet.
+   *
+   * It is the typed draft rather than what detection found, for the reason
+   * `POST /api/test` takes its command from the body: the control proves a
+   * command *before* it is trusted, so running anything but the string on
+   * screen would answer a question nobody asked and label it with the one
+   * they can see.
+   */
+  test("the click carries the command that is in the field", async () => {
+    const ran: string[] = []
+    await render(<api.AddRepo {...checked({ onRunTests: (cmd: string) => void ran.push(cmd) })} />)
+    await pickAccount("personal")
+
+    const field = one<HTMLInputElement>(CMD_FIELD)
+    await type(field, "bun run check")
+    await click(byText("button", ARTBOARD.runOnce))
+    expect(ran).toEqual(["bun run check"])
+
+    // Edited, then run again: the second click must not resend the first
+    // string, which is what a captured-once closure would do.
+    await type(field, "pytest -q")
+    await click(byText("button", ARTBOARD.runOnce))
+    expect(ran).toEqual(["bun run check", "pytest -q"])
+  })
+
+  /**
+   * A refusal is not a result, and this is where that rule has teeth.
+   *
+   * `runTestCommand` throws rather than folding a 409 or a 400 into an
+   * outcome, deliberately: a run in flight and a command that could not start
+   * are not exit codes, and returning either as one would print a number
+   * beside a command that never executed. So the phase has to exist, or the
+   * shell's only options are to swallow the refusal - leaving a button that
+   * looks dead, which is the exact defect this session has been clearing - or
+   * to invent an exit code, which is the one thing `CLAUDE.md` forbids
+   * outright: nothing may claim a verification it did not observe.
+   */
+  test("a refusal says why and prints no exit code, because nothing ran", async () => {
+    const why = "run 6666 is in flight in this repository, so nothing was run."
+    await render(
+      <api.AddRepo
+        {...checked({
+          onRunTests: () => {},
+          testRun: { phase: "refused", cmd: "bun test", why },
+        })}
+      />,
+    )
+    await pickAccount("personal")
+    await type(one<HTMLInputElement>(CMD_FIELD), "bun test")
+
+    expect(prose()).toContain(why)
+
+    /* No chip, no number, no tick: the command did not run, so there is no
+     * code to print. Asserted on the chip's own shape rather than on the
+     * substring "exit " - this section's helper text reads "kantan decides
+     * pass or fail from this command's exit code alone", so a substring check
+     * fails against the page's own prose and says nothing about the chip. */
+    const chip = all("span").find((el) => /^exit\s-?\d+$/.test((el.textContent ?? "").trim()))
+    expect(chip).toBeUndefined()
+  })
+
+  test("a refusal for a command that has since been edited is not shown", async () => {
+    // The same staleness rule the done phase has: a result belongs to the
+    // command it was asked about, and to no other string.
+    await render(
+      <api.AddRepo
+        {...checked({ onRunTests: () => {}, testRun: { phase: "refused", cmd: "bun test", why: "a stale refusal" } })}
+      />,
+    )
+    await pickAccount("personal")
+    await type(one<HTMLInputElement>(CMD_FIELD), "pytest -q")
+    expect(prose()).not.toContain("a stale refusal")
+  })
+
   test("a run reports its exit code, never a verdict of its own", async () => {
     await render(
       <api.AddRepo

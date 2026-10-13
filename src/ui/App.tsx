@@ -13,7 +13,7 @@ import { ProjectPanel, accountOptionsFor, type AccountOption } from "./ProjectPa
 import { StartPanel } from "./StartPanel.tsx"
 import { act, addTasks, detectPath, draftFeature, proposeTasks, registerProject, removeProject, removeTask, runTestCommand, startRun, summaryOf, taskKeyOf, updateProject, type RunView } from "./live.ts"
 import { useAction, usePlan, useRun, useTree } from "./useRun.ts"
-import { useAccounts, useNewTaskFile, useProjectSettings, useRunStart, useTaskRemoval } from "./actions.ts"
+import { useAccounts, useNewTaskFile, useProjectSettings, useRepoTrial, useRunStart, useTaskRemoval } from "./actions.ts"
 import type { RunPhase } from "../runlog.ts"
 import type { AskingPhase } from "./Gate.tsx"
 
@@ -241,6 +241,7 @@ export function App() {
   const runStart = useRunStart()
   const removal = useTaskRemoval(reload, selected, setSelected)
   const newFile = useNewTaskFile(reload)
+  const trial = useRepoTrial()
   /* Polls only while its panel is open: a rate-limit reading changes when a
      run emits one, so re-reading the logs for a screen nobody is looking at
      buys nothing. */
@@ -685,13 +686,21 @@ export function App() {
               await registerProject(draft)
               setPanel(null)
               setRepoPath("")
+              trial.reset()
             })
           }}
           onCancel={() => {
             setPanel(null)
             setRepoPath("")
+            trial.reset()
           }}
           accounts={accountOptions}
+          /* "Run it once", which was drawn and documented and inert because
+             `POST /api/test` wanted a registered project - and nothing is
+             registered on this screen yet. The command comes from the panel's
+             own field, since that is the string being proved. */
+          onRunTests={(cmd) => trial.start(repoPath, cmd)}
+          testRun={trial.run}
         />
       )}
       {nothingSelected && <Empty kind="no-selection" onAddProject={() => setPanel({ kind: "addRepo" })} />}

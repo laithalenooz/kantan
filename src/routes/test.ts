@@ -10,9 +10,16 @@
  *
  * It grants no privilege the caller did not have: anything holding the token
  * can PATCH any `testCmd` and start a run, through the same `sh -c`.
+ *
+ * Since `AddRepo`'s "Run it once" was wired, the project need not be
+ * registered - but an unregistered path has to pass `requireUsableRepo`, the
+ * same gate registration uses. See `runTestCommand` for why that is the whole
+ * of the widening.
  */
 
-import { loadProjects } from "../projects"
+import { defaults, loadProjects } from "../projects"
+import type { Project } from "../projects"
+import { requireUsableRepo } from "../git"
 import { runTests } from "../testrun"
 import type { RouteContext } from "../http/context"
 import { badBody, nonEmptyString, parseBody, readBody } from "../http/body"
@@ -71,8 +78,58 @@ export async function runTestCommand(req: Request, ctx: RouteContext): Promise<R
   }
 
   const registered = await loadProjects(projectsFile)
-  const project = registered.find((p) => p.path === projectPath)
-  if (project === undefined) return refuse(404, "refused: that project is not registered")
+  const known = registered.find((p) => p.path === projectPath)
+
+  /**
+   * An unregistered path is allowed, **and `requireUsableRepo` is the only
+   * thing that allows it** - the same gate registration uses, so the set of
+   * directories a trial can run in is exactly the set a project can be
+   * registered at and not one path more.
+   *
+   * This is what makes `AddRepo`'s "Run it once" work: that button exists to
+   * prove a command before the project is saved, so by construction there is
+   * no record to find. It grants no capability the caller lacked - anything
+   * holding the token can register a usable repo and then run a command in it,
+   * through this same `sh -c` - so what it removes is a round trip, not a
+   * boundary. `POST /api/detect`'s precedent is deliberately *not* the
+   * argument here: detect is read-only and running a command is not.
+   *
+   * Its refusals are forwarded as written, because they are the whole reason
+   * this is not a `stat`: `src/git.ts` names the deepest ancestor that does
+   * exist, and that sentence is what locates a typo. The failure `AddRepo` was
+   * built for was four characters wrong in a home directory, answered with a
+   * sentence about git.
+   */
+  let project: Project
+  if (known !== undefined) {
+    project = known
+  } else {
+    try {
+      /**
+       * **Both gates, in registration's order**, and the order is the
+       * load-bearing part rather than a style choice.
+       *
+       * `defaults` first, because it owns the rule that a path must be
+       * absolute - and `requireUsableRepo` does not. Probed: it *accepts*
+       * `"."`, resolving it to whatever directory the server was launched
+       * from, so validating with it alone would let `{projectPath: "."}` run a
+       * command in kantan's own checkout. `registerProject` refuses that, and
+       * a trial that accepted what registration refuses would have widened
+       * where a command can run - which is the one thing this route may not do.
+       *
+       * Then `repo.root` rather than the string that arrived, for the reason
+       * registration keeps it: the store is keyed on `path` and normalises
+       * lexically only, so two symlinked spellings of one repo are one
+       * project, and the live-run check below compares against the canonical
+       * spelling a run's log records.
+       */
+      const candidate = defaults({ path: projectPath, testCmd })
+      const repo = await requireUsableRepo(candidate.path)
+      project = { ...candidate, path: repo.root }
+    } catch (cause) {
+      return refuse(400, `refused: ${(cause as Error).message}`)
+    }
+  }
 
   const live = await liveRunIdFor(ctx, project.path)
   if (live !== null) {
