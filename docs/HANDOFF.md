@@ -1262,7 +1262,7 @@ output, so anything else is new.
 ### The artboards are an INTERACTIVE prototype, and mirrors lose that
 
 `docs/design/*.dc.html` are mirrors of
-`https://claude.ai/artifact/8bUgEYyZnhurjGHMjWjNvE`. Eight of its nine boards
+the design canvas. Eight of its nine boards
 carry `is_interactive: true` in `docs/design/canvas.json`, and they link to each
 other: `Empty -> AddRepo -> Start`, `Start -> {AddTasks, Project, AddRepo,
 Return}`, `AddTasks -> {Start, Project, AddRepo}`, `Project -> AddRepo`.

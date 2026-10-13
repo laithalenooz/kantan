@@ -205,11 +205,14 @@ const dir = join(repoRoot, ".kantan-test", "<suite>", `${name}-${process.pid}`)
 
 ## Commits
 
-Conventional-ish subject, body explaining *why*. End with:
+Conventional-ish subject, body explaining *why* — the decision and what the
+other option would have cost, because the comment and the message are where
+that survives.
 
-```
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
-```
+**No attribution trailers and no tool links.** Not a style preference: a
+message is read by whoever is bisecting, and a trailer naming the tool that
+typed it tells them nothing they can act on. The history is the project's, not
+a transcript of how it was produced.
 
 ## Where things are
 

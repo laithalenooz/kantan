@@ -5,6 +5,8 @@
 A local web UI that drives the real `claude` CLI through one coding task at a time:
 plan, you approve, then implement and test until the tests pass.
 
+**[kantan.sh](https://kantan.sh)** · [the landing page's source](https://github.com/laithalenooz/kantan-landing)
+
 > **Status: it works, and it is rough in places.** The pipeline runs end to end — plan,
 > gate, implement, test, commit — against the real `claude` binary, from one process on one
 > port. 75 modules, 2591 tests, one of them skipped. [Rough edges](#rough-edges) lists what is still unfinished,

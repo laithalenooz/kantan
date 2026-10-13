@@ -4,6 +4,8 @@
 screenshot inventory, the design tokens, and a copy bank. Everything in it is
 true of the shipped code; every number was measured.
 
+The site is **[kantan.sh](https://kantan.sh)**.
+
 **The page itself lives in its own repo**, `kantan-landing`, and is generated
 from the `Landing` artboard in this project's design canvas — so the canvas is
 the source and a revision there is one command away from the live page. This

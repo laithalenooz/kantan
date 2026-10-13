@@ -1,8 +1,9 @@
 # kantan — visual design
 
-**Source of truth:** the design canvas at
-`https://claude.ai/artifact/8bUgEYyZnhurjGHMjWjNvE` — five artboards, mirrored into
-`docs/design/` so the repo does not depend on a link.
+**Source of truth:** the artboards in `docs/design/`, mirrored from the design
+canvas they were drawn in. The mirror is the authority here on purpose: a repo
+whose design lives behind a private link cannot be read by anyone who does not
+hold it.
 
 | Artboard | Shows |
 |---|---|

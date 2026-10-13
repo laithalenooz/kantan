@@ -12,6 +12,13 @@
 
     <title>kantan</title>
 
+    <!-- The brand mark, inline. A data URI rather than a file because this
+         server has no route that serves one: every path goes through the
+         Host, Origin and token chain by design, and adding a public file
+         route for an icon would be the one exception to that. It also
+         means the browser never requests /favicon.ico, which would 404. -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='9' fill='%23111216'/><circle cx='16' cy='16' r='6' fill='%23ff6a1a'/></svg>">
+
     <!-- Fonts are self-hosted from src/ui/fonts and declared with @font-face in
          tokens.css. Deliberately no Google Fonts <link>: it is a third-party
          request on every load of a tool that binds to loopback precisely so it

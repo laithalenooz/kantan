@@ -171,6 +171,7 @@ const DEFAULT_STREAM_KEEP_ALIVE_MS = 5_000
  */
 const INDEX_STUB = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>kantan</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='9' fill='%23111216'/><circle cx='16' cy='16' r='6' fill='%23ff6a1a'/></svg>">
 <style>body{font:15px/1.6 ui-sans-serif,system-ui,sans-serif;margin:3rem auto;max-width:34rem;padding:0 1rem;color:#1c1917}
 code{background:#f5f5f4;border-radius:4px;padding:.15em .4em;font-size:.92em}</style></head>
 <body><h1>kantan is running</h1>
