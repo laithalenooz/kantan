@@ -277,11 +277,15 @@ Maturity, framed the way the README frames it: **"it works, and it is rough in
 places."** More credible than a claim of polish.
 
 - Pipeline runs end to end against the real binary, one process, one port.
-- **73 modules, 2,576 tests**, one skipped — the live smoke test, gated so it
+- **75 modules, 2,591 tests**, one skipped — the live smoke test, gated so it
   cannot spend money in CI.
+  *These four figures move whenever the code does — they were 73 / 2,576 /
+  2,695 / 731 KB a few hours before this line was written. Re-measure before
+  publishing: `find src -name '*.ts' -o -name '*.tsx' | wc -l`, `bun test`,
+  `wc -l src/run.ts`, `bun run build`.*
 - Rough edges, listed by name rather than hidden: the usage view only sees what
   kantan's own runs reported; a second account must be named by hand once;
-  `src/run.ts` is 2,695 lines of one state machine; one 731 KB bundle, no code
+  `src/run.ts` is 2,817 lines of one state machine; one 741 KB bundle, no code
   splitting; an event a future CLI adds renders as raw JSON until someone gives
   it a row.
 - **It has only ever been run on one machine** (WSL2). No clone-build-run

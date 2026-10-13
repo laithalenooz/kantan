@@ -7,7 +7,7 @@ plan, you approve, then implement and test until the tests pass.
 
 > **Status: it works, and it is rough in places.** The pipeline runs end to end — plan,
 > gate, implement, test, commit — against the real `claude` binary, from one process on one
-> port. 73 modules, 2562 tests, one of them skipped. [Rough edges](#rough-edges) lists what is still unfinished,
+> port. 75 modules, 2591 tests, one of them skipped. [Rough edges](#rough-edges) lists what is still unfinished,
 > by name, including the parts that are merely hidden rather than done.
 >
 > The hard-won facts about `claude -p` are in [`docs/probes/`](docs/probes/), and every
@@ -209,11 +209,11 @@ afternoon and wonder whether you had broken it.
   not guess the last part: billing a client from the wrong account is the mistake the whole
   design is arranged to prevent. A profile kept outside your home directory is not found, and
   you paste its path instead.
-- **`src/run.ts` is 2695 lines.** It is one state machine, and that is measured rather than
-  excused: 34 of its 67 functions mutate the same `ActiveRun`, so a split would be two files
+- **`src/run.ts` is 2817 lines.** It is one state machine, and that is measured rather than
+  excused: most of its functions mutate the same `ActiveRun`, so a split would be two files
   sharing mutable state instead of one file holding it. The two groups that *were* separable
   came out, into `src/run/ladder.ts` and `src/run/session.ts`.
-- **One JS bundle, 731 KB, no code splitting.** Fine on loopback, which is the only place
+- **One JS bundle, 741 KB, no code splitting.** Fine on loopback, which is the only place
   this runs. Vite says so on every build.
 - **A future CLI event will render as raw JSON for a while.** That is the designed failure
   direction rather than a bug — an event this version does not know becomes a visible
