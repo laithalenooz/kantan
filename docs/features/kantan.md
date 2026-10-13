@@ -21,7 +21,7 @@ underneath.
       defect it exists to prevent. `Project` carries a `configDir` and nothing maps one
       to a kind. The mapping has to be something the user states, not something a path
       is parsed for.
-- [ ] T3 Render `vcs_state_changed` instead of an unknown row
+- [x] T3 Render `vcs_state_changed` instead of an unknown row
       A real run emits it twice — the CLI reporting that the agent committed, carrying
       `{kind:"commit", branch, cwd, uuid, session_id}`. The fixtures predate it, so
       `src/stream.ts` classifies it as `unknown` and the log shows a raw blob. Needs an

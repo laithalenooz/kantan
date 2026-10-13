@@ -895,12 +895,25 @@ Event types seen, by count: `system/hook_started` 18, `system/hook_response`
 `system/thinking_tokens` 3, `system/init` 2, `rate_limit_event` 2,
 **`system/vcs_state_changed` 2**, `result/success` 2.
 
-**`system/vcs_state_changed` is not in the fixtures and `src/stream.ts` does
-not know it.** It carries `{kind:"commit", branch, cwd, uuid, session_id}` -
-the CLI reporting that the agent committed. It currently classifies as
-`unknown`, which is the designed failure direction (visible, not dropped), but
-it is a *useful* event being shown as a raw blob. Giving it an `Event` kind
-means a `Row.tsx` renderer too, so it is a task, not a patch.
+**`system/vcs_state_changed` was not in the fixtures - BUILT.** It carries
+`{kind:"commit", branch, cwd, uuid, session_id}`, the CLI reporting that the
+agent committed, and it classified as `unknown` so the log showed a raw blob
+for the one event that says a human's work was saved.
+
+Two things to know if another CLI event gets a variant:
+
+- **The CLI's field is called `kind` and so is `Event`'s discriminant.** It is
+  carried as `change`. Keeping the name would make `event.kind` answer
+  `"commit"` for one variant and every switch on it would be wrong in a way
+  TypeScript cannot catch.
+- **The change word is carried through, not enumerated**, in both the parser
+  and the renderer. Matching only `"commit"` would send a future checkout or
+  merge back to `unknown` - the raw-blob defect, reintroduced for its
+  successor. A word the UI has no verb for is still a legible row.
+
+`tsc` is what found the renderer: the switch in `Row.tsx` is exhaustive, so the
+variant broke the build until its case existed. Any new `Event` kind gets that
+for free.
 
 The other `unknown` is a `text` block inside a **`user`** message - skill
 content being injected. That one is deliberate: `contentBlock` reports
@@ -1295,23 +1308,29 @@ unreachable, and in every case the component was fine and the route did not
 exist. `POST /api/detect` was missing for long enough that adding a project
 answered a raw 400.
 
-The one piece still open, and it is a decision rather than work:
+The fourth - **`AddRepo`'s "Run it once"** - was weighed as a decision and then
+built, on the user's instruction. What it cost is worth keeping, because the
+condition recorded here turned out to be easy to satisfy wrongly:
 
-- **`AddRepo`'s "Run it once" has no route, and should not get one yet.**
-  `POST /api/test` requires a *registered* project; this button wants to try a
-  command on a path that is not registered. `AddRepo.tsx` hides it when the
-  prop is absent, so there is no broken control on screen - the cheap
-  direction. `POST /api/detect`'s precedent does **not** carry: detect is
-  read-only and `sh -c` is not, so "we already widened one" is the wrong
-  argument. And the capability is reachable in two calls today - register, then
-  test - so widening buys a round trip, not a new power, which makes it a
-  convenience to weigh rather than a gap to close.
-  If it is built, the path must go through `requireUsableRepo` exactly as
-  registration does, and the live-run check must stay: `liveRunIdFor` is
-  already keyed on the path rather than the record, so it carries over
-  unchanged. Do **not** close this by running the *stored* command instead -
-  that answers a question nobody asked and labels the result with the command
-  on screen, which is the one reading that could get a bad command saved.
+- **"The same gate registration uses" means the same gates in the same
+  order.** `registerProject` runs `defaults` first, which owns the rule that a
+  path must be absolute, and only then `requireUsableRepo`. The other order
+  looks equivalent and is not: probed, **`requireUsableRepo(".")` is
+  accepted**, resolving to whatever directory the server was launched from. So
+  validating with that call alone let `{projectPath: "."}` run a command in
+  kantan's own checkout - a directory registration refuses - which is exactly
+  the "accepts what registration refuses" widening this entry said was not
+  allowed. Anything else that validates a repo path from a request body
+  inherits this: `requireUsableRepo` is not an absoluteness check.
+- The live-run 409 carried over unchanged, as predicted: `liveRunIdFor` is
+  keyed on the path rather than the record.
+- The command still comes from the body and never from the store.
+- `onRunTests` had to start taking the command. It took none, and the panel
+  owns that field, so the shell had nothing to send.
+- **`TestRun` gained a `refused` phase.** `runTestCommand` throws on a 409 or a
+  400 because neither is a test result, so without a phase for it the shell
+  could only swallow the refusal - a button that looks dead - or invent an exit
+  code, which would claim a verification nobody observed.
 
 The original note, for the reasoning behind each:
 

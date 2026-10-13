@@ -7,7 +7,7 @@ plan, you approve, then implement and test until the tests pass.
 
 > **Status: it works, and it is rough in places.** The pipeline runs end to end — plan,
 > gate, implement, test, commit — against the real `claude` binary, from one process on one
-> port. 71 modules, 2508 tests, one of them skipped. [Rough edges](#rough-edges) lists what is still unfinished,
+> port. 71 modules, 2527 tests, one of them skipped. [Rough edges](#rough-edges) lists what is still unfinished,
 > by name, including the parts that are merely hidden rather than done.
 >
 > The hard-won facts about `claude -p` are in [`docs/probes/`](docs/probes/), and every
@@ -142,14 +142,6 @@ rerunnable, so you can check rather than trust.
 Listed rather than hidden, because every one of these is something you could hit in an
 afternoon and wonder whether you had broken it.
 
-- **One task in the backlog renders as a raw blob.** A real run emits
-  `system/vcs_state_changed` twice — the CLI reporting that the agent committed. The stream
-  fixtures predate it, so `src/stream.ts` files it as `unknown` and the log row shows you the
-  JSON. Harmless, visible, and T3 in [`docs/features/kantan.md`](docs/features/kantan.md).
-- **"Run it once" in the add-repository panel is hidden, not built.** `POST /api/test` proves
-  a test command works, but it requires a *registered* project, and that button wants to try
-  one before registering. The control hides itself rather than erroring. You can still do it
-  in two steps: add the repo, then use "Run it now" in its settings.
 - **The account-usage view only sees what kantan's own runs reported.** There is no usage
   subcommand on the CLI to ask, so the figures come from `rate_limit_event` messages found in
   past run logs. Between runs it can only tell you what it last saw and when — and it says
@@ -161,6 +153,11 @@ afternoon and wonder whether you had broken it.
   came out, into `src/run/ladder.ts` and `src/run/session.ts`.
 - **One JS bundle, 731 KB, no code splitting.** Fine on loopback, which is the only place
   this runs. Vite says so on every build.
+- **A future CLI event will render as raw JSON for a while.** That is the designed failure
+  direction rather than a bug — an event this version does not know becomes a visible
+  `unknown` row with its JSON selectable, instead of being dropped — but it does mean the log
+  will show you a blob the first time Anthropic adds a message type. Tell us, and it gets a
+  row of its own, as `system/vcs_state_changed` did.
 - **The implementation plan's `DONE` markers are stale.** Two of thirty-two tasks are marked,
   and far more than two are done.  [`docs/HANDOFF.md`](docs/HANDOFF.md) is the file that was
   kept current; trust it over the plan.
