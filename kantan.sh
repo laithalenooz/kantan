@@ -62,6 +62,17 @@ done
 say()  { printf '\033[1;38;5;208m▸\033[0m %s\n' "$1"; }
 warn() { printf '\033[1;31m✕\033[0m %s\n' "$1" >&2; }
 
+# The first line is the problem, the rest is what to do about it. Added because
+# the four steps further down could fail for reasons outside this script and
+# said nothing: `set -e` killed it on the tool's raw message. Found by
+# docs/probes/install-rehearsal.sh, which tripped the clone branch by accident.
+die() {
+  warn "$1"
+  shift
+  for line in "$@"; do printf '  %s\n' "$line" >&2; done
+  exit 1
+}
+
 need() {
   command -v "$1" >/dev/null 2>&1 && return 0
   warn "kantan needs $1, which is not on your PATH."
@@ -77,6 +88,26 @@ need bun  'curl -fsSL https://bun.sh/install | bash     # standalone, not via np
 # Node is needed for exactly one step - Vite, which builds the interface.
 need node 'Install Node 20 or newer; it is needed only to build the interface.'
 
+# Advisory, never a refusal, and the asymmetry is why. `apt install nodejs` on
+# Ubuntu 24.04 and on Debian gives Node 18, which passes the check above and
+# then fails Vite at the very last step - measured, which is the only reason
+# this warning exists: docs/probes/install-rehearsal.sh reached "Building the
+# interface" and died there on v18.19.1.
+#
+# The dimension is what `node --version` prints. Its values include v18.19.1,
+# v20.x, v22.x, an odd-numbered build, and - for a `node` that is a wrapper, or
+# not Node at all - something with no version in it. Refusing a good node blocks
+# an install that would have worked and leaves no way round it; letting a bad
+# one through costs a build failure that already names the cause and says the
+# rest is installed. So this never refuses, and when it cannot read a major
+# version it says nothing rather than guessing.
+node_major=$(node --version 2>/dev/null | sed -n 's/^v\([0-9][0-9]*\)\..*/\1/p')
+if [ -n "$node_major" ] && [ "$node_major" -lt 20 ]; then
+  warn "node here is $(node --version), and Vite needs 20 or newer."
+  printf '  Carrying on, because node builds the interface and nothing else: the\n' >&2
+  printf '  clone and the install will work and only the last step will fail.\n' >&2
+fi
+
 if ! command -v claude >/dev/null 2>&1; then
   warn "The claude CLI is not on your PATH."
   printf '  kantan drives the real binary, so it cannot do anything without it.\n' >&2
@@ -86,19 +117,37 @@ fi
 
 if [ -d "$DIR/.git" ]; then
   say "Updating the copy in $DIR."
-  git -C "$DIR" pull --ff-only
+  git -C "$DIR" pull --ff-only || die \
+    "Could not update the copy in $DIR." \
+    "git's message is above. A refused fast-forward usually means commits of" \
+    "your own are sitting there." \
+    "See them:      cd $DIR  &&  git log --oneline @{u}..HEAD" \
+    "Or start over: rm -rf $DIR, then run this again."
 else
   say "Cloning into $DIR."
-  mkdir -p "$(dirname "$DIR")"
-  git clone --depth 1 "$REPO" "$DIR"
+  mkdir -p "$(dirname "$DIR")" || die \
+    "Could not create $(dirname "$DIR")." \
+    "Check the permissions, or pass --dir=PATH pointing somewhere you can write."
+  git clone --depth 1 "$REPO" "$DIR" || die \
+    "Could not clone $REPO." \
+    "git's message is above. The usual causes are no network, a proxy that needs" \
+    "http.proxy set, and a half-written $DIR left by an earlier attempt - if that" \
+    "directory exists and is not a repository, remove it and run this again."
 fi
 
 cd "$DIR"
 say "Installing dependencies."
-bun install
+bun install || die \
+  "bun install failed in $DIR." \
+  "bun's message is above; it is usually the registry or a proxy in the way." \
+  "Nothing is broken on your machine - run this again when it can reach one."
 
 say "Building the interface."
-bun run build
+bun run build || die \
+  "The interface did not build." \
+  "Vite needs Node 20 or newer, and node here reports $(node --version 2>/dev/null || echo unknown)." \
+  "That is the usual cause, and it is the only step node is needed for: the" \
+  "server and the tests run on bun, so everything else is already installed."
 
 printf '\n'
 say "Installed in $DIR"
