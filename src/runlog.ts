@@ -222,6 +222,25 @@ export interface PhaseRecord {
    * render the previous turn's prose as the reason the run stopped.
    */
   detail?: string
+  /**
+   * One sentence a **model** wrote about why the run is parked here.
+   *
+   * Its own field rather than part of `detail`, and that separation is the
+   * point. `detail` is the machine's prose - see its comment directly above,
+   * which exists because a `stalled` park has no agent text behind it. Merging
+   * a model's sentence into it would make the two indistinguishable to every
+   * reader, and a surface that cannot tell who wrote a line cannot mark it.
+   *
+   * So the provenance is structural, the way `EndRecord.verifiedBy` is: a
+   * reader that does not know this field renders `detail` alone and loses a
+   * convenience, and one that does knows to label it as the agent's words.
+   *
+   * **The agent writes it; it decides nothing.** Whether the run is stalled is
+   * the signature hash's answer, and `reason` above is what every surface
+   * branches on. Absent means no summary was available - the model was down,
+   * or there was nothing to read - never that the state is different.
+   */
+  agentSaid?: string
 }
 
 export interface TestRecord {

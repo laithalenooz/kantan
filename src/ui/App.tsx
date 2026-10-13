@@ -12,6 +12,7 @@ import { AddTasks } from "./AddTasks.tsx"
 import { ProjectPanel, accountOptionsFor, type AccountOption } from "./ProjectPanel.tsx"
 import { StartPanel } from "./StartPanel.tsx"
 import { NothingToShow } from "./NothingToShow.tsx"
+import { AgentNote } from "./AgentNote.tsx"
 import { act, addTasks, detectPath, draftFeature, proposeTasks, recordAccount, registerProject, removeProject, removeTask, runTestCommand, startRun, taskKeyOf, updateProject, type RunView } from "./live.ts"
 import { useAction, usePlan, useRun, useTree } from "./useRun.ts"
 import { useAccounts, useNewTaskFile, useProjectSettings, useRepoTrial, useRunStart, useTaskRemoval } from "./actions.ts"
@@ -930,6 +931,15 @@ export function App() {
         {startPanel !== null && <StartPanel {...startPanel} />}
 
         {gate !== null && <Gate {...gate} />}
+
+        {/* A model's sentence about why this run stalled, when one was
+            recorded. Rendered beside the state rather than inside it: the
+            stall itself is the signature hash's answer and the footer below
+            says so, and this only adds what broke. Marked, because a model
+            wrote it. */}
+        {view?.waiting?.reason === "stalled" && view.waiting.agentSaid !== null && (
+          <AgentNote text={view.waiting.agentSaid} className="mb-4" />
+        )}
 
         {/* Keyed by run, as Stream's rows are: the entrance is keyed on entry
             ids and a replayed log must reconcile rather than re-animate. */}

@@ -35,6 +35,20 @@ export interface Waiting {
    */
   detail: string | null
   /**
+   * One sentence a **model** wrote about why the run is parked, or `null`.
+   *
+   * Separate from `detail` because `detail` is already two different things
+   * depending on `reason` - the agent's own question for a `question` park,
+   * the machine's prose for a `stalled` or `blocked` one - and a third
+   * meaning in the same field would leave no way to label it. A surface that
+   * cannot tell who wrote a line cannot mark it as the agent's.
+   *
+   * `null` means no summary was recorded: the model was unavailable, or a
+   * resumed run had too few outputs to summarise. Never that the state differs
+   * - `reason` is the only thing anything branches on.
+   */
+  agentSaid: string | null
+  /**
    * When the run parked, epoch ms, or `null` for a log written before
    * `PhaseRecord.at` existed.
    *
@@ -314,7 +328,12 @@ export function foldRun(runId: string, records: readonly RunRecord[]): RunView {
         if (record.state === "waiting") {
           const reason: WaitReason = record.reason ?? "gate"
           waitId = waitIdFor(runId, i)
-          waiting = { reason, detail: record.detail ?? null, sinceMs: record.at ?? null }
+          waiting = {
+            reason,
+            detail: record.detail ?? null,
+            agentSaid: record.agentSaid ?? null,
+            sinceMs: record.at ?? null,
+          }
 
           // `park` is called with the phase that **ran**, not the phase that
           // waits, and design §2 writes the gate as `plan -> waiting(gate)`:

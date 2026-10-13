@@ -19,6 +19,9 @@ import {
 } from "./git"
 import type { Repo, RunLock } from "./git"
 import { permissionDenials, describeDenials } from "./permissions"
+import { askHaiku } from "./draft"
+import type { Ask } from "./draft"
+import { STALL_RUNS, summarizeStall } from "./summarize"
 import { stateDir } from "./statedir"
 import {
   answerPrompt,
@@ -149,6 +152,18 @@ export interface StartRunOptions {
   task: { ref: string | null; text?: string; line?: number }
   /** Default `~/.kantan/runs`. A test passes its own. */
   runsDir?: string
+  /**
+   * How a stall reaches a model for its one explanatory sentence.
+   *
+   * Injectable for the reason `RouteContext.ask` is: without it the only way
+   * to exercise the stall summary is to spawn the real `claude` and bill an
+   * account. The default is `askHaiku`, which goes through `CLAUDE_BIN` - so
+   * every test that already substitutes the fake binary is covered by that
+   * substitution rather than by remembering this field.
+   *
+   * Nothing on the run's decision path reads its answer. See `stallSentence`.
+   */
+  ask?: Ask
   /** Overrides `project.budgetUsd` for this run. */
   budgetUsd?: number
   /** The run id, for a caller that has already minted one. */
@@ -181,6 +196,19 @@ export interface ActionOptions {
   runId: string
   project: Project
   runsDir?: string
+  /**
+   * How a stall reaches a model for its one explanatory sentence.
+   *
+   * Injectable for the reason `RouteContext.ask` is: without it the only way
+   * to exercise the stall summary is to spawn the real `claude` and bill an
+   * account. The default is `askHaiku`, which goes through `CLAUDE_BIN` - so
+   * every test that already substitutes the fake binary is covered by that
+   * substitution rather than by remembering this field.
+   *
+   * Nothing on the run's decision path reads its answer. See `stallSentence`.
+   */
+  ask?: Ask
+
   /**
    * Called once the transition has been accepted: the run registered, the
    * branch taken and the first child spawned - or the action refused.
@@ -304,8 +332,23 @@ interface ActiveRun {
   spent: number
   /** The implement phase's current level, raised one step per stall. */
   effort: Effort
+  /** How `stallSentence` reaches a model. Carried so a resumed run has it too. */
+  ask: Ask
   /** Consecutive identical failure signatures at the current effort. */
   signatures: string[]
+  /**
+   * The last `STALL_RUNS` failing test outputs, newest last.
+   *
+   * In memory only and deliberately not in the log: a `test` record carries
+   * the exit code and the signature, not the bytes, and putting test output in
+   * there would grow every run's log for something one park reads once.
+   *
+   * It exists so a stall can be **summarised from what actually failed**. A
+   * resumed run starts with none, so a run that resumes and stalls on its
+   * first failure gets no summary - which `summarizeStall` refuses to produce
+   * from fewer than three anyway, rather than inventing one.
+   */
+  failedOutputs: string[]
   /** Test runs so far in this run, for `TestRecord.attempt`. */
   attempt: number
   /** The phase the run is in, which is what a stop reports and what a resume
@@ -555,6 +598,8 @@ export async function startRun(options: StartRunOptions): Promise<RunResult> {
       spent: 0,
       effort: project.implementEffort,
       signatures: [],
+      failedOutputs: [],
+      ask: options.ask ?? askHaiku,
       attempt: 0,
       phase: "plan",
       session: null,
@@ -786,6 +831,15 @@ async function park(
   phase: RunPhase,
   reason: WaitReason,
   detail: string,
+  /**
+   * One sentence a model wrote about why the run is here.
+   *
+   * Separate from `detail`, which is the machine's prose, so a surface can
+   * mark the agent's words as the agent's. Optional because most parks have no
+   * agent sentence and none of them needs one: `reason` is what every reader
+   * branches on, and this only ever adds a line beside it.
+   */
+  agentSaid?: string,
 ): Promise<RunResult> {
   run.phase = phase
   await run.log.append({
@@ -802,6 +856,7 @@ async function park(
     // text behind them, so a restarted server would otherwise render the
     // previous turn's prose as the reason the run stopped.
     ...(detail === "" ? {} : { detail }),
+    ...(agentSaid === undefined || agentSaid === "" ? {} : { agentSaid }),
   })
   return result(run, { kind: "waiting", reason, detail })
 }
@@ -1286,8 +1341,37 @@ async function implementLoop(run: ActiveRun, first: ImplementTurn | null): Promi
         "refine",
         "stalled",
         `the same failure signature three times at effort ${run.effort}, which is the top of the ladder, so kantan stopped rather than raising further: design §3.4 excludes \`max\` because it measures worse than \`xhigh\`. The last test output is in the run log.`,
+        await stallSentence(run),
       )
     }
+  }
+}
+
+/**
+ * One sentence about why this run stalled, or `undefined`.
+ *
+ * **Additive, and it must never fail a run.** `summarizeStall` throws rather
+ * than return an empty line - its own contract - and every one of those throws
+ * is swallowed here: a stall is a rest point a human has to look at, and losing
+ * the whole park because a model was rate limited would turn a convenience into
+ * an outage. The machine's own `detail` and the raw output in the log are still
+ * there, which is why this can be dropped with nothing lost but a line.
+ *
+ * **It decides nothing.** Whether the run is stalled is the signature hash's
+ * answer, taken before this is called; `reason: "stalled"` is what every
+ * surface branches on. This only writes prose into `agentSaid`, where a reader
+ * knows to label it as the agent's words.
+ */
+async function stallSentence(run: ActiveRun): Promise<string | undefined> {
+  try {
+    const said = await summarizeStall(run.failedOutputs, run.ask)
+    return said.summary
+  } catch (cause) {
+    /* To the terminal, not the log: a missing summary is not a fact about the
+       run, and a `warning` in its record would make readers think something
+       about the *task* went wrong. */
+    console.error(`run ${run.runId}: no stall summary available:`, (cause as Error).message)
+    return undefined
   }
 }
 
@@ -1589,6 +1673,11 @@ async function afterFailure(run: ActiveRun, failed: Verified): Promise<Implement
   const stepped = stepLadder({ effort: run.effort, signatures: run.signatures }, failed.signature)
   run.effort = stepped.state.effort
   run.signatures = stepped.state.signatures
+
+  /* Kept so a stall can be summarised from the failures themselves. Bounded to
+     exactly what a stall is, because an unbounded list of test outputs on a
+     long run is a slow leak, and nothing needs the fourth-oldest one. */
+  run.failedOutputs = [...run.failedOutputs, testOutputFor(failed.outcome)].slice(-STALL_RUNS)
 
   const prompt = refinePrompt({
     task: run.taskSpec,
@@ -2074,6 +2163,13 @@ async function rehydrate(options: ActionOptions): Promise<ActiveRun> {
       spent: folded.spent,
       effort: ladder.effort,
       signatures: ladder.signatures,
+      ask: options.ask ?? askHaiku,
+      /* Empty on resume, by design: the outputs are not in the log, so a run
+         that resumes and stalls on its first failure has nothing to summarise
+         from - and `summarizeStall` refuses fewer than three rather than
+         inventing a sentence. The ladder's *signatures* do survive, because
+         they are what decides whether a stall happened at all. */
+      failedOutputs: [],
       attempt: folded.attempt,
       phase: folded.lastPhase?.phase ?? "plan",
       session: null,
@@ -2484,6 +2580,19 @@ export interface RunnerOptions {
   projectsFile?: string
   /** Default `~/.kantan/runs`. */
   runsDir?: string
+  /**
+   * How a stall reaches a model for its one explanatory sentence.
+   *
+   * Injectable for the reason `RouteContext.ask` is: without it the only way
+   * to exercise the stall summary is to spawn the real `claude` and bill an
+   * account. The default is `askHaiku`, which goes through `CLAUDE_BIN` - so
+   * every test that already substitutes the fake binary is covered by that
+   * substitution rather than by remembering this field.
+   *
+   * Nothing on the run's decision path reads its answer. See `stallSentence`.
+   */
+  ask?: Ask
+
   /** Called when a transition is accepted, for a caller that wants to know;
    * the accepted callback is what each action races internally. */
   onAccepted?: () => void
@@ -2602,6 +2711,7 @@ export function createRunner(options: RunnerOptions = {}): Runner {
             accepted,
             ...(request.allowDirty === true ? { allowDirty: true } : {}),
             ...(runsDir === undefined ? {} : { runsDir }),
+            ...(options.ask === undefined ? {} : { ask: options.ask }),
           })
         },
         () => ({ ok: true as const, runId }),
@@ -2616,6 +2726,7 @@ export function createRunner(options: RunnerOptions = {}): Runner {
             project: await projectForRun(runId),
             accepted,
             ...(runsDir === undefined ? {} : { runsDir }),
+            ...(options.ask === undefined ? {} : { ask: options.ask }),
           }),
         () => ({ ok: true as const }),
       )
@@ -2630,6 +2741,7 @@ export function createRunner(options: RunnerOptions = {}): Runner {
             feedback: text,
             accepted,
             ...(runsDir === undefined ? {} : { runsDir }),
+            ...(options.ask === undefined ? {} : { ask: options.ask }),
           }),
         () => ({ ok: true as const }),
       )
@@ -2644,6 +2756,7 @@ export function createRunner(options: RunnerOptions = {}): Runner {
             answer: text,
             accepted,
             ...(runsDir === undefined ? {} : { runsDir }),
+            ...(options.ask === undefined ? {} : { ask: options.ask }),
           }),
         () => ({ ok: true as const }),
       )
@@ -2658,6 +2771,7 @@ export function createRunner(options: RunnerOptions = {}): Runner {
             budgetUsd,
             accepted,
             ...(runsDir === undefined ? {} : { runsDir }),
+            ...(options.ask === undefined ? {} : { ask: options.ask }),
           }),
         () => ({ ok: true as const }),
       )
@@ -2676,6 +2790,7 @@ export function createRunner(options: RunnerOptions = {}): Runner {
             project: await projectForRun(runId),
             accepted,
             ...(runsDir === undefined ? {} : { runsDir }),
+            ...(options.ask === undefined ? {} : { ask: options.ask }),
           }),
         () => ({ ok: true as const }),
       )
@@ -2690,6 +2805,7 @@ export function createRunner(options: RunnerOptions = {}): Runner {
             runId,
             project,
             ...(runsDir === undefined ? {} : { runsDir }),
+            ...(options.ask === undefined ? {} : { ask: options.ask }),
           })
           accepted()
           return out

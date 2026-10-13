@@ -186,7 +186,49 @@ describe("phases and parks", () => {
       { kind: "phase", phase: "implement", state: "waiting", reason: "question", detail: "which table?" } as RunRecord,
     ])
     expect(view.waitId).toBe(`${RUN}#1`)
-    expect(view.waiting).toEqual({ reason: "question", detail: "which table?", sinceMs: null })
+    /* `agentSaid` is `null`, and asserting the whole object rather than the
+     * fields this test cares about is deliberate: a new provenance field
+     * silently defaulting to a value would be the one bug that matters here. */
+    expect(view.waiting).toEqual({
+      reason: "question",
+      detail: "which table?",
+      agentSaid: null,
+      sinceMs: null,
+    })
+  })
+
+  test("a stall's agent sentence is kept apart from the machine's detail", () => {
+    /**
+     * The two are different claims and `detail` already means two things -
+     * the agent's own question on a `question` park, the machine's prose on a
+     * `stalled` one. A third meaning in the same field would leave a surface
+     * no way to label model prose as the agent's, which is the whole reason
+     * `agentSaid` exists.
+     */
+    const view = fold([
+      header(),
+      {
+        kind: "phase",
+        phase: "refine",
+        state: "waiting",
+        reason: "stalled",
+        detail: "the same failure signature three times at effort xhigh",
+        agentSaid: "The importer drops records whose version field is missing.",
+      } as RunRecord,
+    ])
+    expect(view.waiting?.detail).toBe("the same failure signature three times at effort xhigh")
+    expect(view.waiting?.agentSaid).toBe("The importer drops records whose version field is missing.")
+  })
+
+  test("a park with no agent sentence reads null, never the machine's prose", () => {
+    // A model that was down must not make `detail` look like something a model
+    // wrote. Falling back would attribute the machine's words to the agent.
+    const view = fold([
+      header(),
+      { kind: "phase", phase: "refine", state: "waiting", reason: "stalled", detail: "three times at xhigh" } as RunRecord,
+    ])
+    expect(view.waiting?.agentSaid).toBeNull()
+    expect(view.waiting?.detail).toBe("three times at xhigh")
   })
 
   test("the plan phase's planPath is carried, not re-derived by convention", () => {
