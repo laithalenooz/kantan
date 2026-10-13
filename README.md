@@ -77,6 +77,19 @@ which kind of verification it saw, it does not get to imply either.
 ## Running it
 
 ```bash
+curl kantan.sh | sh
+```
+
+That is [`kantan.sh`](kantan.sh) in this repository, and it is short so you can
+read it before you run it. It checks for git, bun, node and the `claude` CLI and
+stops with the one command that fixes whichever is missing; clones into
+`~/.local/share/kantan`; installs and builds; then prints how to run it. It
+never uses sudo, never installs a runtime for you, never edits your PATH or any
+dotfile, and does not start the server unless you pass `--start`.
+
+By hand, which is the same four steps:
+
+```bash
 git clone https://github.com/laithalenooz/kantan && cd kantan
 curl -fsSL https://bun.sh/install | bash     # standalone, not via npm
 bun install

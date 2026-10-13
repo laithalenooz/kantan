@@ -10,11 +10,11 @@
  *
  * A user typed a path, pressed add, and got
  *
- *     that repository could not be added: 400 {"error":"/home/laithalenooz/…
+ *     that repository could not be added: 400 {"error":"/home/<name>/…
  *     is not a usable git repository: fatal: cannot change to '…'"}
  *
- * The machine's home is `/home/lalenooz`. Four characters, and the sentence
- * that came back named git. Two things were wrong with the old dialog and both
+ * The typed home directory was **four characters longer than the real one**.
+ * That was the entire fault, and the sentence that came back named git. Two things were wrong with the old dialog and both
  * are structural: the answer arrived **after** submitting, and it arrived
  * phrased as the last thing that failed rather than the first.
  *
@@ -59,7 +59,7 @@
  * than resolving it (the answer would depend on where the server was
  * launched), and `src/git.ts` owns everything after that. The only string
  * operations here are that `===`, and `repoLabel` on a root **git reported**.
- * Never on what was typed: with `/home/laithalenooz/projects/kantan` in the
+ * Never on what was typed: with `/home/<name>/projects/kantan` in the
  * box the last segment is still `kantan`, so a label built from the typing
  * reads "Add kantan" for a directory that is not there. That reassurance is
  * what let the production failure through.

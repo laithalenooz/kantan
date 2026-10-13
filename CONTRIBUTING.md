@@ -11,6 +11,9 @@ bun install
 bun run check                        # typecheck then tests
 ```
 
+(`curl kantan.sh | sh` is the user-facing install — [`kantan.sh`](kantan.sh) in
+this repo. Contributors want a clone they can commit from, which is this.)
+
 **Finish every change on `bun run check`.** It is typecheck *then* tests, in
 that order, because `noUncheckedIndexedAccess` is on and a strict project that
 never typechecks accumulates errors invisibly. `bun test` alone is not enough.

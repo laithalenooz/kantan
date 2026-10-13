@@ -7,16 +7,15 @@
  * **It has already failed a user in production.** They typed a path, pressed
  * add, and got
  *
- *     that repository could not be added: 400 {"error":"/home/laithalenooz/…
+ *     that repository could not be added: 400 {"error":"/home/<name>/…
  *     is not a usable git repository: fatal: cannot change to '…'"}
  *
- * The machine's home is `/home/lalenooz`. The real fault was four characters in
- * the home directory, the sentence named git, and it arrived only *after*
- * submitting. (That one path is the real one, because the four-character
- * difference between it and the typo above is the whole finding. Every
- * *fixture* below uses a neutral `/home/dev`: they are stub strings, nothing
- * here touches a filesystem, and no assertion should read as if it needed a
- * particular developer's machine.) So the assertions below are mostly about **when a green tick is
+ * The real fault was **four characters** in the home directory, the sentence
+ * named git, and it arrived only *after* submitting. (The two spellings are
+ * written abstractly here. What matters is the size of the difference, not
+ * whose machine it was, and every fixture below uses a neutral `/home/dev`:
+ * they are stub strings, nothing here touches a filesystem, and no assertion
+ * should read as if it needed a particular developer's account.) So the assertions below are mostly about **when a green tick is
  * allowed to be on screen**, not about how it is drawn.
  *
  * **Every answer the panel shows is about a string the user is mid-typing.** A
@@ -559,7 +558,7 @@ describe("the refusals `src/git.ts` will actually make", () => {
     {
       code: "directory",
       says:
-        "there is no directory at /home/laithalenooz/projects/kantan." +
+        "there is no directory at /home/<name>/projects/kantan." +
         " The deepest part of that path which does exist is /home - check the spelling of what comes after it.",
     },
     {
@@ -605,7 +604,7 @@ describe("the refusals `src/git.ts` will actually make", () => {
 
   for (const refusal of REFUSALS) {
     test(`${refusal.code}: says what the server says, and blocks the button`, async () => {
-      const path = "/home/laithalenooz/projects/kantan"
+      const path = "/home/<name>/projects/kantan"
       await render(
         <api.AddRepo
           {...props({
@@ -631,7 +630,7 @@ describe("the refusals `src/git.ts` will actually make", () => {
   test("the typo sentence survives whitespace flattening in the DOM", async () => {
     /* The reason this is its own test: the sentence is long enough to wrap, and
        the fix it carries is a substring in the middle of it. */
-    const path = "/home/laithalenooz/projects/kantan"
+    const path = "/home/<name>/projects/kantan"
     const says = REFUSALS[0]?.says ?? ""
     await render(
       <api.AddRepo
@@ -1483,13 +1482,13 @@ describe("the preview", () => {
 describe("what the repository is called", () => {
   /**
    * The label is read off the root **git reported**, never off the text in the
-   * box. With `/home/laithalenooz/projects/kantan` typed, the last segment is
+   * box. With `/home/<name>/projects/kantan` typed, the last segment is
    * still `kantan` — so a label derived from the typing says "Add kantan" for a
    * directory that does not exist, which is the reassurance that let the
    * production failure through.
    */
   test("comes from the detected root, not from the typing", async () => {
-    await render(<api.AddRepo {...props({ path: "/home/laithalenooz/projects/kantan" })} />)
+    await render(<api.AddRepo {...props({ path: "/home/<name>/projects/kantan" })} />)
     expect(prose()).toContain("Add this repository")
     expect(prose()).not.toContain("Add kantan")
   })

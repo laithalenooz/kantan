@@ -1242,7 +1242,7 @@ function isErrno(e: unknown, code: string): boolean {
  *
  * Names the **deepest part of the path that does exist**, because that is the
  * sentence that finds a typo. "There is no directory at
- * /home/laithalenooz/projects/app" leaves someone staring at a path that looks
+ * /home/<name>/projects/app" leaves someone staring at a path that looks
  * right; "the deepest part that exists is /home" points straight at the
  * username. Costs one `stat` per ancestor on a path that has already failed,
  * which is a case nobody is in a hurry during.
