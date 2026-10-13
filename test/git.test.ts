@@ -228,6 +228,118 @@ test("a path that exists but is not a repo is refused, naming the path", async (
   expect(message).toContain(dir)
 })
 
+/**
+ * **What `<path>/.git` is, enumerated — because git's message does not
+ * distinguish the one case where advice is safe from two where it is wrong.**
+ *
+ * A user pointed kantan at a freshly scaffolded project and got
+ * `"... is not a usable git repository: fatal: not a git repository (or any of
+ * the parent directories): .git"`. Every other refusal in `requireUsableRepo`
+ * names its fix - "Register a checkout of it instead", "Make the first commit,
+ * then start the run" - and this one, the first one a new user hits, passed
+ * git's words through and stopped.
+ *
+ * The obvious fix is to match git's message and suggest `git init`. Probed
+ * against git 2.43.0, that is wrong:
+ *
+ * | on disk | git's first line |
+ * |---|---|
+ * | no `.git` at all | `fatal: not a git repository (or any of the parent directories): .git` |
+ * | `.git/` present but unreadable | **the same line, byte for byte** |
+ * | `.git` a gitfile that does not parse | `fatal: invalid gitfile format: <path>/.git` |
+ * | `.git` a gitfile parsing but pointing nowhere | `fatal: not a git repository: <path>/` |
+ * | repo owned by someone else | `fatal: detected dubious ownership in repository at '<path>'` |
+ *
+ * So the dimension to read is **the filesystem, not the prose**: `git init` is
+ * right only when there is no `.git` here at all. For an unreadable `.git` it
+ * fails on the permission it cannot see, and for dubious ownership it is not the
+ * fix at all - git itself prints the `safe.directory` command, which is why
+ * those cases keep git's own words instead of gaining ours.
+ *
+ * The costs are not symmetric. A missing suggestion leaves a dead end the user
+ * can still solve by reading git's sentence; a *wrong* suggestion sends someone
+ * to re-run `git init` over a repository that already exists, which is the one
+ * direction that can lose work. So this fails toward silence.
+ *
+ * **`lstat`, not `stat`** - a dangling `.git` symlink (a gitdir moved to another
+ * disk, then unmounted) is ENOENT to `stat` and would earn a `git init` that
+ * the surviving symlink then blocks.
+ */
+describe("the advice attached to an unusable repository", () => {
+  const init = "git init"
+
+  test("no .git at all gets both steps, because the next refusal would be the commit", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "kantan-git-"))
+    const message = await messageOf(requireUsableRepo(dir))
+    expect(message).toContain(dir)
+    expect(message).toContain(init)
+    // Named too, so `git init` is not followed straight into "has no commits yet".
+    expect(message).toContain("commit")
+    // Ours, not git's: a sentence that both explains and prescribes beats one
+    // that leaks `fatal:` at someone who has done nothing wrong.
+    expect(message).not.toContain("fatal:")
+  })
+
+  test("an empty .git directory keeps git's words, because init is not provably right", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "kantan-git-"))
+    await mkdir(join(dir, ".git"))
+    const message = await messageOf(requireUsableRepo(dir))
+    expect(message).toContain(dir)
+    expect(message).not.toContain(init)
+    expect(message).toContain("not a git repository")
+  })
+
+  test("an unparseable gitfile keeps git's words, which name the format", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "kantan-git-"))
+    await writeFile(join(dir, ".git"), "garbage\n")
+    const message = await messageOf(requireUsableRepo(dir))
+    expect(message).not.toContain(init)
+    expect(message).toContain("invalid gitfile format")
+  })
+
+  /* A fourth message, found by this test disagreeing with the probe that
+     motivated it. A `.git` file whose content *parses* - it opens with
+     `gitdir: ` - but points at nothing says `fatal: not a git repository:
+     <path>/`, which is neither of the two strings above. The behaviour is the
+     same, because the rule reads the filesystem; it is recorded because an
+     enumeration that stopped at the cases one probe happened to produce is
+     exactly what this comment block warns against. */
+  test("a gitfile pointing nowhere keeps git's words, a fourth distinct message", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "kantan-git-"))
+    await writeFile(join(dir, ".git"), `gitdir: ${join(dir, "moved-away")}\n`)
+    const message = await messageOf(requireUsableRepo(dir))
+    expect(message).not.toContain(init)
+    expect(message).toContain("not a git repository")
+  })
+
+  test("a dangling .git symlink keeps git's words - the reason this reads lstat", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "kantan-git-"))
+    await symlink(join(dir, "moved-away"), join(dir, ".git"))
+    const message = await messageOf(requireUsableRepo(dir))
+    // `stat` would answer ENOENT here and send the user to `git init`, which the
+    // symlink that is still on disk then refuses.
+    expect(message).not.toContain(init)
+  })
+
+  test("an unreadable .git keeps git's words, which are identical to the absent case", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "kantan-git-"))
+    const dotGit = join(dir, ".git")
+    await mkdir(dotGit)
+    await writeFile(join(dotGit, "HEAD"), "ref: refs/heads/main\n")
+    await chmod(dotGit, 0o000)
+    try {
+      const message = await messageOf(requireUsableRepo(dir))
+      // The whole point of the matrix: git says exactly what it says for an
+      // absent `.git`, so only the filesystem read tells these two apart.
+      expect(message).toContain("not a git repository")
+      expect(message).not.toContain(init)
+    } finally {
+      // Without this the scratch directory cannot be removed.
+      await chmod(dotGit, 0o755)
+    }
+  })
+})
+
 test("a non-repo directory nested inside a repo does not resolve to the parent repo", async () => {
   // A dotfiles repo at $HOME makes every untracked directory under it look like a
   // repo to `git rev-parse`. Operating on the parent would be operating on $HOME.

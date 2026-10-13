@@ -35,7 +35,7 @@
  */
 
 import { createHash, randomUUID } from "node:crypto"
-import { link, readFile, realpath, rename, stat, unlink, writeFile } from "node:fs/promises"
+import { link, lstat, readFile, realpath, rename, stat, unlink, writeFile } from "node:fs/promises"
 import { hostname } from "node:os"
 import { basename, dirname, isAbsolute, join, normalize, sep } from "node:path"
 
@@ -159,7 +159,7 @@ export async function requireUsableRepo(path: string): Promise<Repo> {
     "--is-bare-repository",
   ])
   if (probe.code !== 0) {
-    throw new Error(`${path} is not a usable git repository: ${gitSaid(probe)}`)
+    throw new Error(`${path} is not a usable git repository: ${await whyTheProbeFailed(path, probe)}`)
   }
   const [commonDir, bare] = probe.out.trim().split("\n")
   if (commonDir === undefined || bare === undefined) {
@@ -188,6 +188,53 @@ export async function requireUsableRepo(path: string): Promise<Repo> {
   }
 
   return { root, gitDir: await realpath(commonDir) }
+}
+
+/**
+ * The tail of the "not a usable git repository" refusal: our own advice when it
+ * is provably right, and git's words otherwise.
+ *
+ * Every other refusal in `requireUsableRepo` names the fix. This one did not,
+ * and it is the first one a new user meets: a freshly scaffolded project -
+ * sources, a README, even a `.gitignore`, but never `git init`-ed - got
+ * `fatal: not a git repository (or any of the parent directories): .git` and
+ * nothing else. True, and a dead end.
+ *
+ * **The tempting fix is to match git's message and suggest `git init`, and it is
+ * wrong.** Probed against git 2.43.0, that sentence is not unique to the case it
+ * fits. The dimension this reads is therefore `<path>/.git` **on disk**, not
+ * git's prose:
+ *
+ * | `<path>/.git` | git's first line | `git init`? |
+ * |---|---|---|
+ * | absent | `not a git repository (or any of the parent directories): .git` | **yes** |
+ * | a directory, unreadable | *the same line, byte for byte* | no - it fails on the permission |
+ * | a gitfile that does not parse | `invalid gitfile format: <path>/.git` | no |
+ * | a gitfile parsing, pointing nowhere | `not a git repository: <path>/` | no |
+ * | a dangling symlink | `not a git repository: ...` | no - the symlink blocks it |
+ * | present, owned by another user | `detected dubious ownership in repository at '<path>'` | no - the fix is `safe.directory`, which git itself prints |
+ *
+ * The two directions do not cost the same. Saying nothing leaves a dead end the
+ * reader can still solve, because git's sentence is right there. Saying
+ * `git init` over a repository that already exists points someone at the one
+ * command here that can lose work. So this fails toward silence: advice only
+ * for the single value where nothing is there to damage.
+ *
+ * `lstat`, not `stat`: a `.git` symlink to a gitdir on a disk that is no longer
+ * mounted is ENOENT to `stat`, and would earn a `git init` that the symlink
+ * still on disk then refuses.
+ *
+ * It also names **both** steps. `requireUsableRepo` refuses again four lines
+ * below with "has no commits yet", so advice that stopped at `git init` would
+ * hand the reader a second error for following the first one.
+ */
+async function whyTheProbeFailed(path: string, probe: GitResult): Promise<string> {
+  try {
+    await lstat(join(path, ".git"))
+  } catch {
+    return `there is no .git here. Run \`git init\`, make the first commit, then register it - ${BRANCH_PREFIX}<task> needs a base commit to branch from.`
+  }
+  return gitSaid(probe)
 }
 
 // --- What is the base branch, recorded at run start? ------------------------
