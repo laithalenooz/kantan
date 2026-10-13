@@ -1,0 +1,67 @@
+# The one command this project finishes every change on.
+#
+# `bun run check` is typecheck then tests, in that order and for a reason: a
+# strict project that never typechecks accumulates errors invisibly, and
+# `bun test` alone would not have caught them. See CLAUDE.md.
+name: check
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+# A second push to the same branch cancels the first: nobody reads the result
+# of a run against code that has already been replaced.
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          # Pinned, because this project's own notes record behaviour probed
+          # against a specific Bun: `--watch` reloading in the same process,
+          # and a FileHandle left to the GC being an error. A floating version
+          # would make a CI failure ambiguous between our bug and theirs.
+          bun-version: 1.4.3
+
+      # Needed for `bun run build` below and nothing else: Vite needs Node,
+      # Bun runs the server and the tests. Same split the README describes.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: bun install --frozen-lockfile
+
+      # Git identity: several tests make real commits in scratch repositories,
+      # and git refuses to commit without one. The suite sets the hermetic
+      # config it needs per-repo, but the global author has to exist.
+      - name: Give git an identity for the scratch repositories
+        run: |
+          git config --global user.email "check@example.com"
+          git config --global user.name "kantan check"
+
+      - run: bun run check
+
+      # Typecheck and tests pass without ever building the UI, so a Vite or
+      # Tailwind break would ship silently. One command closes that.
+      - name: Build the UI
+        run: bun run build
+
+      # The live smoke test is the suite's one skip: it spawns the real
+      # `claude` and spends money, so it is gated on KANTAN_LIVE=1 and can
+      # never run here. Asserted rather than assumed - a change that ungated
+      # it would start billing an account from CI.
+      - name: The money-spending test must stay skipped
+        run: |
+          if [ -n "${KANTAN_LIVE:-}" ] || [ -n "${ORCH_LIVE:-}" ]; then
+            echo "KANTAN_LIVE is set in CI, which would spawn the real claude binary" >&2
+            exit 1
+          fi

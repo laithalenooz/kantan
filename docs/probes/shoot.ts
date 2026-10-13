@@ -4,7 +4,7 @@
  * Exists because a headless `--screenshot` cannot click, and every defect
  * reported from use so far has been about a state you only reach by clicking.
  *
- *   bun run shoot.ts <url> <out.png> [click:<text>] [wait:<ms>] [full]
+ *   bun run shoot.ts <url> <out.png> [click:<text>] [nth:<i>:<sel>] [wait:<ms>] [full]
  */
 const [url, out, ...rest] = process.argv.slice(2)
 if (url === undefined || out === undefined) throw new Error("need <url> <out.png>")
@@ -142,6 +142,34 @@ for (const arg of rest) {
   if (arg.startsWith("scroll:")) {
     await send("Runtime.evaluate", { expression: `window.scrollTo(0, ${Number(arg.slice(7))})` })
     await Bun.sleep(600)
+    continue
+  }
+  if (arg.startsWith("nth:")) {
+    /**
+     * `nth:<index>:<selector>` - the index'th match, zero-based.
+     *
+     * CSS cannot express "the fifth element matching this selector" when the
+     * matches are not siblings, and the task rows are not: each project nests
+     * its own. Without this, naming one row meant matching its prose, and
+     * `clickText` returns the first element *containing* that text in document
+     * order - which is the project wrapper, not the row. Two screenshots were
+     * silently of the wrong screen before this existed.
+     */
+    const [index, ...rest] = arg.slice(4).split(":")
+    const selector = rest.join(":")
+    const r = await send("Runtime.evaluate", {
+      returnByValue: true,
+      expression: `(() => {
+        const all = [...document.querySelectorAll(${JSON.stringify(selector)})]
+        const el = all[${Number(index)}]
+        if (el === undefined) return "NOT FOUND: " + all.length + " matched"
+        el.scrollIntoView({ block: "center" })
+        el.click()
+        return "clicked [" + ${Number(index)} + "] " + (el.textContent || "").trim().slice(0, 40)
+      })()`,
+    })
+    console.log((r["result"] as { value?: unknown } | undefined)?.value)
+    await Bun.sleep(1800)
     continue
   }
   if (arg.startsWith("sel:")) {

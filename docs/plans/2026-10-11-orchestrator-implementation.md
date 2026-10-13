@@ -1,5 +1,22 @@
 # Orchestrator Implementation Plan
 
+> **Historical. Read `docs/HANDOFF.md` instead for what is true now.**
+>
+> This is the decomposition the project was built from, written on 2026-10-11,
+> and it is kept because the task descriptions record *why* each piece was
+> going to be shaped the way it is. It is **not** a status board.
+>
+> It briefly pretended to be one: two of the thirty-two tasks below carried a
+> `— DONE` marker and the rest did not, long after far more than two were
+> finished. Those two markers have been removed rather than the other thirty
+> added, because a marker nobody maintains is worse than no marker - a reader
+> cannot tell "not done" from "nobody updated this", and the README was reduced
+> to telling people to distrust the file.
+>
+> Where the work actually stands: `docs/features/kantan.md` is the live backlog
+> and is currently empty, and `docs/HANDOFF.md` records every decision with its
+> reasoning, including the ones that were wrong the first time.
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Build a localhost UI that drives the real `claude` binary through one task at a time: plan, one human gate, then implement and test with effort escalation on stall.
@@ -315,7 +332,7 @@ git add -A && git commit -m "feat: parse and tick tasks in feature markdown"
 
 ---
 
-## Task 3: The project store — DONE
+## Task 3: The project store
 
 **Files:**
 - Create: `src/projects.ts`
@@ -389,7 +406,7 @@ git add -A && git commit -m "feat: project store with sonnet and per-phase effor
 
 ---
 
-## Task 4: Capture stream-json fixtures — DONE
+## Task 4: Capture stream-json fixtures
 
 > Captured 2026-10-11 against CLI 2.1.296. Three fixtures in `test/fixtures/`, both redaction
 > passes run, and all twelve of their documented claims verified by assertion. See

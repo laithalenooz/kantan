@@ -13,6 +13,11 @@ plan, you approve, then implement and test until the tests pass.
 > The hard-won facts about `claude -p` are in [`docs/probes/`](docs/probes/), and every
 > script there is rerunnable, so you can check rather than trust.
 
+![The gate: a plan written by an agent, waiting for a human to approve it](docs/screenshots/gate.png)
+
+*The gate. An agent read the repo and wrote this plan, then stopped. Nothing else
+moves until you approve it or send it back with a note.*
+
 ## What this is not
 
 Read this part first, because it is the whole design.
@@ -110,6 +115,42 @@ deliberately does **not** rewrite the `Host` header, because rewriting it would 
 real one from the DNS-rebinding check. So the server sees `Host: localhost:5173` and refuses it
 unless `ORCH_DEV=1` has widened the allowed set, which is all `server:dev` does.
 
+## What it looks like
+
+<table>
+<tr>
+<td width="50%"><a href="docs/screenshots/running.png"><img src="docs/screenshots/running.png" alt="A run mid-implement, with its phase rail, live cost and event log"></a></td>
+<td width="50%"><a href="docs/screenshots/start.png"><img src="docs/screenshots/start.png" alt="The start panel for an open task, refusing because another run is in flight"></a></td>
+</tr>
+<tr>
+<td><b>Running.</b> The phases, the live cost against this run's ceiling, and every
+event the CLI emitted. The note under the digest is the whole design in one
+sentence: the pass or fail is the exit code of <i>your</i> test command, read by
+kantan, and what the agent says about its own work is never used.</td>
+<td><b>One task at a time.</b> This task cannot start, and the panel says why
+rather than greying a button out: another run is in flight, and kantan runs one
+per project so two agents can never share a working tree.</td>
+</tr>
+<tr>
+<td><a href="docs/screenshots/accounts.png"><img src="docs/screenshots/accounts.png" alt="The accounts view, reporting rate-limit windows and offering a profile found on disk"></a></td>
+<td><a href="docs/screenshots/overview.png"><img src="docs/screenshots/overview.png" alt="The empty-selection state, explaining the three steps"></a></td>
+</tr>
+<tr>
+<td><b>Accounts.</b> Which Claude account each project bills to, and where its
+rate-limit windows stood the last time kantan saw. It says "last seen" and "window
+reset" rather than drawing a stale bar, because there is no command that asks
+Claude for a rate limit.</td>
+<td><b>Nothing selected.</b> Three steps, and the vocabulary is the whole model: a
+repository, a task file, a task.</td>
+</tr>
+</table>
+
+Every one of those is the real UI. They are taken by
+[`docs/probes/states.ts`](docs/probes/states.ts), which boots an ordinary kantan
+against a scratch home — real git repositories, real task files, run logs written
+through the same writer a real run uses — so a screenshot costs nothing and no
+state has to be reached by paying an agent to get there.
+
 ## Permissions, and what kantan grants an agent
 
 An unattended agent needs real tool access: it runs its own tests and commits its work. So this
@@ -179,9 +220,10 @@ afternoon and wonder whether you had broken it.
   `unknown` row with its JSON selectable, instead of being dropped — but it does mean the log
   will show you a blob the first time Anthropic adds a message type. Tell us, and it gets a
   row of its own, as `system/vcs_state_changed` did.
-- **The implementation plan's `DONE` markers are stale.** Two of thirty-two tasks are marked,
-  and far more than two are done.  [`docs/HANDOFF.md`](docs/HANDOFF.md) is the file that was
-  kept current; trust it over the plan.
+- **The implementation plan is history, not a status board.** It is the decomposition the
+  project was built from and the task descriptions are still worth reading;
+  [`docs/HANDOFF.md`](docs/HANDOFF.md) is the file that records what is true now, and
+  [`docs/features/kantan.md`](docs/features/kantan.md) is the live backlog.
 
 ## Two warnings worth reading
 
