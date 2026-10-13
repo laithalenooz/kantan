@@ -1,0 +1,67 @@
+name: A change you want
+description: Something kantan should do, or do differently.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Read the list below first.** Not to put you off — to save you writing
+        a careful proposal that gets declined for a reason that was decided
+        before you arrived.
+
+        kantan's README has a section called *"What this is not"*, and those
+        items are the design rather than a backlog:
+
+        - **No agent org chart.** No CEO, CTO or specialist personas.
+        - **No autonomy.** Nothing wakes itself up. No heartbeats, no routines,
+          no schedulers.
+        - **No multi-agent orchestration.** One task, one session, one human.
+        - **No tracker database.** The backlog is markdown in your own repo.
+        - **No worktree sprawl.** One branch per task, one run per project.
+
+        Every one of those is a reaction to a tool that started well and
+        drifted, and the whole argument of the project is that the ceremony
+        grows faster than the usefulness. A proposal that adds one of them is
+        not a close call.
+
+        Two more that are decisions, not gaps: **the server runs your tests,
+        not the agent** — a change that trusts the agent's own report of success
+        will be declined — and **no surface may claim a verification it did not
+        observe.**
+
+        Everything else is open, including things on the Rough edges list.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What were you trying to do?
+      description: >-
+        The situation, not the solution. A described problem can be solved in a
+        way neither of us has thought of yet; a described feature can only be
+        accepted or declined.
+    validations:
+      required: true
+
+  - type: textarea
+    id: now
+    attributes:
+      label: What happens today
+      description: What you did instead, or where you got stuck.
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you have in mind, if you have something
+      description: Optional. Leaving it blank is a legitimate answer.
+
+  - type: checkboxes
+    id: read
+    attributes:
+      label: One box
+      options:
+        - label: >-
+            I read the list above and this is not one of them — or it is, and I
+            have said why that should be reconsidered.
+          required: true

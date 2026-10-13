@@ -1,0 +1,45 @@
+name: An event rendered as raw JSON
+description: The run record showed an `unknown` row with a JSON blob in it.
+labels: ["bug", "cli-event"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **This is working as designed, and still worth reporting.**
+
+        An event kantan's version does not recognise becomes a visible `unknown`
+        row with its JSON selectable, rather than being dropped silently. That
+        is the deliberate failure direction — but it means the first time
+        Anthropic adds a message type, you see a blob.
+
+        Telling us turns it into a row of its own, as `system/vcs_state_changed`
+        already got. This template exists because it is the issue we expect
+        most: the probes are pinned to one CLI version and you are probably on
+        a newer one.
+
+  - type: input
+    id: claude-version
+    attributes:
+      label: "`claude --version`"
+      placeholder: "2.1.312"
+    validations:
+      required: true
+
+  - type: textarea
+    id: event
+    attributes:
+      label: The JSON from the row
+      description: >-
+        Click the row and copy it. **Check it before pasting** — a `tool_use`
+        event carries whatever was passed to the tool, which can include file
+        contents. The `type` and `subtype` are the parts we need; trim the rest
+        if it holds anything of yours.
+      render: json
+    validations:
+      required: true
+
+  - type: input
+    id: phase
+    attributes:
+      label: Which phase it appeared in
+      placeholder: "implement"

@@ -1,0 +1,107 @@
+name: Something went wrong
+description: A run that failed, a screen that lied, a refusal that made no sense.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Before the fields: do not paste a whole run log.**
+
+        `~/.kantan/runs/<uuid>.jsonl` is raw stream-json — what the CLI emitted,
+        byte for byte. That means prompts, tool inputs and **the contents of
+        files the agent read**, which on a work repository is the last thing you
+        want in a public issue.
+
+        There is a command below that extracts only kantan's own records from
+        it. Those are the diagnostic ones anyway.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected instead
+      placeholder: |
+        I approved a plan and the run went to `failed` immediately. I expected
+        an implement phase to start.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where it went wrong
+      description: Best guess is fine — the run log will correct you if it is wrong.
+      options:
+        - Installing or starting it
+        - Registering a repository
+        - The plan phase
+        - The gate (approve / send back)
+        - The implement phase
+        - Running the tests
+        - The refine loop
+        - The task tree, or a screen showing the wrong thing
+        - Accounts and billing
+        - Something else
+    validations:
+      required: true
+
+  - type: input
+    id: claude-version
+    attributes:
+      label: "`claude --version`"
+      description: >-
+        The one field that cannot be guessed. Every finding in `docs/probes/`
+        was measured against Claude Code 2.1.296, and the stream-json shape
+        depends on the CLI version — so a mismatch here is the first thing to
+        rule in or out.
+      placeholder: "2.1.296"
+    validations:
+      required: true
+
+  - type: input
+    id: kantan-version
+    attributes:
+      label: Which kantan
+      description: "A release tag, or `git -C ~/.local/share/kantan rev-parse --short HEAD`."
+      placeholder: "v0.1.1, or 0912182"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS, and how you installed it
+      description: >-
+        Say if you are on WSL2, and say if it is native Windows — kantan is
+        developed on WSL2 and native Windows is **untested**, so that alone may
+        be the answer.
+      placeholder: "macOS 15.1, curl get.kantan.sh | sh"
+    validations:
+      required: true
+
+  - type: textarea
+    id: records
+    attributes:
+      label: The run's own records
+      description: |
+        Strips every `cli` record, leaving the header, the phase transitions,
+        the test exit codes, your approvals and the end state:
+
+        ```bash
+        grep -v '"kind":"cli"' ~/.kantan/runs/<uuid>.jsonl
+        ```
+
+        **Read it before pasting.** It still names paths — `projectPath`,
+        `featureFile`, `planPath` — so redact those if your repository's name
+        is not public. Nothing else in it is content.
+
+        Skip this if the bug never got as far as a run.
+      render: json
+
+  - type: textarea
+    id: suite
+    attributes:
+      label: Does the suite pass on your machine?
+      description: >-
+        `bun run check` in the install directory. This separates "kantan is
+        broken" from "kantan is broken **here**", and it costs you one command.
+      placeholder: "2596 pass, 1 skip, 0 fail — or paste the failures."

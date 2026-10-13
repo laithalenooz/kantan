@@ -1,0 +1,13 @@
+blank_issues_enabled: true
+contact_links:
+  - name: A security problem
+    url: https://github.com/laithalenooz/kantan/security/policy
+    about: >-
+      Do not open an issue. SECURITY.md says how to report it privately. The
+      server feeds arbitrary text to an agent with tool access, so anything
+      touching the Host/Origin/token checks belongs there.
+  - name: A question, or something you are not sure is a bug
+    url: https://github.com/laithalenooz/kantan/discussions
+    about: >-
+      Ask here rather than guessing which template fits. "Is this supposed to
+      happen?" is a good question and not a failure to read the docs.
