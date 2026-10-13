@@ -342,7 +342,7 @@ test("the plan prompt is unchanged", () => {
     - Work in the checkout as you find it. Do not create a worktree, do not create or
       switch branches, and do not run \`superpowers:finishing-a-development-branch\`.
     - Do not include a step that ticks the task's checkbox, or that edits
-      docs/features/slugger.md in any other way. The orchestrator records the task as done
+      docs/features/slugger.md in any other way. kantan records the task as done
       itself, and only after it has run the project's test command and seen it pass by exit
       code. A plan step that ticks the box would mark the task done on a failing build.
     - Write for an engineer who has no context for this codebase and cannot see this
@@ -444,7 +444,7 @@ test("the implement prompt is unchanged", () => {
     - Commit as you go, naming the files you changed as a pathspec rather than staging
       everything, because the tree may hold work that is not yours.
     - Leave docs/features/slugger.md exactly as it is, and skip any step in the plan that would edit
-      it or change T1's line in it. The orchestrator runs the project's test command
+      it or change T1's line in it. kantan runs the project's test command
       itself and records the outcome from the exit code; it never takes an agent's word for a
       passing build. Editing that file can only put the backlog out of step with what was
       actually verified.
@@ -573,7 +573,7 @@ test("the feedback prompt is unchanged", () => {
 // The user's decision, 2026-10-12: if no test command is set, the agent
 // verifies based on their implementation. These prompts are the one place that
 // decision becomes words an agent reads, and three of the existing four assert
-// something that is simply **false** for such a project - that the orchestrator
+// something that is simply **false** for such a project - that kantan
 // runs a test command and reads its exit code. A prompt that lies about who
 // checks the work is the most expensive kind of drift in this codebase, which
 // is `RETIRED`'s precedent in src/projects.ts: a whole field was removed rather

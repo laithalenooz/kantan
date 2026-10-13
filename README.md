@@ -98,7 +98,7 @@ bun run build                                # the interface, into dist/ — nee
 bun run server                               # one process, on 127.0.0.1:3100
 ```
 
-Open <http://127.0.0.1:3100>. `ORCH_PORT` moves it.
+Open <http://127.0.0.1:3100>. `KANTAN_PORT` moves it.
 
 Bun runs the server and the tests. **Node is needed for one step only — `bun run build`,
 because Vite needs it.** Install Bun standalone rather than through npm: a Bun under an
@@ -121,14 +121,14 @@ interrupted run left under `orch/` are still recognised and still resumable; new
 ### Working on kantan itself
 
 ```bash
-bun run server:dev                           # the orchestrator, on 127.0.0.1:3100
+bun run server:dev                           # kantan's server, on 127.0.0.1:3100
 bun run ui                                   # Vite, with HMR, on 127.0.0.1:5173
 ```
 
 Open <http://127.0.0.1:5173>. Use `server:dev`, not `server`: Vite proxies `/api` to 3100 and
 deliberately does **not** rewrite the `Host` header, because rewriting it would hide the browser's
 real one from the DNS-rebinding check. So the server sees `Host: localhost:5173` and refuses it
-unless `ORCH_DEV=1` has widened the allowed set, which is all `server:dev` does.
+unless `KANTAN_DEV=1` has widened the allowed set, which is all `server:dev` does.
 
 ## What it looks like
 
@@ -252,8 +252,8 @@ expose it, and do not remove those checks to make a reverse proxy work.
 
 ## Design
 
-- [Design](docs/plans/2026-10-11-orchestrator-design.md), with every probed claim marked.
-- [Implementation plan](docs/plans/2026-10-11-orchestrator-implementation.md), 32 TDD tasks.
+- [Design](docs/plans/2026-10-11-kantan-design.md), with every probed claim marked.
+- [Implementation plan](docs/plans/2026-10-11-kantan-implementation.md), 32 TDD tasks.
 
 ## Licence
 

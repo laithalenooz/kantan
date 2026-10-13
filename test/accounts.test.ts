@@ -6,7 +6,7 @@ import { accountUsage } from "../src/accounts"
 
 /** Scratch keyed on the pid, per CLAUDE.md. */
 async function runsDir(): Promise<string> {
-  return await mkdtemp(join(tmpdir(), `orch-accounts-${process.pid}-`))
+  return await mkdtemp(join(tmpdir(), `kantan-accounts-${process.pid}-`))
 }
 
 const HOUR = 3600

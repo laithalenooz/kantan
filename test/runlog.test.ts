@@ -102,7 +102,7 @@ test("the implement phase record carries the session id minted at the gate", asy
 test("a second header is refused rather than appended", async () => {
   const { path } = await scratch()
   const log = await createRunLog(path, header())
-  // @ts-expect-error append() takes the orchestrator's own records, never a header.
+  // @ts-expect-error append() takes kantan's own records, never a header.
   await expect(log.append({ kind: "header", ...header() })).rejects.toThrow(/header/)
   await log.close()
 
@@ -119,7 +119,7 @@ test("creating a log over an existing one is refused, so two runs cannot interle
 })
 
 test("the runs directory is created on the first run ever", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "orch-runlog-"))
+  const dir = await mkdtemp(join(tmpdir(), "kantan-runlog-"))
   const path = runLogPath("11111111-1111-4111-8111-111111111111", join(dir, "nothing", "here", "runs"))
   const log = await createRunLog(path, header())
   await log.close()
@@ -213,7 +213,7 @@ test("a cli payload that is not a JSON object is refused rather than written", a
   expect(await logLines(path)).toHaveLength(1)
 })
 
-// --- The orchestrator's own records -----------------------------------------
+// --- kantan's own records -----------------------------------------
 
 test("phase, test, human and end records round-trip", async () => {
   const { path } = await scratch()
@@ -546,7 +546,7 @@ async function firstBytes(path: string, n: number): Promise<string> {
 
 /** A directory of its own, and a log path inside it that does not exist yet. */
 async function scratch(): Promise<{ dir: string; path: string }> {
-  const dir = await mkdtemp(join(tmpdir(), "orch-runlog-"))
+  const dir = await mkdtemp(join(tmpdir(), "kantan-runlog-"))
   return { dir, path: join(dir, "run.jsonl") }
 }
 

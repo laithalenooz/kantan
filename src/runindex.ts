@@ -18,8 +18,7 @@ import type { RunState } from "./runstate"
  * done-but-unmerged cannot be started again" has nothing else to consult.
  *
  * **A run's state is the fold of its log** (design §2). Nothing else is state:
- * there is no database, and the log is the only record of what the
- * orchestrator decided.
+ * there is no database, and the log is the only record of what kantan decided.
  *
  * ## What each record kind contributes, including the ones this skips
  *

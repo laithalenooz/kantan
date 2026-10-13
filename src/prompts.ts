@@ -180,7 +180,7 @@ That is their unfinished work. It is not a mistake, and it is not yours to undo.
  *
  * A project may have `testCmd: null`, and then the agent verifies its own work
  * (the user's decision, 2026-10-12). Three of the prompts below assert
- * something that is **false** for such a project - that the orchestrator runs a
+ * something that is **false** for such a project - that kantan runs a
  * test command and branches on its exit code - and a prompt that lies about who
  * checks the work is the most expensive drift there is here: the agent is told
  * a safety net exists and stops short of checking itself, which is the one
@@ -198,11 +198,11 @@ That is their unfinished work. It is not a mistake, and it is not yours to undo.
 /** Why a plan must not include a step that ticks the box. */
 function whoTicks(testCmd: string | null): string {
   return testCmd === null
-    ? `The orchestrator records the task as done itself. This project has no test command,
+    ? `kantan records the task as done itself. This project has no test command,
   so a separate turn at the end will ask you to verify your own work and the task is
   recorded on that answer; a plan step that ticks the box would mark it done before
   anything at all had checked it.`
-    : `The orchestrator records the task as done
+    : `kantan records the task as done
   itself, and only after it has run the project's test command and seen it pass by exit
   code. A plan step that ticks the box would mark the task done on a failing build.`
 }
@@ -213,18 +213,20 @@ function whoTicks(testCmd: string | null): string {
  * Each branch carries its own closing sentence and its own line wrapping, which
  * looks like duplication and is not: the prompts are hard-wrapped and what the
  * source shows is what the agent receives, so a shared tail would re-wrap
- * differently after each clause. Owning the whole paragraph is what lets the
- * with-command branch stay **byte-identical** to what it has always been, which
- * `test/prompts.test.ts`'s inline snapshot of this prompt pins.
+ * differently after each clause. Owning the whole paragraph is also what lets a
+ * branch's **first** line be short: each one is interpolated after a clause that
+ * is already on the line, so its first break is measured from the end of that
+ * clause and not from column zero. `test/prompts.test.ts`'s inline snapshot pins
+ * both prompts byte for byte, which is how a re-wrap that forgot that shows up.
  */
 function whoVerifies(testCmd: string | null): string {
   return testCmd === null
-    ? `The orchestrator records the task itself, and this
+    ? `kantan records the task itself, and this
   project has no test command: a separate turn at the end will ask you to verify your own
   work, and the task is recorded on that answer. Nothing outside this conversation checks
   it. Editing that file can only put the backlog out of step with what was actually
   checked.`
-    : `The orchestrator runs the project's test command
+    : `kantan runs the project's test command
   itself and records the outcome from the exit code; it never takes an agent's word for a
   passing build. Editing that file can only put the backlog out of step with what was
   actually verified.`

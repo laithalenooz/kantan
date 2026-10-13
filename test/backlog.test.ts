@@ -61,7 +61,7 @@ test("a task with no ref still parses", () => {
 // --- Round-trip hazards -----------------------------------------------------
 // These files live in the user's own repositories, under their own git history.
 // A parse that loses a line or a tick that moves a byte it was not asked to
-// move corrupts work the orchestrator does not own, so every case below either
+// move corrupts work kantan does not own, so every case below either
 // round-trips exactly or throws.
 
 /** Every index at which the two strings differ; empty when byte-identical. */
@@ -170,7 +170,7 @@ test("a heading after the list ends it instead of becoming the title", () => {
 
 test("ignores a YAML comment in the frontmatter when looking for the title", () => {
   const src =
-    "---\n# status is managed by the orchestrator\nstatus: active\n---\n# Real Title\n\n- [ ] T1 a\n"
+    "---\n# status is managed by the planner\nstatus: active\n---\n# Real Title\n\n- [ ] T1 a\n"
   const { title, tasks } = parseFeature(src)
   expect(title).toBe("Real Title")
   expect(tasks).toHaveLength(1)
@@ -250,7 +250,7 @@ test("looks past a UTF-8 BOM when finding frontmatter", () => {
   // The YAML comment is what makes this fail when the BOM hides the opening
   // fence: the comment itself gets read as the feature title.
   const src =
-    "\uFEFF---\n# status is managed by the orchestrator\nstatus: active\n---\n# Real Title\n\n- [ ] T1 a\n"
+    "\uFEFF---\n# status is managed by the planner\nstatus: active\n---\n# Real Title\n\n- [ ] T1 a\n"
   expect(parseFeature(src).title).toBe("Real Title")
 })
 
@@ -370,8 +370,8 @@ test("reads a skipped frontmatter block for a title only when the body has none"
   // real title to lose, so a `#` line in the skipped block is a better answer
   // than nothing. A body heading always outranks it - the test above this one
   // and the YAML-comment test both pin that order.
-  const src = "---\n# status is managed by the orchestrator\nstatus: active\n---\n\n- [ ] T1 a\n"
-  expect(parseFeature(src).title).toBe("status is managed by the orchestrator")
+  const src = "---\n# status is managed by the planner\nstatus: active\n---\n\n- [ ] T1 a\n"
+  expect(parseFeature(src).title).toBe("status is managed by the planner")
 })
 
 test("a rule under an unindented continuation line is not a setext heading", () => {

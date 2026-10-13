@@ -25,7 +25,7 @@
 
 **Tech Stack:** Bun (server, test runner), Vite + React + Tailwind v4 + Motion + shadcn/ui + selected Magic UI, TanStack Virtual. No ORM, no database.
 
-**Design doc:** `docs/plans/2026-10-11-orchestrator-design.md`. Read it before Task 1. Every `(probed)` claim in it is verified; `docs/probes/` holds the scripts.
+**Design doc:** `docs/plans/2026-10-11-kantan-design.md`. Read it before Task 1. Every `(probed)` claim in it is verified; `docs/probes/` holds the scripts.
 
 **Standing rules for every task:**
 
@@ -90,7 +90,7 @@ claude install latest   # only if claude --version is behind
 
 **Step 3: Record the result**
 
-Append a line to `docs/plans/2026-10-11-orchestrator-design.md` under §1.2 stating the versions this build was made against and the date. If the CLI major/minor changed from 2.1.296, re-run `docs/probes/probe.mjs` and `docs/probes/probeC.mjs` before continuing: the stream-json envelope shape is version-dependent, and Tasks 5 and 6 encode its shape.
+Append a line to `docs/plans/2026-10-11-kantan-design.md` under §1.2 stating the versions this build was made against and the date. If the CLI major/minor changed from 2.1.296, re-run `docs/probes/probe.mjs` and `docs/probes/probeC.mjs` before continuing: the stream-json envelope shape is version-dependent, and Tasks 5 and 6 encode its shape.
 
 **Step 4: Commit**
 
@@ -132,7 +132,7 @@ Expected: fails, cannot resolve `../src/version`.
 ```json
 // package.json
 {
-  "name": "orchestrator",
+  "name": "kantan",
   "private": true,
   "type": "module",
   "scripts": {
@@ -365,7 +365,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 test("an absent store reads as empty rather than throwing", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "orch-"))
+  const dir = await mkdtemp(join(tmpdir(), "kantan-"))
   expect(await loadProjects(join(dir, "nope.json"))).toEqual([])
 })
 
@@ -379,7 +379,7 @@ test("a new project gets sonnet, high plan effort and medium implement effort", 
 })
 
 test("adding the same path twice updates rather than duplicates", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "orch-"))
+  const dir = await mkdtemp(join(tmpdir(), "kantan-"))
   const f = join(dir, "projects.json")
   await addProject(f, defaults({ path: "/repo", testCmd: "bun test" }))
   await addProject(f, defaults({ path: "/repo", testCmd: "flutter test" }))
@@ -389,7 +389,7 @@ test("adding the same path twice updates rather than duplicates", async () => {
 })
 
 test("a malformed store throws with the path in the message", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "orch-"))
+  const dir = await mkdtemp(join(tmpdir(), "kantan-"))
   const f = join(dir, "projects.json")
   await writeFile(f, "{ not json")
   await expect(loadProjects(f)).rejects.toThrow(/projects\.json/)

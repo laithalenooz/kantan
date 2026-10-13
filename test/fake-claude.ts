@@ -45,17 +45,17 @@
  *
  * **The real binary writes `SessionEnd hook [...] failed: Hook cancelled` to
  * stderr** whenever stdin closes promptly, which is every one of the probes
- * above. That is the real CLI's noise, not a defect in this orchestrator: see
+ * above. That is the real CLI's noise, not a defect in kantan: see
  * design §5, which handles it by draining before closing stdin. This double
  * deliberately does not emit it, so a test asserting on stderr is asserting on
- * the orchestrator.
+ * kantan.
  *
  * ## Deliberate divergences, each with its reason
  *
  * - **A stdin line that parses as JSON but is not a user message exits 2**,
  *   where the real CLI ignores it silently and then waits forever (probed).
- *   Our orchestrator writes only `{"type":"user",...}`, so such a line is a bug
- *   in the orchestrator, and the real behaviour turns that bug into a hang in
+ *   kantan writes only `{"type":"user",...}`, so such a line is a bug
+ *   in kantan, and the real behaviour turns that bug into a hang in
  *   production. Refusing catches it in a test instead.
  * - **Exit 2 means this double refused**, a code the real CLI returns for none
  *   of these cases, so a harness misconfiguration is never read as a CLI
@@ -228,7 +228,7 @@ async function logRecord(record: Record<string, unknown>): Promise<void> {
     await appendFile(path, JSON.stringify(record) + "\n")
   } catch (cause) {
     // Loudly: a silently dropped write leaves a later task asserting against an
-    // empty log, which looks like the orchestrator never spawned anything.
+    // empty log, which looks like kantan never spawned anything.
     die(2, `fake-claude: cannot append to KANTAN_FAKE_ARGV_LOG ${path}: ${(cause as Error).message}`)
   }
 }

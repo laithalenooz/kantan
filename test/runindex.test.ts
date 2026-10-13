@@ -1149,7 +1149,7 @@ function fakeBranch({ ref }: { feature: string; ref: string }): string {
 }
 
 async function scratchDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "orch-runindex-"))
+  const dir = await mkdtemp(join(tmpdir(), "kantan-runindex-"))
   return dir
 }
 

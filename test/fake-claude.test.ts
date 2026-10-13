@@ -604,7 +604,7 @@ test("a stdin line that is not JSON is refused, as the real CLI refuses it", asy
 test("a stdin line that is JSON but not a user message is refused loudly", async () => {
   // A deliberate divergence, documented in the script's header. Probed: the
   // real CLI ignores such a line silently and then waits forever. Our spawner
-  // writes only {"type":"user",...}, so this is an orchestrator bug, and the
+  // writes only {"type":"user",...}, so this is a kantan bug, and the
   // real behaviour turns it into a production hang. Refusing catches it here.
   const dir = await workspace("stdin-not-user")
   const script = await writeScript(dir, [{ fixture: PLAN }])
@@ -1040,7 +1040,7 @@ test("writes nothing to stderr on a successful turn", async () => {
   // The real binary prints "SessionEnd hook [...] failed: Hook cancelled"
   // whenever stdin closes promptly (probed, design §5). Reproducing it here
   // would make every stderr assertion in the suite about the CLI's noise
-  // instead of about the orchestrator.
+  // instead of about kantan.
   const dir = await workspace("stderr-clean")
   const script = await writeScript(dir, [{ fixture: PLAN }])
   const { err } = await runFake({
@@ -1130,7 +1130,7 @@ test("a credential-shaped CLAUDE_ variable is recorded by name but not by value"
   const env = record?.["env"] as Record<string, string>
   expect(record?.["envKeys"]).toContain("CLAUDE_CODE_MESSAGING_TOKEN")
   expect(JSON.stringify(record)).not.toContain("tok-do-not-log")
-  // ...while the variable the orchestrator actually sets is still readable.
+  // ...while the variable kantan actually sets is still readable.
   expect(env["CLAUDE_CONFIG_DIR"]).toBe("/tmp/acct-b")
 })
 

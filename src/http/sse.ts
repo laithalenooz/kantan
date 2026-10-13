@@ -91,7 +91,7 @@ export function sseFrame(event: string, data: unknown): string {
  *
  * - **Stop when a record still follows on disk.** That record never reaches a
  *   client, and never will, since a reconnect replays from byte 0 and stops at
- *   `end` again. Nothing in this orchestrator writes past `end`: the run is
+ *   `end` again. Nothing in kantan writes past `end`: the run is
  *   over and the log is closed. The cost is bounded and visible.
  * - **Never stop.** A poller and an open file descriptor per connection, for
  *   the life of the process, including on *finished* runs - which is the common

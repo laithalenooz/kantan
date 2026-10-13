@@ -65,8 +65,8 @@ function serve(opts: Parameters<typeof createServer>[0] = {}): Launch {
   const l = createServer({
     port: 0,
     ask: NO_MODEL,
-    distDir: join(tmpdir(), "orch-no-dist"),
-    homeDir: join(tmpdir(), "orch-no-home"),
+    distDir: join(tmpdir(), "kantan-no-dist"),
+    homeDir: join(tmpdir(), "kantan-no-home"),
     ...opts,
   })
   launched.push(l)
@@ -634,7 +634,7 @@ afterAll(async () => {
 /** A runs directory of its own, canonicalised: a descriptor's readlink target
  * is the real path, so the fd assertions compare like with like. */
 async function runsDir(): Promise<string> {
-  const dir = await realpath(await mkdtemp(join(tmpdir(), "orch-sse-")))
+  const dir = await realpath(await mkdtemp(join(tmpdir(), "kantan-sse-")))
   scratchDirs.push(dir)
   return dir
 }
@@ -1462,7 +1462,7 @@ const TASK: StartRequest = { projectPath: "/repo", featureFile: "docs/features/x
  * would register projects in the store the developer runs kantan against.
  */
 async function storeFile(): Promise<string> {
-  const dir = await realpath(await mkdtemp(join(tmpdir(), "orch-store-")))
+  const dir = await realpath(await mkdtemp(join(tmpdir(), "kantan-store-")))
   scratchDirs.push(dir)
   return join(dir, "projects.json")
 }
@@ -2230,7 +2230,7 @@ async function scratch(prefix: string): Promise<string> {
 
 /** A repo with one commit, clean, returning its real path. */
 async function cleanRepo(): Promise<string> {
-  const dir = await scratch("orch-repo-")
+  const dir = await scratch("kantan-repo-")
   await gitIn(dir, "init")
   await writeFile(join(dir, "app.txt"), "one\n")
   await gitIn(dir, "add", "app.txt")
@@ -2342,7 +2342,7 @@ test("a project spelled through a symlink still resolves to its own plan", async
   const repo = await cleanRepo()
   await mkdir(join(repo, "docs", "plans"), { recursive: true })
   await writeFile(join(repo, "docs", "plans", "p.md"), "# Through a link\n")
-  const link = join(await scratch("orch-plink-"), "repo")
+  const link = join(await scratch("kantan-plink-"), "repo")
   await symlink(repo, link)
 
   const dir = await runsDir()
@@ -2360,7 +2360,7 @@ test("a plan file that is a symlink inside the repo is read; one pointing out of
   // that does - passes every check on the path and still reads the key. The
   // agent that writes plans has shell access in that repo, so the link is one
   // command away.
-  const secret = join(await scratch("orch-secret-"), "id_rsa")
+  const secret = join(await scratch("kantan-secret-"), "id_rsa")
   await writeFile(secret, "PRIVATE KEY MATERIAL\n")
   const dir = await runsDir()
   const l = serve({ runsDir: dir })
@@ -2384,7 +2384,7 @@ test("a plan file that is a symlink inside the repo is read; one pointing out of
 
   // The directory holding it is a link out of the repo.
   const viaDir = await cleanRepo()
-  const elsewhere = await scratch("orch-elsewhere-")
+  const elsewhere = await scratch("kantan-elsewhere-")
   await writeFile(join(elsewhere, "p.md"), "PRIVATE KEY MATERIAL\n")
   await mkdir(join(viaDir, "docs"), { recursive: true })
   await symlink(elsewhere, join(viaDir, "docs", "plans"))
@@ -2468,7 +2468,7 @@ test("a recorded plan path that escapes the repo is a 4xx and reads nothing", as
   // is caller input in the same class as a run id - and the check is
   // `runLogPath`'s: refuse by construction rather than resolve and compare.
   const repo = await cleanRepo()
-  const outside = join(await scratch("orch-secret-"), "id_rsa")
+  const outside = join(await scratch("kantan-secret-"), "id_rsa")
   await writeFile(outside, "PRIVATE KEY MATERIAL\n")
 
   const dir = await runsDir()
@@ -2497,7 +2497,7 @@ test("a recorded plan path that escapes the repo is a 4xx and reads nothing", as
 })
 
 test("a project whose repo has moved is unreadable with git's own reason, not a 500", async () => {
-  const gone = join(await scratch("orch-gone-"), "repo")
+  const gone = join(await scratch("kantan-gone-"), "repo")
   const dir = await runsDir()
   const l = serve({ runsDir: dir })
   await planLog(dir, "moved", gone, "docs/plans/x.md")
@@ -2619,7 +2619,7 @@ test("the profile directory and the account are separate fields, and the account
   // stranger names directories, and design §5 lists a wrong account as a
   // defect because people bill clients from one of these.
   const repo = await cleanRepo()
-  const profile = await scratch("orch-profile-")
+  const profile = await scratch("kantan-profile-")
   const { l, store } = await withStore()
 
   const ok = await register(l, { path: repo, testCmd: "npm test", configDir: profile, account: "work" })
@@ -2672,12 +2672,12 @@ test("the task file the dialog asks for is not a project field, and saying so is
 test("every repo state kantan cannot run in is refused, with the reason git gave", async () => {
   // The enumeration, rather than a sample of it: each row is a thing that
   // otherwise registers happily and fails at the first run.
-  const empty = await scratch("orch-plain-")
-  const file = join(await scratch("orch-file-"), "notadir")
+  const empty = await scratch("kantan-plain-")
+  const file = join(await scratch("kantan-file-"), "notadir")
   await writeFile(file, "x\n")
-  const bare = await scratch("orch-bare-")
+  const bare = await scratch("kantan-bare-")
   await gitIn(bare, "init", "--bare")
-  const unborn = await scratch("orch-unborn-")
+  const unborn = await scratch("kantan-unborn-")
   await gitIn(unborn, "init")
   const repo = await cleanRepo()
   const inside = join(repo, "docs")
@@ -2712,7 +2712,7 @@ test("a second spelling of one repo is one project, not two histories", async ()
   // spelling then meets the 409 below instead of forking the project's runs,
   // its logs and its task tree.
   const repo = await cleanRepo()
-  const link = join(await scratch("orch-link-"), "repo-by-another-name")
+  const link = join(await scratch("kantan-link-"), "repo-by-another-name")
   await symlink(repo, link)
   const { l, store } = await withStore()
 
@@ -3150,7 +3150,7 @@ test("the account can be changed after registering, which is what nothing could 
   // and `configDir` is the profile the runs actually use, so both are here and
   // neither is derived from the other.
   const repo = await cleanRepo()
-  const profile = await scratch("orch-profile-")
+  const profile = await scratch("kantan-profile-")
   const { l, store } = await tunedStore(repo)
 
   expect((await edit(l, { path: repo, account: "work", configDir: profile })).status).toBe(200)
@@ -3191,7 +3191,7 @@ test("changing account alone moves the label and NOT the profile that bills", as
   // `configDir` did not move. A UI offering an account switcher must send both
   // keys in one call - which the test above proves it can.
   const repo = await cleanRepo()
-  const profile = await scratch("orch-profile-")
+  const profile = await scratch("kantan-profile-")
   const { l, store } = await tunedStore(repo)
   await edit(l, { path: repo, account: "work", configDir: profile })
 
@@ -3357,7 +3357,7 @@ test("a project whose repo has moved can still be edited, because the path is no
   // kantan can run in, while an edit names a record that already exists. A
   // route that re-checked the repo would make a project whose checkout has
   // gone impossible to fix and impossible to point anywhere else.
-  const gone = join(await scratch("orch-gone-"), "repo")
+  const gone = join(await scratch("kantan-gone-"), "repo")
   const { l, store } = await tunedStore(gone)
   expect((await edit(l, { path: gone, testCmd: "flutter test" })).status).toBe(200)
   expect((await loadProjects(store))[0]?.testCmd).toBe("flutter test")
@@ -3670,7 +3670,7 @@ test("the feature path is the repo-relative string a run header records, which i
   // silent re-run of finished work the tree cannot detect.
   const real = await cleanRepo()
   await withFeature(real, "x.md", "- [ ] T1 Only task\n")
-  const link = join(await scratch("orch-link-"), "repo")
+  const link = join(await scratch("kantan-link-"), "repo")
   await symlink(real, link)
 
   // Registered through the symlinked spelling, which is the case that breaks a
@@ -3809,7 +3809,7 @@ test("a run the server knows is live reads as running; without that it reads as 
 
 test("a feature file linked inside the repo is read; one linked out of it is dropped and said out loud", async () => {
   const repo = await cleanRepo()
-  const secret = join(await scratch("orch-secret-"), "id_rsa")
+  const secret = join(await scratch("kantan-secret-"), "id_rsa")
   await writeFile(secret, "-----BEGIN OPENSSH PRIVATE KEY-----\n- [ ] T9 leaked\n")
 
   await withFeature(repo, "plain.md", "- [ ] T1 Plain\n")
@@ -3838,7 +3838,7 @@ test("a docs/features directory that is itself a link out of the repo yields no 
   // The other half of the same vector: every path under it resolves outside,
   // and the string checks on the names cannot see that.
   const repo = await cleanRepo()
-  const elsewhere = await scratch("orch-elsewhere-")
+  const elsewhere = await scratch("kantan-elsewhere-")
   await writeFile(join(elsewhere, "notes.md"), "- [ ] T1 Private notes\n")
   await mkdir(join(repo, "docs"), { recursive: true })
   await symlink(elsewhere, join(repo, "docs", "features"))
@@ -3881,8 +3881,8 @@ test("one unusable project does not blank the tree", async () => {
   // once.
   const good = await cleanRepo()
   await withFeature(good, "x.md", "- [ ] T1 Good\n")
-  const gone = await scratch("orch-gone-")
-  const notADir = join(await scratch("orch-file-"), "a-file")
+  const gone = await scratch("kantan-gone-")
+  const notADir = join(await scratch("kantan-file-"), "a-file")
   await writeFile(notADir, "not a repo\n")
   const store = await storeFile()
   for (const path of [gone, notADir, good]) await addProject(store, defaults({ path, testCmd: "bun test" }))
@@ -4247,7 +4247,7 @@ test("a pre-rename install keeps its projects, read from ~/.orch by the real ent
 }, 20_000)
 
 test("the real entry point builds a server that can register a project and start a run", async () => {
-  const home = await scratch("orch-home-")
+  const home = await scratch("kantan-home-")
   const repo = await cleanRepo()
   await mkdir(join(repo, "docs", "features"), { recursive: true })
   await writeFile(join(repo, "docs", "features", "x.md"), "# Importer\n\n- [ ] T1 Parse the manifest\n")
@@ -4824,13 +4824,13 @@ test("an added account is offered by the tree, with no project using it", async 
   const store = await storeFile()
   const l = await withTree(store)
 
-  const added = await addAccount(l, { kind: "work", label: "Acme", configDir: "/tmp/orch-acme" })
+  const added = await addAccount(l, { kind: "work", label: "Acme", configDir: "/tmp/kantan-acme" })
   expect(added.status).toBe(200)
 
   const tree = JSON.parse((await call(l, { path: "/api/projects" })).body) as {
     accounts: Array<{ kind: string; label: string; configDir: string }>
   }
-  expect(tree.accounts).toEqual([{ kind: "work", label: "Acme", configDir: "/tmp/orch-acme" }])
+  expect(tree.accounts).toEqual([{ kind: "work", label: "Acme", configDir: "/tmp/kantan-acme" }])
 })
 
 test("an added account appears in the usage view before it has ever run", async () => {
@@ -4840,12 +4840,12 @@ test("an added account appears in the usage view before it has ever run", async 
    * account" unless the account is listed. */
   const store = await storeFile()
   const l = await withTree(store)
-  await addAccount(l, { kind: "work", label: "Acme", configDir: "/tmp/orch-acme" })
+  await addAccount(l, { kind: "work", label: "Acme", configDir: "/tmp/kantan-acme" })
 
   const body = JSON.parse((await call(l, { path: "/api/accounts" })).body) as {
     accounts: Array<{ profile: string | null; freshness: string }>
   }
-  const acme = body.accounts.find((a) => a.profile === "/tmp/orch-acme")
+  const acme = body.accounts.find((a) => a.profile === "/tmp/kantan-acme")
   expect(acme).toBeDefined()
   /* "never", not absent, and that distinction is the whole reason the registry
    * feeds this route: a page can say "kantan has not seen this account run"

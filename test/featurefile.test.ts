@@ -17,7 +17,7 @@ const FEATURE = `# Widget export
 /** A scratch repo with an empty `docs/features`. Real files in a real
  * directory, never this repository's own `docs/`. */
 async function repo(): Promise<{ root: string; features: string }> {
-  const root = await mkdtemp(join(tmpdir(), "orch-feature-"))
+  const root = await mkdtemp(join(tmpdir(), "kantan-feature-"))
   const features = join(root, "docs", "features")
   await mkdir(features, { recursive: true })
   return { root, features }
@@ -83,7 +83,7 @@ test("discovery lists exactly the markdown files directly under docs/features", 
 test("a repo with no docs/features has no features rather than an error", async () => {
   // The normal first state of a repo, and the same answer `loadProjects` gives
   // for an absent store.
-  const root = await mkdtemp(join(tmpdir(), "orch-feature-"))
+  const root = await mkdtemp(join(tmpdir(), "kantan-feature-"))
   expect(await listFeatureFiles(root)).toEqual([])
 })
 
@@ -91,7 +91,7 @@ test("a docs/features that is a file is an error, not an empty list", async () =
   // Only "it is not there" reads as "no features yet". Anything else is a
   // fault the user has to see, because an empty list is indistinguishable from
   // a repo that never had a backlog.
-  const root = await mkdtemp(join(tmpdir(), "orch-feature-"))
+  const root = await mkdtemp(join(tmpdir(), "kantan-feature-"))
   await mkdir(join(root, "docs"))
   await writeFile(join(root, "docs", "features"), "not a directory\n")
   await expect(listFeatureFiles(root)).rejects.toThrow()

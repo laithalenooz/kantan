@@ -2,7 +2,7 @@
  * The one test that spends money.
  *
  * Everything else in this suite runs against `test/fake-claude.ts`, which
- * answers from fixtures. That proves the orchestrator reads the CLI's output
+ * answers from fixtures. That proves kantan reads the CLI's output
  * correctly; it cannot prove the CLI still writes what the fixtures captured,
  * and the fixtures are a snapshot of one version. This test closes that gap by
  * driving one trivial task end to end on the real binary: plan, approve,
@@ -48,7 +48,7 @@ let home = ""
 
 /** A git repo with one task, whose test command fails until the task is done. */
 async function scratchRepo(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "orch-live-"))
+  const root = await mkdtemp(join(tmpdir(), "kantan-live-"))
   await mkdir(join(root, "docs", "features"), { recursive: true })
 
   // The test command is the product's core promise: kantan branches on this
@@ -104,7 +104,7 @@ async function waitFor(runId: string, runsDir: string, want: (state: string) => 
 beforeAll(async () => {
   if (!LIVE) return
   repo = await scratchRepo()
-  home = await mkdtemp(join(tmpdir(), "orch-live-home-"))
+  home = await mkdtemp(join(tmpdir(), "kantan-live-home-"))
 })
 
 afterAll(async () => {

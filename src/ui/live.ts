@@ -29,7 +29,7 @@ export interface Waiting {
    * The `waiting` record's own `detail`.
    *
    * `null` when the record carried none. Not backfilled from the last result:
-   * a `blocked` run the orchestrator itself parked and a `stalled` one have no
+   * a `blocked` run kantan itself parked and a `stalled` one have no
    * agent text behind them, so falling back would render the previous turn's
    * prose as the reason the run stopped.
    */

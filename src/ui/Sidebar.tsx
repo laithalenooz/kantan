@@ -261,7 +261,7 @@ export interface SidebarProps {
  * **Grouped by the caller, and that is the whole point.** Within a process the
  * `total_cost_usd` figure is cumulative, so where one process ends and the next
  * begins decides the total — and the event stream does not carry that boundary.
- * The orchestrator records it instead: a `phase` record "carries a `sessionId`
+ * kantan records it instead: a `phase` record "carries a `sessionId`
  * exactly when this record spawned a process, which is what lets a resumed run
  * split the log into per-process cost windows" (`src/run.ts`), and
  * `foldForResume` is the fold that reads it. So the rail is handed windows and

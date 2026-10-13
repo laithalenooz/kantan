@@ -85,7 +85,7 @@ export interface TestsSeen {
   output?: string
 }
 
-/** A test run, which is the orchestrator's own record rather than a CLI event. */
+/** A test run, which is kantan's own record rather than a CLI event. */
 export interface TestsRow {
   id: string
   at?: number

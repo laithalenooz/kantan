@@ -21,7 +21,7 @@ async function git(dir: string, ...args: string[]): Promise<void> {
 
 /** A scratch directory of its own, keyed on the pid per CLAUDE.md. */
 async function scratch(): Promise<string> {
-  return await realpath(await mkdtemp(join(tmpdir(), `orch-detect-${process.pid}-`)))
+  return await realpath(await mkdtemp(join(tmpdir(), `kantan-detect-${process.pid}-`)))
 }
 
 /** A real repo with one commit. */

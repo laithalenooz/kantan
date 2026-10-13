@@ -1874,7 +1874,7 @@ describe("the plan is untrusted content", () => {
     const boxes = Array.from(host.querySelectorAll('input[type="checkbox"]'))
     expect(boxes).toHaveLength(2)
     /* A plan is a document, not a form: ticking a box here would record nothing
-     * and the orchestrator owns the real tick. */
+     * and kantan owns the real tick. */
     for (const box of boxes) expect((box as HTMLInputElement).disabled).toBe(true)
     expect(focusables(host).some((el) => el.tagName === "INPUT")).toBe(false)
   })

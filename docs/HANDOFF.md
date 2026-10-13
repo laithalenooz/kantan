@@ -290,7 +290,7 @@ anything else, so installing it suite-wide leaves `test/version.test.ts` passing
   the list as a single comma or space separated token; a second bare token stops at the positional
   guard rather than being dropped from the allowlist.
 - **A session becomes resumable only once a turn's replay finishes**, and the cursor that records
-  that is written **after** the turn's bytes are out. So a kill timed off the orchestrator's own
+  that is written **after** the turn's bytes are out. So a kill timed off kantan's own
   output can still land in the window where the result has arrived but the session is not
   resumable yet, and the resumed run then meets `No conversation found`. `test/run.test.ts` polls
   `<script>.cursor` for the session id before killing, which closes it. What the real CLI does
@@ -595,7 +595,7 @@ human edited it.
 | Field | Why it had to exist |
 |---|---|
 | `RunHeader.baseBranch` | a resumed run has nothing to `returnToBase` to otherwise. The branch can be recomputed from `featureFile` + `taskRef`; the base cannot be recomputed from anything, and `recordBaseBranch` both refuses on a task-branch checkout and is the stacking bug |
-| `PhaseRecord.detail` | nothing else holds *why* a run is waiting. A `question` has the agent's text in the `cli` records before it, but a `blocked` the orchestrator decided (an exhausted budget) and a `stalled` one have no agent text at all, so a restarted server rendered the previous turn's prose as the reason |
+| `PhaseRecord.detail` | nothing else holds *why* a run is waiting. A `question` has the agent's text in the `cli` records before it, but a `blocked` kantan decided (an exhausted budget) and a `stalled` one have no agent text at all, so a restarted server rendered the previous turn's prose as the reason |
 | `EndRecord.warnings` | a `done` run can still have things a human must see - a feature file edited mid-run, a task already ticked, a checkout that could not return to base. `why` is documented as why a run *failed*, and the log is the only place such a note survives the server that wrote it |
 
 All three are optional, per the absence policy: they are younger than the logs already on disk, and

@@ -58,7 +58,7 @@ const send = (method: string, params: Record<string, unknown> = {}): Promise<Rec
  * window sizes, a loose `innerText.includes` match reached **Approve plan** on
  * a real parked run: it approved a plan, spawned an implement phase, committed
  * to the user's repository and spent money, and the only reason that was
- * recoverable is that kantan keeps the work on its own `orch/*` branch. A
+ * recoverable is that kantan keeps the work on its own task branch. A
  * screenshot probe must not be able to do that, and "be careful" is not a
  * mechanism.
  *

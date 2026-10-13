@@ -745,7 +745,7 @@ test("the permission flags are the permissions module's, spliced in unchanged", 
 
 test("the prompt reaches the child as one stream-json user message", async () => {
   // The shape is the real CLI's, not the double's: the double only checks that
-  // `type` is "user" (anything else is a bug in the orchestrator that would
+  // `type` is "user" (anything else is a bug in kantan that would
   // hang in production), so agreement with it would prove nothing. Every
   // script in docs/probes/ writes exactly this envelope to the real binary.
   const ws = await workspace("prompt-shape")

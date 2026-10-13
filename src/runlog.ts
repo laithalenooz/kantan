@@ -216,7 +216,7 @@ export interface PhaseRecord {
    * Why the run is waiting, in prose, on a `waiting` record.
    *
    * Nothing else in the log holds it. A `question` has the agent's own text in
-   * the `cli` records before it, but a `blocked` the orchestrator itself
+   * the `cli` records before it, but a `blocked` kantan itself
    * decided - an exhausted budget - and a `stalled` one have no agent text
    * behind them at all, so a reader that fell back to the last result would
    * render the previous turn's prose as the reason the run stopped.
@@ -358,7 +358,7 @@ export interface EndRecord {
   costUsd: number
 }
 
-/** What the orchestrator writes itself. `header` is written by `createRunLog`
+/** What kantan writes itself. `header` is written by `createRunLog`
  * and `cli` by `appendCli`, so neither is appendable through `append`. */
 export type OwnRecord = PhaseRecord | TestRecord | HumanRecord | EndRecord
 
@@ -396,7 +396,7 @@ export function runLogPath(runId: string, dir: string = defaultRunsDir()): strin
 
 export interface RunLog {
   readonly path: string
-  /** Appends one of the orchestrator's own records. */
+  /** Appends one of kantan's own records. */
   append(record: OwnRecord): Promise<void>
   /** Appends one raw stream-json line, nested under `event` byte for byte.
    * `raw` must be the line without its terminator. */

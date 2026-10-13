@@ -1,11 +1,11 @@
 {
-  "name": "orchestrator",
+  "name": "kantan",
   "private": true,
   "type": "module",
   "scripts": {
     "test": "bun test",
     "server": "bun run src/server.ts",
-    "server:dev": "ORCH_DEV=1 bun --watch run src/server.ts",
+    "server:dev": "KANTAN_DEV=1 bun --watch run src/server.ts",
     "ui": "vite",
   "build": "vite build",
     "typecheck": "tsc --noEmit",

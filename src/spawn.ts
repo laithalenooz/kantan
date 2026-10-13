@@ -108,7 +108,7 @@ const MIN_BUDGET_USD = 1e-9
  * The first three are real run states and the fourth never is, so they fail in
  * opposite directions. Passing a non-positive remainder through would be
  * refused by the CLI as an invalid option, on stderr, with exit 1 - the shape
- * of a misconfigured orchestrator rather than of an exhausted budget, and a
+ * of a misconfigured kantan rather than of an exhausted budget, and a
  * message nothing in the UI knows how to explain. A floor instead reaches the
  * designed stop: the process starts, the first turn exceeds the budget, and the
  * run gets `subtype=error_max_budget_usd`, which §3.4 already handles by

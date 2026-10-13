@@ -205,7 +205,7 @@ test("two symlinked spellings of one repo contend for the same lock", async () =
   // src/projects.ts normalises `path` lexically only, so one repo can be two
   // records. One active run per project has to mean per repository.
   const { dir, repo } = await repoWithCommit()
-  const link = join(await mkdtemp(join(tmpdir(), "orch-git-")), "same-repo")
+  const link = join(await mkdtemp(join(tmpdir(), "kantan-git-")), "same-repo")
   await symlink(dir, link)
 
   await acquireRunLock(repo, { runId: "run-1", branch: "kantan/t1-aaaaaaaa" })
@@ -223,7 +223,7 @@ test("a path that does not exist is refused, naming the path", async () => {
 })
 
 test("a path that exists but is not a repo is refused, naming the path", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "orch-git-"))
+  const dir = await mkdtemp(join(tmpdir(), "kantan-git-"))
   const message = await messageOf(requireUsableRepo(dir))
   expect(message).toContain(dir)
 })
@@ -252,7 +252,7 @@ test("a subdirectory of a repo is refused, and the error names the root", async 
 })
 
 test("a bare repo is refused: there is no working tree for an agent to edit", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "orch-git-"))
+  const dir = await mkdtemp(join(tmpdir(), "kantan-git-"))
   const bare = join(dir, "x.git")
   await git(dir, "init", "--bare", "-b", "main", bare)
 
@@ -263,7 +263,7 @@ test("a bare repo is refused: there is no working tree for an agent to edit", as
 test("a repo with no commits yet is refused, because a task branch needs a base commit", async () => {
   // `git branch --show-current` answers "main" on an unborn HEAD, so a base
   // recorder that trusts it gets a name that cannot be branched from.
-  const dir = await mkdtemp(join(tmpdir(), "orch-git-"))
+  const dir = await mkdtemp(join(tmpdir(), "kantan-git-"))
   await git(dir, "init", "-b", "main", ".")
 
   const message = await messageOf(requireUsableRepo(dir))
@@ -272,7 +272,7 @@ test("a repo with no commits yet is refused, because a task branch needs a base 
 
 test("a repo reached through a symlink reports its real root, so it is one repo", async () => {
   const { dir, repo } = await repoWithCommit()
-  const link = join(await mkdtemp(join(tmpdir(), "orch-git-")), "same-repo")
+  const link = join(await mkdtemp(join(tmpdir(), "kantan-git-")), "same-repo")
   await symlink(dir, link)
 
   expect((await requireUsableRepo(link)).root).toBe(repo.root)
@@ -444,7 +444,7 @@ test("the dirty-file list is capped rather than printing a whole repo", async ()
 // --- Slugifying a task into a branch name ---
 
 test("every branch name git could refuse is one git accepts", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "orch-git-"))
+  const dir = await mkdtemp(join(tmpdir(), "kantan-git-"))
   await git(dir, "init", "-b", "main", ".")
   const refused: string[] = []
   for (const [feature, ref] of NASTY) {
@@ -922,7 +922,7 @@ describe("the branch prefix rename", () => {
 })
 
 async function repoWithCommit(): Promise<{ dir: string; repo: Repo }> {
-  const dir = await mkdtemp(join(tmpdir(), "orch-git-"))
+  const dir = await mkdtemp(join(tmpdir(), "kantan-git-"))
   await git(dir, "init", "-b", "main", ".")
   await writeFile(join(dir, "a.txt"), "- [ ] T1 do the thing\n")
   await writeFile(join(dir, ".gitignore"), "build/\nnode_modules.txt\n")
@@ -933,7 +933,7 @@ async function repoWithCommit(): Promise<{ dir: string; repo: Repo }> {
 
 /** A clean repo with one commit and a submodule at `sub`. */
 async function repoWithSubmodule(): Promise<{ dir: string; repo: Repo }> {
-  const inner = await mkdtemp(join(tmpdir(), "orch-git-inner-"))
+  const inner = await mkdtemp(join(tmpdir(), "kantan-git-inner-"))
   await git(inner, "init", "-b", "main", ".")
   await writeFile(join(inner, "i.txt"), "inner\n")
   await git(inner, "add", "-A")

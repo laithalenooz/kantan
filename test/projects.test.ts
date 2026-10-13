@@ -13,7 +13,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 test("an absent store reads as empty rather than throwing", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "orch-"))
+  const dir = await mkdtemp(join(tmpdir(), "kantan-"))
   expect(await loadProjects(join(dir, "nope.json"))).toEqual([])
 })
 
@@ -27,7 +27,7 @@ test("a new project gets the design's model and effort defaults", () => {
 })
 
 test("adding the same path twice updates rather than duplicates", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "orch-"))
+  const dir = await mkdtemp(join(tmpdir(), "kantan-"))
   const f = join(dir, "projects.json")
   await addProject(f, defaults({ path: "/repo", testCmd: "npm test" }))
   await addProject(f, defaults({ path: "/repo", testCmd: "flutter test" }))
@@ -37,7 +37,7 @@ test("adding the same path twice updates rather than duplicates", async () => {
 })
 
 test("a malformed store throws with the path in the message", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "orch-"))
+  const dir = await mkdtemp(join(tmpdir(), "kantan-"))
   const f = join(dir, "projects.json")
   await writeFile(f, "{ not json")
   await expect(loadProjects(f)).rejects.toThrow(/projects\.json/)
@@ -47,7 +47,7 @@ test("a malformed store throws with the path in the message", async () => {
 
 /** A fresh empty directory; the store path inside it does not exist yet. */
 async function store(): Promise<{ dir: string; file: string }> {
-  const dir = await mkdtemp(join(tmpdir(), "orch-"))
+  const dir = await mkdtemp(join(tmpdir(), "kantan-"))
   return { dir, file: join(dir, "projects.json") }
 }
 
