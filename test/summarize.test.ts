@@ -131,7 +131,7 @@ test("keeps the end of a long output, where the failure is", async () => {
 const repoRoot = join(import.meta.dir, "..")
 
 test("the default call goes through CLAUDE_BIN on claude-haiku-5-5", async () => {
-  const dir = join(repoRoot, ".kantan-test", "summarize-seam")
+  const dir = join(repoRoot, ".kantan-test", `summarize-seam-${process.pid}`)
   await rm(dir, { recursive: true, force: true })
   await mkdir(dir, { recursive: true })
 

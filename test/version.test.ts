@@ -5,13 +5,37 @@ import { claudeVersion } from "../src/version"
 
 const repoRoot = join(import.meta.dir, "..")
 
-test("reads the claude CLI version", async () => {
+/**
+ * Whether the real CLI is installed.
+ *
+ * CI has no `claude` and cannot have one: installing it there would mean a
+ * credential in the runner, and the suite is explicitly built so that nothing
+ * in it can reach a model or spend money.
+ */
+const HAS_CLAUDE = Bun.which("claude") !== null
+
+/**
+ * Gated, because this is the one test here that can only be answered by a
+ * machine with the binary on it.
+ *
+ * The *mechanism* - spawn, read stdout, parse a version out of it - is proved
+ * by the sibling test below against a stub that reports `99.88.77`, a version
+ * the real CLI could never return. What this adds is the shape of the real
+ * binary's answer, which is worth checking on a developer's machine and is not
+ * something a runner without it can say anything about.
+ *
+ * It skips rather than asserting a fallback: a `claudeVersion()` that returned
+ * something plausible with no CLI present would be the worst outcome, because
+ * every run log records this string and a wrong one makes the stream-json
+ * findings unfalsifiable.
+ */
+test.skipIf(!HAS_CLAUDE)("reads the claude CLI version", async () => {
   const v = await claudeVersion()
   expect(v).toMatch(/^\d+\.\d+\.\d+$/)
 })
 
 test("honours KANTAN_CLAUDE_BIN when spawning the CLI", async () => {
-  const dir = join(repoRoot, ".kantan-test", "version-seam")
+  const dir = join(repoRoot, ".kantan-test", `version-seam-${process.pid}`)
   await rm(dir, { recursive: true, force: true })
   await mkdir(dir, { recursive: true })
 
@@ -50,7 +74,7 @@ test("honours KANTAN_CLAUDE_BIN when spawning the CLI", async () => {
 
 /** Runs claudeVersion() in a fresh process, since CLAUDE_BIN binds at import. */
 async function versionWith(bin: string): Promise<{ out: string; err: string; code: number }> {
-  const dir = join(repoRoot, ".kantan-test", "version-failure")
+  const dir = join(repoRoot, ".kantan-test", `version-failure-${process.pid}`)
   await mkdir(dir, { recursive: true })
   const probe = join(dir, "probe.ts")
   await writeFile(
@@ -73,13 +97,13 @@ async function versionWith(bin: string): Promise<{ out: string; err: string; cod
 }
 
 test("names the binary when it does not exist", async () => {
-  const { err, code } = await versionWith(join(repoRoot, ".kantan-test", "definitely-not-here"))
+  const { err, code } = await versionWith(join(repoRoot, ".kantan-test", `definitely-not-here-${process.pid}`))
   expect(code).toBe(1)
   expect(err).toContain("definitely-not-here")
 })
 
 test("reports the exit code and stderr when the binary fails", async () => {
-  const dir = join(repoRoot, ".kantan-test", "version-failure")
+  const dir = join(repoRoot, ".kantan-test", `version-failure-${process.pid}`)
   await mkdir(dir, { recursive: true })
   const stub = join(dir, "angry-claude")
   await writeFile(stub, '#!/bin/sh\necho "could not reach the keychain" >&2\nexit 3\n')
@@ -91,7 +115,7 @@ test("reports the exit code and stderr when the binary fails", async () => {
 })
 
 test("reports the output when it succeeds but prints no version", async () => {
-  const dir = join(repoRoot, ".kantan-test", "version-failure")
+  const dir = join(repoRoot, ".kantan-test", `version-failure-${process.pid}`)
   await mkdir(dir, { recursive: true })
   const stub = join(dir, "chatty-claude")
   await writeFile(stub, '#!/bin/sh\necho "update available, run claude install"\n')

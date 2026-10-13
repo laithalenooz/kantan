@@ -22,6 +22,13 @@
 #   * send anything anywhere. kantan binds 127.0.0.1 and talks to no service
 #
 # Read it before you run it. That is the whole reason it is this short.
+#
+# It carries no `<`, deliberately. get.kantan.sh serves this file as the
+# subdomain's index, and GitHub Pages labels an index `text/html` - curl does
+# not care, but a browser would swallow anything shaped like a tag, so a
+# reader checking the script before piping it would be shown a line with a
+# word missing. Avoiding one character is cheaper than configuring a host to
+# send a different content type.
 
 set -eu
 
@@ -88,7 +95,7 @@ printf '  Run it:      cd %s && bun run server\n' "$DIR"
 printf '  Then open:   http://127.0.0.1:3100\n'
 printf '\n'
 printf '  Two things it needs from you: the claude CLI logged in, and a repo with a\n'
-printf '  docs/features/<slug>.md holding "- [ ] T1 ..." lines.\n'
+printf '  docs/features/NAME.md holding "- [ ] T1 ..." lines.\n'
 printf '\n'
 
 if [ "$START" -eq 1 ]; then

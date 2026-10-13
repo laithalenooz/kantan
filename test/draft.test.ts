@@ -311,7 +311,7 @@ test("refuses an envelope whose result is not a string", () => {
 const repoRoot = join(import.meta.dir, "..")
 
 test("the default call goes through CLAUDE_BIN on claude-haiku-5-5", async () => {
-  const dir = join(repoRoot, ".kantan-test", "draft-seam")
+  const dir = join(repoRoot, ".kantan-test", `draft-seam-${process.pid}`)
   await rm(dir, { recursive: true, force: true })
   await mkdir(dir, { recursive: true })
 

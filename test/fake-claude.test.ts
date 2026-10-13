@@ -8,7 +8,7 @@ const FAKE = join(import.meta.dir, "fake-claude.ts")
 
 /** A scratch directory per test, so no script, cursor or log is shared. */
 async function workspace(name: string): Promise<string> {
-  const dir = join(repoRoot, ".kantan-test", "fake-claude", name)
+  const dir = join(repoRoot, ".kantan-test", "fake-claude", `${name}-${process.pid}`)
   await rm(dir, { recursive: true, force: true })
   await mkdir(dir, { recursive: true })
   return dir

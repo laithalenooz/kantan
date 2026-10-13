@@ -77,7 +77,7 @@ which kind of verification it saw, it does not get to imply either.
 ## Running it
 
 ```bash
-curl kantan.sh | sh
+curl get.kantan.sh | sh
 ```
 
 That is [`kantan.sh`](kantan.sh) in this repository, and it is short so you can

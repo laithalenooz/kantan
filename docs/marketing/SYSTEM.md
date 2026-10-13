@@ -265,7 +265,13 @@ Usable more or less verbatim.
 
 > Your backlog is markdown in your own repo, in your own git history.
 
-Install, which is genuinely three lines:
+Install, which is genuinely one line:
+
+```bash
+curl get.kantan.sh | sh
+```
+
+Or three, by hand:
 
 ```bash
 bun install
