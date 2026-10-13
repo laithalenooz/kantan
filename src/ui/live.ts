@@ -965,11 +965,20 @@ export interface AccountsAnswer {
 }
 
 /** What `POST /api/test` answers. */
+export interface Said {
+  text: string
+  /** `"agent"` - a model wrote it, and the surface must say so. `"tail"` - a
+   *  mechanical extract of the last output line, which claims nothing. */
+  by: "agent" | "tail"
+}
+
 export interface TestRunAnswer {
   testCmd: string
   exitCode: number
   durationMs: number
   timedOut: boolean
+  /** One line about the output, and who wrote it. */
+  summary: Said
   stdout: string
   stderr: string
 }
@@ -1001,36 +1010,31 @@ export async function runTestCommand(
   if (typeof body.exitCode !== "number") {
     throw new Error("the command ran but the server did not report an exit code, so there is nothing to judge it by")
   }
+  /**
+   * The summary is **read**, and its provenance with it.
+   *
+   * `by` decides whether a surface marks the line as the agent's words, so an
+   * absent or unrecognised value must not silently become `"agent"` - that
+   * would render model prose as though it were measured. Anything this reader
+   * does not recognise is `"tail"`, which claims less.
+   */
+  const said = body.summary
+  // `line`, not `text`: this module already has a `text(res)` helper, and
+  // shadowing it here broke the error path four lines up.
+  const line = typeof said?.text === "string" ? said.text : ""
+  const by = said?.by === "agent" ? "agent" : "tail"
+
   return {
     testCmd: typeof body.testCmd === "string" ? body.testCmd : trial.testCmd,
     exitCode: body.exitCode,
     durationMs: typeof body.durationMs === "number" ? body.durationMs : 0,
     timedOut: body.timedOut === true,
+    summary: { text: line, by },
     stdout: typeof body.stdout === "string" ? body.stdout : "",
     stderr: typeof body.stderr === "string" ? body.stderr : "",
   }
 }
 
-/**
- * The last line of a runner's output, which is where every runner puts its
- * summary.
- *
- * `stdout` first and `stderr` only if it has nothing: many runners print the
- * failure summary to stderr, and a suite that failed has something to say
- * there, but a suite that passed often writes a trailing newline to stderr and
- * nothing else. Empty rather than a guess when neither says anything.
- */
-export function summaryOf(answer: { stdout: string; stderr: string }): string | undefined {
-  const lastLine = (text: string): string | undefined =>
-    text
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => l !== "")
-      .at(-1)
-  const line = lastLine(answer.stdout) ?? lastLine(answer.stderr)
-  // A megabyte tail can hold a very long line; the chip is one line of a card.
-  return line === undefined ? undefined : line.slice(0, 160)
-}
 
 /**
  * Adds tasks to a task file that already exists.

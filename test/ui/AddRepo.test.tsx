@@ -1262,6 +1262,61 @@ describe("the test command", () => {
     expect(prose()).not.toContain("a stale refusal")
   })
 
+  /**
+   * **A sentence a model wrote is marked as the agent's words.**
+   *
+   * The rule the whole project turns on is that no surface claims something it
+   * did not observe. A model-written line sitting plainly beside a measured
+   * exit code reads as though kantan measured it too, which is the same
+   * category of overclaim as a green tick on a self-checked run.
+   *
+   * The run record already does this, with `AGENT` on its own rows. This is
+   * the same treatment in the one other place model prose now appears.
+   */
+  test("a sentence the agent wrote is labelled as the agent's", async () => {
+    await render(
+      <api.AddRepo
+        {...checked({
+          onRunTests: () => {},
+          testRun: {
+            phase: "done",
+            cmd: "bun test",
+            exitCode: 0,
+            summary: "24 tests passed across 6 files.",
+            summaryBy: "agent",
+          },
+        })}
+      />,
+    )
+    await pickAccount("personal")
+    await type(one<HTMLInputElement>(CMD_FIELD), "bun test")
+
+    expect(prose()).toContain("24 tests passed across 6 files.")
+    // The marker, in the record's own vocabulary.
+    expect(host.querySelector('[data-said="agent"]')).not.toBeNull()
+    // And the exit code is still the exit code, beside it.
+    expect(prose()).toContain("exit 0")
+  })
+
+  test("a mechanical extract is not labelled as the agent's, because it is not", async () => {
+    /* `tail` is the last non-empty line of output. It claims nothing, so
+     * marking it as written prose would be the opposite error - telling a
+     * reader a model vouched for a line it never saw. */
+    await render(
+      <api.AddRepo
+        {...checked({
+          onRunTests: () => {},
+          testRun: { phase: "done", cmd: "bun test", exitCode: 1, summary: "1 failing", summaryBy: "tail" },
+        })}
+      />,
+    )
+    await pickAccount("personal")
+    await type(one<HTMLInputElement>(CMD_FIELD), "bun test")
+
+    expect(prose()).toContain("1 failing")
+    expect(host.querySelector('[data-said="agent"]')).toBeNull()
+  })
+
   test("a run reports its exit code, never a verdict of its own", async () => {
     await render(
       <api.AddRepo

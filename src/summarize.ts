@@ -103,3 +103,111 @@ function excerpt(text: string, limit: number): string {
   const tail = limit - head
   return `${text.slice(0, head)}\n... ${text.length - limit} characters cut ...\n${text.slice(-tail)}`
 }
+
+// --- Summarizing one test run -----------------------------------------------
+
+const RUN_PROMPT = `A test command exited {code}. Say in one plain sentence what its output
+reports: how many tests ran, passed or failed, and the first real failure if
+there is one. No preamble, no advice, no verdict of your own - the exit code is
+the verdict and the reader can already see it. One line.
+
+`
+
+/**
+ * A line of prose, and **who wrote it**.
+ *
+ * The provenance travels with the text for the same reason
+ * `EndRecord.verifiedBy` exists: a surface that cannot tell who wrote a
+ * sentence cannot mark it, and unmarked model prose sitting beside measured
+ * figures is exactly what this project refuses to ship. The run record already
+ * marks the agent's words with `AGENT` on their own rows; this is what lets
+ * everything else do the same.
+ *
+ * Two values, and deliberately no third that blurs them.
+ */
+export interface Said {
+  /** One line, whitespace collapsed and capped. `""` when there is nothing. */
+  text: string
+  /** `"agent"` - a model wrote it. `"tail"` - a mechanical extract, no prose. */
+  by: "agent" | "tail"
+}
+
+/**
+ * The last non-empty line of output, which is **not** a summary of it.
+ *
+ * Kept, because it is the honest fallback: a mechanical extract that claims to
+ * be nothing more. `stdout` first and `stderr` only if it has nothing - many
+ * runners print the failure summary to stderr, but a suite that passed often
+ * writes a trailing newline there and nothing else.
+ *
+ * It used to be the only option, and it was actively misleading: a real `npm
+ * test` that **passed** ended with
+ * `npm error A complete log of this run can be found in: …`, so the summary
+ * beside exit 0 said "error". npm, cargo, pytest and gradle each put something
+ * different last.
+ */
+export function tailLine(out: { stdout: string; stderr: string }): string {
+  const last = (text: string): string | undefined =>
+    text
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l !== "")
+      .at(-1)
+  return cap(last(out.stdout) ?? last(out.stderr) ?? "", SUMMARY_CHARS)
+}
+
+/**
+ * One sentence about what a test run reported, written by a model.
+ *
+ * **The dividing line, and the reason this is safe:** the agent may write text
+ * that appears *inside* a surface; it may never decide what surface appears or
+ * what a status says. So:
+ *
+ * - The exit code is in the prompt **only** so the sentence cannot contradict
+ *   what the reader can already see. The chip, the colour and every pass/fail
+ *   branch still come from the number.
+ * - The prompt forbids a verdict in those words. A model adding "so the build
+ *   is broken" would be deciding what a status says.
+ * - Nothing in the run's decision path reads this. Deleting the call costs a
+ *   convenience line and nothing else.
+ * - The answer carries `by`, so whatever renders it can mark it as the agent's
+ *   words rather than passing model prose off as a measurement.
+ *
+ * **It degrades instead of throwing**, which is where it differs from
+ * `summarizeStall`. That one is called on a path that can handle a throw; this
+ * one answers a button somebody pressed, and an exit code with no sentence
+ * beside it is still the answer they asked for. A model that is down, rate
+ * limited or returns nothing falls back to `tailLine`, marked `"tail"`.
+ *
+ * It does not ask at all when both streams are blank: a silent failure gives
+ * the model nothing to read, so any sentence would be invention.
+ */
+export async function summarizeRun(
+  out: { exitCode: number; stdout: string; stderr: string },
+  ask: Ask = askHaiku,
+): Promise<Said> {
+  const tail = tailLine(out)
+  if (out.stdout.trim() === "" && out.stderr.trim() === "") return { text: tail, by: "tail" }
+
+  const streams = [
+    out.stdout.trim() === "" ? "" : `stdout:\n${excerpt(out.stdout, PROMPT_CHARS)}`,
+    out.stderr.trim() === "" ? "" : `stderr:\n${excerpt(out.stderr, PROMPT_CHARS)}`,
+  ]
+    .filter((s) => s !== "")
+    .join("\n\n")
+
+  try {
+    const reply = await ask(`${RUN_PROMPT.replace("{code}", String(out.exitCode))}${streams}\n`)
+    const text = cap(reply.replaceAll(/\s+/g, " ").trim(), SUMMARY_CHARS)
+    // An empty reply is not a summary. Blanking the row would be worse than
+    // the extract, which at least says something that is in the output.
+    if (text === "") return { text: tail, by: "tail" }
+    return { text, by: "agent" }
+  } catch {
+    /* Swallowed on purpose, and the only place in this module that swallows:
+       the caller pressed a button and is owed the exit code. The cause is not
+       logged here because `ask`'s own failure path already reports it, and a
+       second line per trial run would be noise. */
+    return { text: tail, by: "tail" }
+  }
+}

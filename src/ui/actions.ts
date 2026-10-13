@@ -26,7 +26,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 
-import { draftFeature, fetchAccounts, removeTask, runTestCommand, startRun, summaryOf, updateProject } from "./live.ts"
+import { draftFeature, fetchAccounts, removeTask, runTestCommand, startRun, updateProject } from "./live.ts"
 import type { AccountUsage } from "./live.ts"
 import type { TestRun } from "./AddRepo.tsx"
 import type { AccountOption } from "./ProjectPanel.tsx"
@@ -355,8 +355,16 @@ export function useRepoTrial(): RepoTrial {
       try {
         const answer = await runTestCommand({ projectPath, testCmd: cmd })
         if (attempt.current !== mine) return
-        const summary = summaryOf(answer)
-        setRun({ phase: "done", cmd, exitCode: answer.exitCode, ...(summary === undefined ? {} : { summary }) })
+        /* `answer.summary` carries its own provenance, so the panel can label
+           a model's sentence as the agent's. Dropping `by` here would render
+           model prose beside a measured exit code with nothing to say which
+           was which - which is the overclaim this project does not make. */
+        setRun({
+          phase: "done",
+          cmd,
+          exitCode: answer.exitCode,
+          ...(answer.summary.text === "" ? {} : { summary: answer.summary.text, summaryBy: answer.summary.by }),
+        })
       } catch (cause) {
         if (attempt.current !== mine) return
         setRun({ phase: "refused", cmd, why: reason(cause) })

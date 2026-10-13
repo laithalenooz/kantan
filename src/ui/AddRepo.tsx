@@ -313,7 +313,26 @@ export type Detection =
 export type TestRun =
   | { phase: "idle" }
   | { phase: "running"; cmd: string }
-  | { phase: "done"; cmd: string; exitCode: number; summary?: string }
+  | {
+      phase: "done"
+      cmd: string
+      exitCode: number
+      summary?: string
+      /**
+       * Who wrote `summary`.
+       *
+       * `"agent"` means a model wrote it from the output, and the row **must
+       * say so**: model prose sitting plainly beside a measured exit code
+       * reads as though kantan measured it too, which is the same overclaim as
+       * a green tick on a self-checked run. `"tail"` is the last non-empty
+       * line of output - a mechanical extract that claims nothing, so marking
+       * it as written prose would be the opposite error.
+       *
+       * Absent is read as `"tail"`, never as `"agent"`: the value that claims
+       * less is the safe default for a field a caller might forget.
+       */
+      summaryBy?: "agent" | "tail"
+    }
   /**
    * The command did **not** run, and `why` says so in the server's words.
    *
@@ -1678,7 +1697,30 @@ function TestOutcome({ run, cmd, reduced }: { run: TestRun | undefined; cmd: str
       >
         exit {run.exitCode}
       </span>
-      {run.summary === undefined ? null : run.summary}
+      {run.summary === undefined || run.summary === "" ? null : run.summaryBy === "agent" ? (
+        /* Marked, because a model wrote it. The run record uses `AGENT` on its
+           own rows for exactly this; a sentence beside a measured exit code
+           needs the same label or it reads as a second measurement. The chip
+           above is the number, and nothing here can change it. */
+        <span data-said="agent" style={{ display: "inline-flex", alignItems: "baseline", gap: 7, minWidth: 0 }}>
+          <span
+            className="m"
+            style={{
+              flex: "none",
+              fontSize: 10.5,
+              fontWeight: 650,
+              letterSpacing: ".06em",
+              color: "#6B7080",
+              textTransform: "uppercase",
+            }}
+          >
+            agent
+          </span>
+          <span style={{ minWidth: 0 }}>{run.summary}</span>
+        </span>
+      ) : (
+        run.summary
+      )}
     </div>
   )
 }

@@ -21,6 +21,7 @@ import { defaults, loadProjects } from "../projects"
 import type { Project } from "../projects"
 import { requireUsableRepo } from "../git"
 import { runTests } from "../testrun"
+import { summarizeRun } from "../summarize"
 import type { RouteContext } from "../http/context"
 import { badBody, nonEmptyString, parseBody, readBody } from "../http/body"
 import { noStore, refuse } from "../http/guards"
@@ -152,6 +153,24 @@ export async function runTestCommand(req: Request, ctx: RouteContext): Promise<R
     return refuse(400, `refused: ${(cause as Error).message}`)
   }
 
+  /**
+   * One sentence about what the output reported, written by a model.
+   *
+   * **The agent writes text inside this response; it decides nothing in it.**
+   * `exitCode` below is the command's, every surface builds its chip from that
+   * number, and `summary.by` is what lets a reader mark model prose as the
+   * agent's words rather than render it beside measured figures as though it
+   * were one. `summarizeRun` degrades to a mechanical extract rather than
+   * throwing, because somebody pressed a button and the number is the answer
+   * they are owed.
+   *
+   * It replaces the browser taking the last non-empty line, which was not a
+   * summary of anything: a real `npm test` that passed ended with `npm error A
+   * complete log of this run can be found in: …`, so the line beside exit 0
+   * said "error".
+   */
+  const summary = await summarizeRun(outcome, ctx.ask)
+
   return Response.json(
     {
       ok: true,
@@ -159,8 +178,10 @@ export async function runTestCommand(req: Request, ctx: RouteContext): Promise<R
       exitCode: outcome.exitCode,
       durationMs: outcome.durationMs,
       timedOut: outcome.timedOut,
+      summary,
       // The tail of each stream, which is where every runner puts its summary.
-      // Sent so the panel can show what happened rather than only a number.
+      // Sent so the panel can show what happened rather than only a number -
+      // and so `summary` never has to be believed on its own.
       stdout: outcome.stdout,
       stderr: outcome.stderr,
     },

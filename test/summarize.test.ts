@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
-import { summarizeStall } from "../src/summarize"
+import { summarizeRun, summarizeStall, tailLine } from "../src/summarize"
 
 const FAILURE = `FAIL test/widget.test.ts > maps records
 error: expected 3 rows, got 0
@@ -193,4 +193,135 @@ test("the default call goes through CLAUDE_BIN on claude-haiku-5-5", async () =>
   expect(args).toContain("--safe-mode")
   expect(args).toContain("--strict-mcp-config")
   expect(valueOf("--max-budget-usd")).toBe("0.05")
+})
+
+// --- Summarizing one test run -----------------------------------------------
+
+/**
+ * **The agent writes the sentence; the exit code still decides the verdict.**
+ *
+ * This exists because the mechanical version was actively misleading. The
+ * summary beside a trial run was the last non-empty line of output, and a real
+ * run of `npm test` that **passed** showed:
+ *
+ *     npm error A complete log of this run can be found in: /home/…/2026-10-13…
+ *
+ * Exit 0, and a summary saying "error". The last line of output is not the
+ * summary of the output; npm, cargo, pytest and gradle all put something else
+ * there.
+ *
+ * The dividing line, which is the whole reason this is safe: the agent may
+ * write text that appears **inside** a surface. It may never decide what
+ * surface appears, or what a status says. So the exit code is passed to the
+ * model only so its sentence cannot contradict what the reader can already
+ * see - and the chip, the colour and the pass/fail branch all still come from
+ * the number. Nothing here is on the run's decision path.
+ */
+const PASSING = `
+> importer@1.0.0 test
+> bun test
+
+ 24 pass
+ 0 fail
+ 112 expect() calls
+Ran 24 tests across 6 files. [1.20s]
+
+npm error A complete log of this run can be found in: /home/dev/.npm/_logs/2026-10-13T06_52_21_824Z-debug-0.log
+`
+
+test("the agent's sentence replaces the last line, which was not a summary", async () => {
+  const { ask, prompts } = replying("24 tests passed across 6 files in 1.2 seconds.")
+  const said = await summarizeRun({ exitCode: 0, stdout: PASSING, stderr: "" }, ask)
+
+  expect(said).toEqual({ text: "24 tests passed across 6 files in 1.2 seconds.", by: "agent" })
+  // What the mechanical reader would have said, for contrast - and it is still
+  // what this falls back to.
+  expect(tailLine({ stdout: PASSING, stderr: "" })).toContain("npm error")
+})
+
+test("the provenance travels with the text, so a surface can mark it", async () => {
+  /* The same discipline as `EndRecord.verifiedBy`: a reader that cannot tell
+   * who wrote a sentence cannot mark it, and unmarked model prose sitting
+   * beside measured figures is the thing this project refuses to ship. There
+   * are exactly two values and no third that blurs them. */
+  const { ask } = replying("One suite failed.")
+  expect((await summarizeRun({ exitCode: 1, stdout: "x", stderr: "" }, ask)).by).toBe("agent")
+
+  const broken: typeof ask = () => Promise.reject(new Error("no model today"))
+  expect((await summarizeRun({ exitCode: 1, stdout: "last thing\n", stderr: "" }, broken)).by).toBe("tail")
+})
+
+test("a model that fails degrades to the tail rather than failing the control", async () => {
+  // Unlike `summarizeStall`, which throws: this one answers a button somebody
+  // pressed, and an exit code with no sentence beside it is still the answer
+  // they asked for. The summary is a convenience and must never be a blocker.
+  const broken = (): Promise<string> => Promise.reject(new Error("rate limited"))
+  const said = await summarizeRun({ exitCode: 3, stdout: "1 failing\n", stderr: "" }, broken)
+  expect(said).toEqual({ text: "1 failing", by: "tail" })
+})
+
+test("the exit code is in the prompt, so the sentence cannot contradict the chip", async () => {
+  const { ask, prompts } = replying("Two assertions failed in the importer.")
+  await summarizeRun({ exitCode: 3, stdout: "nope\n", stderr: "" }, ask)
+
+  expect(prompts[0]).toContain("exited 3")
+  /* And the prompt says the model does not get a verdict, in those words. The
+   * exit code is the verdict; a model adding "so the build is broken" would be
+   * deciding what a status says. */
+  expect(prompts[0]).toContain("no verdict of your own")
+})
+
+test("nothing is summarized when there is nothing to read", async () => {
+  /* A silent failure - an exit code and both streams empty - gives the model
+   * nothing, so any sentence would be invention. The same rule
+   * `summarizeStall` holds, with the softer consequence this caller needs. */
+  let asked = 0
+  const ask = async (): Promise<string> => {
+    asked += 1
+    return "something confident"
+  }
+  for (const out of [
+    { exitCode: 1, stdout: "", stderr: "" },
+    { exitCode: 0, stdout: "   \n\n", stderr: "  " },
+  ]) {
+    expect(await summarizeRun(out, ask)).toEqual({ text: "", by: "tail" })
+  }
+  expect(asked).toBe(0)
+})
+
+test("a long output is excerpted from both ends, and the line is capped", async () => {
+  // A runner prints the command first and the failure last, so a head-only
+  // window shows passing-test noise and nothing of what broke - the reason
+  // `excerpt` exists for the stall path too.
+  const { ask, prompts } = replying("x".repeat(400))
+  const said = await summarizeRun(
+    { exitCode: 1, stdout: `HEAD-MARKER\n${"filler ".repeat(5000)}\nTAIL-MARKER`, stderr: "" },
+    ask,
+  )
+  expect(prompts[0]).toContain("HEAD-MARKER")
+  expect(prompts[0]).toContain("TAIL-MARKER")
+  expect(prompts[0]).toContain("characters cut")
+  expect(said.text.length).toBeLessThanOrEqual(200)
+  expect(said.text.endsWith("...")).toBe(true)
+})
+
+test("stderr is read when stdout says nothing, which is where runners print failures", async () => {
+  const { ask, prompts } = replying("The suite could not start.")
+  await summarizeRun({ exitCode: 1, stdout: "", stderr: "cannot find module\n" }, ask)
+  expect(prompts[0]).toContain("cannot find module")
+})
+
+test("a reply with newlines becomes one line, because the row is one line", async () => {
+  const { ask } = replying("Two tests failed.\n\nBoth in the importer.\n")
+  expect((await summarizeRun({ exitCode: 1, stdout: "x", stderr: "" }, ask)).text).toBe(
+    "Two tests failed. Both in the importer.",
+  )
+})
+
+test("an empty reply is not a summary, so it falls back rather than blanking the row", async () => {
+  const { ask } = replying("   \n  ")
+  expect(await summarizeRun({ exitCode: 1, stdout: "3 failing\n", stderr: "" }, ask)).toEqual({
+    text: "3 failing",
+    by: "tail",
+  })
 })

@@ -12,7 +12,7 @@ import { AddTasks } from "./AddTasks.tsx"
 import { ProjectPanel, accountOptionsFor, type AccountOption } from "./ProjectPanel.tsx"
 import { StartPanel } from "./StartPanel.tsx"
 import { NothingToShow } from "./NothingToShow.tsx"
-import { act, addTasks, detectPath, draftFeature, proposeTasks, recordAccount, registerProject, removeProject, removeTask, runTestCommand, startRun, summaryOf, taskKeyOf, updateProject, type RunView } from "./live.ts"
+import { act, addTasks, detectPath, draftFeature, proposeTasks, recordAccount, registerProject, removeProject, removeTask, runTestCommand, startRun, taskKeyOf, updateProject, type RunView } from "./live.ts"
 import { useAction, usePlan, useRun, useTree } from "./useRun.ts"
 import { useAccounts, useNewTaskFile, useProjectSettings, useRepoTrial, useRunStart, useTaskRemoval } from "./actions.ts"
 import type { RunPhase } from "../runlog.ts"
@@ -681,12 +681,15 @@ export function App() {
              it is trusted. */
           onRunTest={async (cmd) => {
             const answer = await runTestCommand({ projectPath: panelProject.path, testCmd: cmd })
-            const summary = summaryOf(answer)
             return {
               exitCode: answer.exitCode,
               durationMs: answer.durationMs,
               timedOut: answer.timedOut,
-              ...(summary === undefined ? {} : { summary }),
+              /* The provenance travels with the sentence, or the panel cannot
+                 label a model's words as the agent's. */
+              ...(answer.summary.text === ""
+                ? {}
+                : { summary: answer.summary.text, summaryBy: answer.summary.by }),
             }
           }}
           {...(panelProject.advanced === undefined

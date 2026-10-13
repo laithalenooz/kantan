@@ -4961,6 +4961,50 @@ test("it runs the command it was given, not the one on record", async () => {
   expect((await loadProjects(store))[0]?.testCmd).toBe("true")
 })
 
+/**
+ * The summary beside a trial run, and who wrote it.
+ *
+ * It used to be the last non-empty line of output, computed in the browser.
+ * That is not a summary: a real `npm test` that **passed** ends with
+ * `npm error A complete log of this run can be found in: …`, so the line
+ * beside exit 0 said "error". Now a model writes one sentence from the output.
+ *
+ * The dividing line this asserts: the agent writes text **inside** a surface
+ * and never decides what the surface says. The exit code in this response is
+ * the command's, the chip is built from it, and `summary.by` is what lets the
+ * UI mark model prose as the agent's words instead of passing it off as a
+ * measurement.
+ */
+test("a trial run comes back with a sentence, marked as the agent's", async () => {
+  const repo = await cleanRepo()
+  const l = await withTree(await storeOf(repo), {
+    ask: async () => "24 tests passed across 6 files.",
+  })
+
+  const res = await runTest(l, { projectPath: repo, testCmd: "echo '24 pass'; exit 0" })
+  const body = JSON.parse(res.body) as { exitCode: number; summary: { text: string; by: string } }
+
+  expect(body.exitCode).toBe(0)
+  expect(body.summary).toEqual({ text: "24 tests passed across 6 files.", by: "agent" })
+})
+
+test("a model that cannot answer leaves the exit code intact", async () => {
+  /* The whole point of degrading rather than throwing: somebody pressed a
+   * button to find out whether their command works, and the number is the
+   * answer. `NO_MODEL` is this suite's default `ask` and rejects, so every
+   * other test in this file exercises the fallback path. */
+  const repo = await cleanRepo()
+  const l = await withTree(await storeOf(repo))
+
+  const res = await runTest(l, { projectPath: repo, testCmd: "echo 'the last line'; exit 4" })
+  const body = JSON.parse(res.body) as { exitCode: number; summary: { text: string; by: string } }
+
+  expect(res.status).toBe(200)
+  expect(body.exitCode).toBe(4)
+  // The mechanical extract, and it says so rather than claiming to be prose.
+  expect(body.summary).toEqual({ text: "the last line", by: "tail" })
+})
+
 test("a blank or whitespace-only command is refused, because `sh -c` exits 0 on it", async () => {
   const repo = await cleanRepo()
   const l = await withTree(await storeOf(repo))

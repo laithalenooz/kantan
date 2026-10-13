@@ -456,8 +456,30 @@ export function TestCommandSection({
             {read.reads}
           </span>
           {(run.result?.summary !== undefined || took !== undefined) && (
-            <span>
-              {[run.result?.summary, took].filter((p): p is string => p !== undefined && p !== "").join(" · ")}
+            <span style={{ display: "inline-flex", alignItems: "baseline", gap: 6, minWidth: 0 }}>
+              {/* Marked when a model wrote it, for the reason the run record
+                  puts `AGENT` on its own rows: a sentence beside a measured
+                  exit code reads as a second measurement unless it says who
+                  wrote it. The duration stays unmarked - it is measured. */}
+              {run.result?.summary !== undefined && run.result.summaryBy === "agent" && (
+                <span
+                  data-said="agent"
+                  className="m"
+                  style={{
+                    flex: "none",
+                    fontSize: 10.5,
+                    fontWeight: 650,
+                    letterSpacing: ".06em",
+                    textTransform: "uppercase",
+                    color: "#6B7080",
+                  }}
+                >
+                  agent
+                </span>
+              )}
+              <span style={{ minWidth: 0 }}>
+                {[run.result?.summary, took].filter((p): p is string => p !== undefined && p !== "").join(" · ")}
+              </span>
             </span>
           )}
         </div>

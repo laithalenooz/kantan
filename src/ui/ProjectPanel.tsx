@@ -191,8 +191,18 @@ export interface TestCommandResult {
   signal?: string | null
   timedOut?: boolean
   durationMs?: number
-  /** `12 passing`, verbatim from the runner. Absent prints nothing. */
+  /** One line about the output. Absent prints nothing. */
   summary?: string
+  /**
+   * Who wrote `summary`.
+   *
+   * `"agent"` means a model wrote it from the output and the row must say so -
+   * model prose beside a measured exit code reads as a second measurement
+   * otherwise. `"tail"` is the last non-empty line, verbatim from the runner,
+   * which claims nothing. Absent reads as `"tail"`: the value that claims
+   * less is the safe default for a field a caller can forget.
+   */
+  summaryBy?: "agent" | "tail"
 }
 
 /** A markdown file in the repo that could be a task file. */
