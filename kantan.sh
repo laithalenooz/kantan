@@ -1,6 +1,15 @@
 #!/bin/sh
 #
-# kantan installer.  curl -fsSL kantan.sh/install.sh | sh
+# kantan installer.  curl get.kantan.sh | sh
+#
+# Two URLs fetch this file, and they are the only two:
+#
+#     curl get.kantan.sh | sh           what the README and the site say
+#     curl kantan.sh/install.sh | sh    the same bytes, served by the site
+#
+# "curl kantan.sh | sh" is not one of them. That is the landing page, and it
+# pipes a page of HTML into your shell. The separate host exists because a
+# script and a web page cannot safely share one root path.
 #
 # What it does, in order, and nothing else:
 #
@@ -23,12 +32,15 @@
 #
 # Read it before you run it. That is the whole reason it is this short.
 #
-# It carries no `<`, deliberately. get.kantan.sh serves this file as the
-# subdomain's index, and GitHub Pages labels an index `text/html` - curl does
-# not care, but a browser would swallow anything shaped like a tag, so a
-# reader checking the script before piping it would be shown a line with a
-# word missing. Avoiding one character is cheaper than configuring a host to
-# send a different content type.
+# It carries no left angle bracket, deliberately - which is why this paragraph
+# describes the character instead of printing it, and why the line above says
+# "a page of HTML" rather than quoting a doctype. get.kantan.sh serves this
+# file as the subdomain's index and the host labels an index `text/html`. curl
+# does not care, but a browser would swallow anything shaped like a tag, so a
+# reader checking the script before piping it would be shown a line with a word
+# missing - and the sentence promising the file is safe to read is a poor one to
+# lose. Avoiding one character is cheaper than configuring a host to send a
+# different content type.
 
 set -eu
 
