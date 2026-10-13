@@ -55,5 +55,6 @@ bun run docs/probes/account-key-collision.ts
 | `hover:<css>` | a real pointer move, so `:hover` actually applies |
 | `scroll:<y>` | scrolls the window |
 | `wait:<ms>` | sleeps |
+| `noscroll` | hides the scrollbars for the capture — opt-in, because a visible one is sometimes the evidence |
 | `full` | also reports layout metrics |
 | `--force` | allows the refused controls |

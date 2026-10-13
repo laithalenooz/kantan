@@ -1,0 +1,649 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Light only, as the app is: `tokens.css` declares the same, by decision. -->
+<meta name="color-scheme" content="only light">
+<title>kantan — plan, approve, then let it run your tests</title>
+<meta name="description" content="A local web UI that drives the real claude CLI through one coding task at a time: it plans, you approve, then it implements and runs your tests until the exit code says they pass.">
+
+<!-- No Google Fonts link, deliberately, for the same reason the app has none:
+     it is a third-party request on every load of a tool whose whole point is
+     that it binds loopback and talks to nothing. The stack falls back to the
+     system UI font, which is close enough; drop Geist in beside this file if
+     you want the real thing. -->
+<style>
+  :root {
+    --ground: #f4f4f6;
+    --panel: #fafafb;
+    --hairline: #eeeef1;
+    --edge: #e7e7eb;
+    --edge-strong: #dcdce2;
+    --ink: #111216;
+    --ink-deep: #1e2026;
+    --muted-900: #3a3d45;
+    --muted-700: #4a4e59;
+    --muted-500: #5f6370;
+    --muted-400: #6b7080;
+    --attention: #ff6a1a;
+    --attention-tint: #fff1e8;
+    --attention-ink: #9a3b06;
+    --indigo: #5b5bd6;
+    --indigo-deep: #4b4bc8;
+    --pass: #0f8a5f;
+    --fail: #d92d3a;
+    --ease: cubic-bezier(.2,.7,.2,1);
+    --sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--ground); color: var(--ink);
+    font: 16px/1.6 var(--sans); letter-spacing: -0.003em;
+  }
+  code, .m { font-family: var(--mono); font-size: .92em; }
+  a { color: var(--indigo-deep); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+  img { max-width: 100%; height: auto; display: block; }
+
+  /* `position: relative` is load-bearing, not decoration. `.dots` below is
+     absolutely positioned and comes first in DOM order; a static sibling after
+     it paints *under* it, so the headline and the buttons came out with dots
+     printed across them. A positioned content wrapper is what puts them back
+     on top. The app hit the same thing from the other side - a mask on the
+     container faded its own children - which is why the ground is its own
+     layer in both places. */
+  .wrap { position: relative; max-width: 1060px; margin: 0 auto; padding: 0 clamp(16px, 4vw, 32px); }
+
+  /* The dotted ground the app draws behind its centre column. Its own layer,
+     because a mask on a container applies to children too. */
+  .dots {
+    position: absolute; inset: 0; pointer-events: none;
+    background-image: radial-gradient(circle at 1px 1px, #dedee4 1px, transparent 0);
+    background-size: 22px 22px;
+    mask-image: linear-gradient(to bottom, #000 0%, #000 55%, transparent 90%);
+  }
+
+  header { position: relative; overflow: hidden; padding: clamp(56px, 9vw, 104px) 0 clamp(32px, 5vw, 56px); }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 19px; letter-spacing: -.01em; }
+  .mark {
+    width: 30px; height: 30px; border-radius: 9px; background: var(--ink);
+    display: grid; place-items: center; flex: none;
+  }
+  .mark span { width: 11px; height: 11px; border-radius: 999px; background: var(--attention); }
+
+  .kicker {
+    display: inline-flex; align-items: center; gap: 8px; margin: 40px 0 0;
+    padding: 6px 14px 6px 10px; border-radius: 999px;
+    background: #fff; border: 1px solid var(--edge);
+    font-size: 13px; font-weight: 560; color: var(--muted-700);
+  }
+  /* The two kanji are the brand, so they get their own fallback stack rather
+     than relying on the sans one: Geist has no CJK coverage, and a visitor
+     without a system Japanese font sees two tofu boxes where the name is. */
+  .kicker b {
+    color: var(--ink); font-weight: 650;
+    font-family: "Noto Sans JP", "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, var(--sans);
+  }
+
+  h1 {
+    margin: 18px 0 0; font-size: clamp(38px, 6.4vw, 68px); line-height: 1.02;
+    letter-spacing: -.035em; font-weight: 680; max-width: 19ch;
+  }
+  .lede { margin: 20px 0 0; max-width: 56ch; font-size: clamp(17px, 2vw, 20px); line-height: 1.5; color: var(--muted-700); }
+
+  .cta-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 32px 0 0; }
+  .cta {
+    display: inline-flex; align-items: center; gap: 9px; height: 48px; padding: 0 22px;
+    border-radius: 999px; background: var(--ink); color: #fff;
+    font-size: 15px; font-weight: 620; text-decoration: none;
+    transition: transform .2s var(--ease), background-color .2s var(--ease);
+  }
+  .cta:hover { background: #2a2b31; transform: translateY(-1px); }
+  .ghost {
+    display: inline-flex; align-items: center; height: 48px; padding: 0 20px;
+    border-radius: 999px; background: #fff; border: 1px solid var(--edge-strong);
+    color: var(--ink-deep); font-size: 15px; font-weight: 560; text-decoration: none;
+  }
+  .ghost:hover { border-color: #c9c9d2; }
+
+  .install {
+    margin: 26px 0 0; padding: 14px 18px; border-radius: 14px;
+    background: #fff; border: 1px solid var(--edge);
+    font-family: var(--mono); font-size: 13px; line-height: 2; color: var(--muted-900);
+    max-width: 44ch;
+  }
+  .install .c { color: var(--muted-400); }
+
+  .shot {
+    position: relative; margin: clamp(40px, 6vw, 72px) 0 0;
+    border-radius: 18px; overflow: hidden;
+    border: 1px solid var(--edge); background: var(--panel);
+    box-shadow: 0 1px 2px rgba(17,18,22,.04), 0 24px 60px -24px rgba(17,18,22,.18);
+  }
+  figure { margin: 0; }
+  figcaption { padding: 14px 18px; border-top: 1px solid var(--hairline); font-size: 13.5px; color: var(--muted-500); background: #fff; }
+  figcaption b { color: var(--ink-deep); font-weight: 620; }
+
+  section { padding: clamp(48px, 7vw, 88px) 0; border-top: 1px solid var(--edge); }
+  h2 { margin: 0; font-size: clamp(26px, 3.4vw, 38px); line-height: 1.12; letter-spacing: -.025em; font-weight: 670; max-width: 24ch; }
+  .sub { margin: 14px 0 0; max-width: 60ch; font-size: 16.5px; color: var(--muted-700); }
+
+  .claims { display: grid; gap: 18px; margin: 36px 0 0; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+  .claim { padding: 22px; border-radius: 16px; background: #fff; border: 1px solid var(--edge); }
+  .claim h3 { margin: 0 0 8px; font-size: 17px; font-weight: 650; letter-spacing: -.012em; }
+  .claim p { margin: 0; font-size: 14.5px; line-height: 1.55; color: var(--muted-700); }
+  .claim .tag { display: inline-block; margin: 0 0 12px; padding: 3px 10px; border-radius: 999px; font-size: 11.5px; font-weight: 640; letter-spacing: .02em; text-transform: uppercase; }
+  .tag.verify { background: var(--attention-tint); color: var(--attention-ink); }
+  .tag.honest { background: #e7f6ef; color: var(--pass); }
+  .tag.against { background: #ededfb; color: var(--indigo-deep); }
+
+  .flow {
+    margin: 34px 0 0; padding: 22px clamp(16px, 3vw, 28px); border-radius: 16px;
+    background: #fff; border: 1px solid var(--edge);
+    font-family: var(--mono); font-size: 13px; line-height: 1.9; color: var(--muted-900);
+    overflow-x: auto; white-space: pre;
+  }
+  .flow b { color: var(--attention-ink); background: var(--attention-tint); padding: 1px 6px; border-radius: 6px; font-weight: 650; }
+
+  table { width: 100%; border-collapse: collapse; margin: 30px 0 0; font-size: 14.5px; }
+  th, td { text-align: left; padding: 12px 14px; border-bottom: 1px solid var(--hairline); vertical-align: top; }
+  th { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-400); font-weight: 620; }
+  td:first-child { font-weight: 600; white-space: nowrap; }
+
+  .nots { list-style: none; margin: 32px 0 0; padding: 0; display: grid; gap: 12px; }
+  .nots li { display: flex; gap: 12px; align-items: baseline; font-size: 16px; color: var(--muted-700); }
+  .nots b { color: var(--ink); font-weight: 640; }
+  .no { flex: none; width: 20px; height: 20px; border-radius: 999px; background: #f3f3f6; border: 1px solid var(--edge); display: grid; place-items: center; color: var(--muted-400); font-size: 12px; font-weight: 700; }
+
+  .pair { display: grid; gap: 22px; margin: 38px 0 0; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+
+  .probe { display: grid; gap: 14px; margin: 32px 0 0; }
+  .probe li { list-style: none; padding: 18px 20px; border-radius: 14px; background: #fff; border: 1px solid var(--edge); font-size: 15px; line-height: 1.55; color: var(--muted-700); }
+  .probe b { color: var(--ink); font-weight: 640; }
+
+  .rough { margin: 30px 0 0; padding: 22px; border-radius: 16px; background: #fff; border: 1px dashed var(--edge-strong); }
+  .rough h3 { margin: 0 0 10px; font-size: 15px; font-weight: 650; }
+  .rough ul { margin: 0; padding-left: 20px; font-size: 14.5px; line-height: 1.6; color: var(--muted-700); }
+
+
+  /* --- the interactive pipeline ------------------------------------------ */
+  .pipe { margin: 34px 0 0; }
+  .pipe-track { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .stage {
+    display: inline-flex; align-items: center; gap: 9px;
+    height: 42px; padding: 0 18px; border-radius: 999px;
+    background: #fff; border: 1px solid var(--edge-strong);
+    font: inherit; font-size: 14.5px; font-weight: 580; color: var(--muted-700);
+    cursor: pointer;
+  }
+  .stage .dot { width: 9px; height: 9px; border-radius: 999px; background: #c9c9d2; flex: none; }
+  .stage.is-on { background: var(--ink); border-color: var(--ink); color: #fff; }
+  .stage.is-on .dot { background: #fff; }
+  .stage.is-human.is-on { background: var(--attention); border-color: var(--attention); color: #fff; }
+  .stage.is-human:not(.is-on) { border-color: #f6c9ab; background: var(--attention-tint); color: var(--attention-ink); }
+  .stage.is-human:not(.is-on) .dot { background: var(--attention); }
+  .stage:focus-visible { outline: 2px solid var(--indigo); outline-offset: 2px; }
+  .arrow { width: 18px; height: 1px; background: var(--edge-strong); flex: none; }
+  .stage-body {
+    margin: 18px 0 0; padding: 20px 22px; border-radius: 16px;
+    background: #fff; border: 1px solid var(--edge); min-height: 92px;
+  }
+  .stage-body p { margin: 0; font-size: 15.5px; line-height: 1.6; color: var(--muted-700); max-width: 68ch; }
+  .stage-body b { color: var(--ink); font-weight: 640; }
+
+  /* --- the honesty demo -------------------------------------------------- */
+  .demo { margin: 36px 0 0; padding: 22px; border-radius: 16px; background: #fff; border: 1px solid var(--edge); }
+  .demo-head { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; justify-content: space-between; }
+  .demo-label { font-size: 14px; font-weight: 600; color: var(--ink-deep); }
+  .toggle { display: inline-flex; gap: 6px; padding: 4px; border-radius: 999px; background: #f3f3f6; }
+  .opt {
+    height: 34px; padding: 0 14px; border: 0; border-radius: 999px; background: none;
+    font: inherit; font-size: 13px; font-weight: 560; color: var(--muted-500); cursor: pointer;
+  }
+  .opt.is-on { background: #fff; color: var(--ink); box-shadow: 0 1px 2px rgba(17,18,22,.08); }
+  .opt:focus-visible { outline: 2px solid var(--indigo); outline-offset: 1px; }
+  .demo-rows { margin: 18px 0 0; border: 1px solid var(--hairline); border-radius: 12px; overflow: hidden; }
+  .demo-row { display: flex; align-items: center; gap: 14px; padding: 13px 16px; background: #fcfcfd; }
+  .demo-ref { font-family: var(--mono); font-size: 12px; color: var(--muted-400); }
+  .demo-task { flex: 1; font-size: 15px; font-weight: 560; color: var(--ink-deep); }
+  .demo-status { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 620; color: var(--pass); }
+  .demo-status.is-self { color: var(--muted-500); }
+  .tick { width: 18px; height: 18px; border-radius: 999px; background: var(--pass); display: grid; place-items: center; flex: none; }
+  /* `display: grid` on a class outranks the user agent's `[hidden]` rule, so
+     setting `hidden` left the tick painted. The app hit the identical thing
+     with `display: flex` on a collapsed file list, and a screenshot is what
+     caught it both times - the DOM said `hidden: true` while the pixels said
+     otherwise.
+     Here it was the worst possible instance: a **green tick beside
+     "Self-checked"**, which is precisely the claim this project refuses to
+     make. The honesty demo was demonstrating the opposite of its own point. */
+  .tick[hidden] { display: none; }
+  .demo-note { margin: 14px 0 0; font-size: 14px; line-height: 1.55; color: var(--muted-700); max-width: 72ch; }
+
+  /* Everything that reveals starts hidden **only when scripted**, so the page
+     is readable with JavaScript off or broken rather than blank. */
+  .js [data-reveal] { opacity: 0; }
+
+  footer { padding: 52px 0 72px; border-top: 1px solid var(--edge); color: var(--muted-400); font-size: 13.5px; }
+  footer a { color: var(--muted-700); }
+
+  @media (prefers-reduced-motion: reduce) {
+    /* Transform *and* everything else: the app's own note is that gating only
+       transforms leaves opacity and filter running. */
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="dots" aria-hidden="true"></div>
+  <div class="wrap">
+    <div class="brand"><span class="mark"><span></span></span> kantan</div>
+
+    <p class="kicker"><b>簡単</b> kantan: simple, brief</p>
+
+    <h1>Plan it. Approve it. Then let your tests decide.</h1>
+
+    <p class="lede">
+      A local web UI that drives the real <code>claude</code> CLI through one coding task at a
+      time. It reads your repo and writes a plan. You say yes, or send it back with a note.
+      Then a fresh agent implements it and <b>kantan</b> runs your tests until the exit code
+      says they pass.
+    </p>
+
+    <div class="cta-row">
+      <a class="cta" href="https://github.com/laithalenooz/kantan">Get it on GitHub →</a>
+      <a class="ghost" href="#how">How it works</a>
+    </div>
+
+    <div class="install">
+      <span class="c"># three commands, one process</span><br>
+      bun install<br>
+      bun run build<br>
+      bun run server &nbsp;<span class="c"># 127.0.0.1:3100</span>
+    </div>
+
+    <figure class="shot" data-reveal>
+      <img src="../screenshots/gate.png" alt="kantan's gate: an agent-written plan for &quot;Parse the manifest&quot;, with Approve plan and Send back, a phase rail, and the cost against this run's ceiling." width="1440" height="1500">
+      <figcaption><b>The gate.</b> An agent read the repository and wrote this plan, then stopped.
+        Nothing else moves until you approve it or send it back.</figcaption>
+    </figure>
+  </div>
+</header>
+
+<section id="how">
+  <div class="wrap">
+    <h2 data-reveal>One task, one agent, one human gate.</h2>
+    <p class="sub">
+      It spawns the real <code>claude</code> binary rather than reimplementing an agent loop, so your
+      <code>CLAUDE.md</code>, skills, plugins, hooks, settings and auth all load exactly as they do in your
+      terminal. There is nothing to port and nothing to configure twice.
+    </p>
+
+    <!-- Interactive on purpose: the pipeline is the product, and five stages
+         with one human in the middle is faster to understand by pressing than
+         by reading. Keyboard-operable, because a tab stop that does nothing is
+         worse than a div. -->
+    <div class="pipe" role="group" aria-label="The five stages of a run">
+      <div class="pipe-track">
+        <button class="stage is-on" data-stage="plan" aria-pressed="true">
+          <span class="dot"></span> Plan
+        </button>
+        <span class="arrow" aria-hidden="true"></span>
+        <button class="stage is-human" data-stage="gate" aria-pressed="false">
+          <span class="dot"></span> You decide
+        </button>
+        <span class="arrow" aria-hidden="true"></span>
+        <button class="stage" data-stage="implement" aria-pressed="false">
+          <span class="dot"></span> Implement
+        </button>
+        <span class="arrow" aria-hidden="true"></span>
+        <button class="stage" data-stage="test" aria-pressed="false">
+          <span class="dot"></span> Test
+        </button>
+        <span class="arrow" aria-hidden="true"></span>
+        <button class="stage" data-stage="done" aria-pressed="false">
+          <span class="dot"></span> Done
+        </button>
+      </div>
+
+      <div class="stage-body" aria-live="polite">
+        <p data-for="plan"><b>An agent reads your repository and writes a plan</b> to
+          <code>docs/plans/</code>. Then it stops. It has not touched your code yet.</p>
+        <p data-for="gate" hidden><b>You read it the way you would read a teammate's draft.</b>
+          Approve it, or send it back with a note and it plans again. Nothing else moves until you
+          decide — this is the only step kantan cannot do without you, and that is the point.</p>
+        <p data-for="implement" hidden><b>A fresh agent implements the plan</b> on its own
+          <code>kantan/&lt;task&gt;</code> branch. Fresh, not the same conversation: that is what lets the
+          two phases run different models without cold-starting the prompt cache.</p>
+        <p data-for="test" hidden><b>kantan runs your test command and reads the exit code.</b> Not the
+          agent — the server. On a failure it refines and runs them again, escalating effort when the
+          same failure repeats.</p>
+        <p data-for="done" hidden><b>The task's checkbox is ticked and the branch is yours.</b> The
+          checkout returns to your base branch. If there was no test command to run, the screen says
+          <b>“Self-checked”</b> rather than claiming a pass.</p>
+      </div>
+    </div>
+
+    <table>
+      <thead><tr><th>Noun</th><th>Is actually</th><th>Lives in</th></tr></thead>
+      <tbody>
+        <tr><td>Project</td><td>a repo directory, a test command (or none), a Claude account</td><td><code>~/.kantan/projects.json</code></td></tr>
+        <tr><td>Feature</td><td>a markdown file</td><td><code>&lt;repo&gt;/docs/features/&lt;slug&gt;.md</code></td></tr>
+        <tr><td>Task</td><td>a <code>- [ ]</code> line in that file</td><td>the same file</td></tr>
+        <tr><td>Run</td><td>one task through the pipeline</td><td><code>~/.kantan/runs/&lt;uuid&gt;.jsonl</code></td></tr>
+      </tbody>
+    </table>
+    <p class="sub" style="margin-top:18px">
+      Three of those four already exist on your disk. Your backlog is markdown in your own repo,
+      in your own git history — kantan renders it and remote-controls it, and never owns it.
+    </p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2 data-reveal>Three claims, and the code that backs each one.</h2>
+
+    <div class="claims" data-stagger>
+      <div class="claim">
+        <span class="tag verify">Verification</span>
+        <h3>The server runs your tests, not the agent.</h3>
+        <p>kantan spawns your test command itself and branches on the <b>exit code</b>. Never on the
+          agent reporting success. Verification from outside the agent cannot be talked out of.</p>
+      </div>
+      <div class="claim">
+        <span class="tag honest">Honesty</span>
+        <h3>No screen claims a check it did not watch.</h3>
+        <p>A project may have no test suite, and then the agent checks itself. kantan records which
+          happened, and prints <b>“Self-checked”</b> — never an exit code, a tick, or the word
+          passed. An older log reads <b>“unknown”</b>, never as a pass.</p>
+      </div>
+      <div class="claim">
+        <span class="tag against">Scope</span>
+        <h3>One run per project, and it says why.</h3>
+        <p>Two agents can never share a working tree. A task that cannot start explains itself in a
+          sentence instead of greying a button out.</p>
+      </div>
+    </div>
+
+    <!-- The one claim that is hard to believe from prose, made pressable.
+         Toggling the test command is exactly the decision a reader makes when
+         they register a project, and the status changing under it is the whole
+         of the honesty rule. -->
+    <div class="demo" data-reveal>
+      <div class="demo-head">
+        <span class="demo-label">Try it: does this project have a test command?</span>
+        <div class="toggle" role="radiogroup" aria-label="Does the project have a test command?">
+          <button class="opt is-on" data-mode="tests" role="radio" aria-checked="true">Yes — <code>bun run check</code></button>
+          <button class="opt" data-mode="none" role="radio" aria-checked="false">No suite</button>
+        </div>
+      </div>
+      <div class="demo-rows">
+        <div class="demo-row">
+          <span class="demo-ref">T1</span>
+          <span class="demo-task">Parse the manifest</span>
+          <span class="demo-status" data-status>
+            <span class="tick" data-tick><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 13 4 4L19 7"/></svg></span>
+            <span data-word>Passed</span><span class="m" data-exit> · exit 0</span>
+          </span>
+        </div>
+      </div>
+      <p class="demo-note" data-note>
+        kantan ran <code>bun run check</code> itself and read exit code 0. The agent's opinion of its own
+        work was never consulted.
+      </p>
+    </div>
+
+    <div class="pair">
+      <figure class="shot" style="margin-top:0">
+        <img src="../screenshots/running.png" alt="A run mid-implement: the phase rail with Implement live, live cost against the ceiling, and the event log." width="1440" height="1200">
+        <figcaption><b>Running.</b> Every event the CLI emitted, the live cost against this run's
+          ceiling, and the note that the pass or fail is <i>your</i> command's exit code, read by
+          kantan.</figcaption>
+      </figure>
+      <figure class="shot" style="margin-top:0">
+        <img src="../screenshots/start.png" alt="The start panel for an open task, explaining that another run is in flight." width="1440" height="1100">
+        <figcaption><b>One at a time.</b> The three phases spelled out before you commit to them,
+          and an honest reason this task is waiting.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2 data-reveal>What this is not.</h2>
+    <p class="sub">Read this part first, because it is the whole design. Every one of these is a
+      reaction to a tool that started well and drifted — the ceremony tends to grow faster than the
+      usefulness.</p>
+
+    <ul class="nots" data-stagger>
+      <li><span class="no" aria-hidden="true">✕</span><span><b>No agent org chart.</b> No CEO, CTO or specialist personas.</span></li>
+      <li><span class="no" aria-hidden="true">✕</span><span><b>No autonomy.</b> Nothing wakes itself up. No heartbeats, no routines, no schedulers.</span></li>
+      <li><span class="no" aria-hidden="true">✕</span><span><b>No multi-agent orchestration.</b> If you want a fleet of agents negotiating with each other, this will disappoint you — deliberately.</span></li>
+      <li><span class="no" aria-hidden="true">✕</span><span><b>No tracker database.</b> Markdown in your repo, or nothing.</span></li>
+      <li><span class="no" aria-hidden="true">✕</span><span><b>No worktree sprawl.</b> One branch per task, one active run per project.</span></li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>What we learned about <code>claude -p</code>, so you do not have to.</h2>
+    <p class="sub">These cost real money to discover. Every script behind them is rerunnable in
+      <code>docs/probes/</code>, so you can check rather than trust — and they are useful even if you
+      never run kantan.</p>
+
+    <ul class="probe" data-stagger>
+      <li><b><code>AskUserQuestion</code> does not exist in <code>-p</code> mode.</b> The agent asks in prose
+        and exits <code>subtype: success</code>, so a question and a completion are indistinguishable by
+        message type. Never infer completion from exit status.</li>
+      <li><b><code>--max-budget-usd</code> bounds one process, not your run.</b> Cost resets on every
+        <code>--resume</code>, so a ceiling set per process silently restarts at each gate. Track the total
+        yourself and pass <code>ceiling − spent</code>.</li>
+      <li><b>Switching models inside one conversation is a trap.</b> It cold-starts the prompt cache and
+        drops thinking blocks the new model cannot read. Switch between conversations instead — which is
+        why kantan's plan and implement phases are two.</li>
+      <li><b>Hook events flood the stream.</b> Roughly twenty <code>system/hook_*</code> messages arrive
+        before the first real one. Filter at parse.</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2 data-reveal>It works, and it is rough in places.</h2>
+    <p class="sub">
+      The pipeline runs end to end against the real binary, from one process on one port.
+      73 modules, 2,576 tests. The one skipped test is the live smoke test, which spawns the real
+      CLI and is gated so it cannot spend money in CI.
+    </p>
+
+    <div class="rough">
+      <h3>Listed rather than hidden</h3>
+      <ul>
+        <li>The usage view only sees what kantan's own runs reported — there is no command that asks
+          Claude for a rate limit, so between runs it tells you what it last saw and when.</li>
+        <li>A second Claude account has to be named by hand once. kantan finds the folders but will
+          not guess whether one bills as personal or work.</li>
+        <li><code>src/run.ts</code> is 2,695 lines of one state machine. Measured, not excused: 34 of its
+          67 functions mutate the same object.</li>
+        <li>One 731 KB JS bundle, no code splitting. Fine on loopback, which is the only place it runs.</li>
+        <li>It has only ever been run on one machine. A clone-build-run elsewhere has not happened yet.</li>
+      </ul>
+    </div>
+
+    <div class="cta-row">
+      <a class="cta" href="https://github.com/laithalenooz/kantan">Read the code →</a>
+      <a class="ghost" href="https://github.com/laithalenooz/kantan/blob/master/docs/probes/README.md">The probes</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    MIT. Built with Claude Code, on one WSL2 box, by
+    <a href="https://github.com/laithalenooz">laithalenooz</a>.<br>
+    It binds <code>127.0.0.1</code> and checks <code>Host</code>, <code>Origin</code> and a per-launch token,
+    because its endpoints hand arbitrary text to an agent with tool access. Do not expose it.
+  </div>
+</footer>
+
+<!-- Vendored, not from a CDN: the page stays openable from `file://` with no
+     network at all, which is also how it gets screenshotted. It is Motion 14,
+     the same package the app itself animates with. -->
+<script src="vendor/motion.js"></script>
+<script>
+(() => {
+  const M = window.Motion
+  // Progressive enhancement: the class is what hides the revealing elements,
+  // so a failed script leaves a fully readable page rather than a blank one.
+  if (!M) return
+  document.documentElement.classList.add("js")
+
+  /**
+   * Reduced motion, read live.
+   *
+   * The app's own hard-won note is that Motion's `useReducedMotion()` cannot be
+   * trusted alone - its preference is a module-level singleton initialised at
+   * the first call anywhere in the process, and it answered `false` with the
+   * preference actually set. So this asks `matchMedia` directly, and asks it
+   * again on change rather than once at load.
+   *
+   * And it gates **everything**, not just transforms: `MotionConfig`'s
+   * `reducedMotion: "user"` only switches transform animations off, so an
+   * opacity fade or a filter would keep running for someone who asked it not to.
+   */
+  const query = matchMedia("(prefers-reduced-motion: reduce)")
+  let reduced = query.matches
+  query.addEventListener("change", (e) => { reduced = e.matches })
+
+  const show = (el) => { el.style.opacity = "1"; el.style.transform = "none"; el.style.filter = "none" }
+
+  // --- reveals ------------------------------------------------------------
+  for (const el of document.querySelectorAll("[data-reveal]")) {
+    if (reduced) { show(el); continue }
+    el.style.opacity = "0"
+    M.inView(el, () => {
+      M.animate(el, { opacity: [0, 1], y: [14, 0] }, { duration: 0.5, ease: [0.2, 0.7, 0.2, 1] })
+      // Once. A reveal that replays on every scroll past is a distraction, and
+      // the second one tells the reader nothing the first did not.
+      return false
+    }, { amount: 0.2 })
+  }
+
+  for (const group of document.querySelectorAll("[data-stagger]")) {
+    const kids = [...group.children]
+    if (reduced) { kids.forEach(show); continue }
+    kids.forEach((k) => { k.style.opacity = "0" })
+    M.inView(group, () => {
+      M.animate(kids, { opacity: [0, 1], y: [16, 0] }, {
+        duration: 0.45, delay: M.stagger(0.07), ease: [0.2, 0.7, 0.2, 1],
+      })
+      return false
+    }, { amount: 0.15 })
+  }
+
+  // --- the pipeline -------------------------------------------------------
+  const stages = [...document.querySelectorAll(".stage")]
+  const bodies = [...document.querySelectorAll(".stage-body [data-for]")]
+
+  function selectStage(name) {
+    for (const s of stages) {
+      const on = s.dataset.stage === name
+      s.classList.toggle("is-on", on)
+      s.setAttribute("aria-pressed", String(on))
+    }
+    for (const b of bodies) {
+      const on = b.dataset.for === name
+      if (on) {
+        b.hidden = false
+        if (reduced) show(b)
+        else M.animate(b, { opacity: [0, 1], y: [6, 0] }, { duration: 0.28, ease: [0.2, 0.7, 0.2, 1] })
+      } else {
+        b.hidden = true
+      }
+    }
+  }
+
+  stages.forEach((s, i) => {
+    s.addEventListener("click", () => selectStage(s.dataset.stage))
+    // Arrow keys across the group, because it reads as one control.
+    s.addEventListener("keydown", (e) => {
+      const at = e.key === "ArrowRight" ? i + 1 : e.key === "ArrowLeft" ? i - 1 : null
+      if (at === null) return
+      const next = stages[(at + stages.length) % stages.length]
+      e.preventDefault()
+      next.focus()
+      selectStage(next.dataset.stage)
+    })
+  })
+
+  /* Walks itself once, slowly, so the shape is legible before anyone presses
+     anything - and stops the moment a reader takes over, because continuing to
+     move under their hand is the opposite of helpful. */
+  if (!reduced && stages.length) {
+    let step = 0
+    let timer = 0
+    const stop = () => { clearInterval(timer); timer = 0 }
+    M.inView(document.querySelector(".pipe"), () => {
+      timer = setInterval(() => {
+        step += 1
+        if (step >= stages.length) return stop()
+        selectStage(stages[step].dataset.stage)
+      }, 1900)
+      return false
+    }, { amount: 0.5 })
+    for (const s of stages) s.addEventListener("click", stop, { once: true })
+    addEventListener("keydown", stop, { once: true })
+  }
+
+  // --- the honesty demo ---------------------------------------------------
+  const opts = [...document.querySelectorAll(".opt")]
+  const status = document.querySelector("[data-status]")
+  const word = document.querySelector("[data-word]")
+  const exit = document.querySelector("[data-exit]")
+  const tick = document.querySelector("[data-tick]")
+  const note = document.querySelector("[data-note]")
+
+  const SAID = {
+    tests: {
+      word: "Passed", exit: " · exit 0", tick: true, self: false,
+      note: "kantan ran <code>bun run check</code> itself and read exit code 0. The agent's opinion of its own work was never consulted.",
+    },
+    none: {
+      word: "Self-checked", exit: "", tick: false, self: true,
+      note: "There was no command to run, so the agent was asked to verify its own work and said it was finished. <b>No exit code, no tick, and not the word “passed”</b> — because nothing outside the agent checked it. A log written before kantan recorded which happened reads “unknown”, never as a pass.",
+    },
+  }
+
+  function setMode(mode) {
+    const said = SAID[mode]
+    if (!said || !status) return
+    for (const o of opts) {
+      const on = o.dataset.mode === mode
+      o.classList.toggle("is-on", on)
+      o.setAttribute("aria-checked", String(on))
+    }
+    word.textContent = said.word
+    exit.textContent = said.exit
+    tick.hidden = !said.tick
+    status.classList.toggle("is-self", said.self)
+    note.innerHTML = said.note
+    if (!reduced) {
+      M.animate(status, { opacity: [0.35, 1] }, { duration: 0.3 })
+      M.animate(note, { opacity: [0.35, 1] }, { duration: 0.35 })
+    }
+  }
+
+  for (const o of opts) o.addEventListener("click", () => setMode(o.dataset.mode))
+})()
+</script>
+
+</body>
+</html>

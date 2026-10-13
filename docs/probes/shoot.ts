@@ -4,7 +4,7 @@
  * Exists because a headless `--screenshot` cannot click, and every defect
  * reported from use so far has been about a state you only reach by clicking.
  *
- *   bun run shoot.ts <url> <out.png> [click:<text>] [nth:<i>:<sel>] [wait:<ms>] [full]
+ *   bun run shoot.ts <url> <out.png> [click:<text>] [nth:<i>:<sel>] [noscroll] [wait:<ms>] [full]
  */
 const [url, out, ...rest] = process.argv.slice(2)
 if (url === undefined || out === undefined) throw new Error("need <url> <out.png>")
@@ -138,6 +138,24 @@ await Bun.sleep(3500)
 let full = false
 for (const arg of rest) {
   if (arg === "full") { full = true; continue }
+  if (arg === "noscroll") {
+    /* Hides the scrollbars for the capture only.
+     *
+     * Opt-in rather than always: a visible scrollbar is sometimes the thing
+     * being checked - whether a column overflows, whether a panel scrolls
+     * independently - so removing it by default would delete evidence. It is
+     * wanted for screenshots that become assets, where a 15px grey strip down
+     * the right edge is the only thing in the frame that is not the product. */
+    await send("Runtime.evaluate", {
+      expression: `(() => {
+        const style = document.createElement("style")
+        style.textContent = "::-webkit-scrollbar{width:0;height:0} html{scrollbar-width:none}"
+        document.head.append(style)
+      })()`,
+    })
+    await Bun.sleep(300)
+    continue
+  }
   if (arg.startsWith("wait:")) { await Bun.sleep(Number(arg.slice(5))); continue }
   if (arg.startsWith("scroll:")) {
     await send("Runtime.evaluate", { expression: `window.scrollTo(0, ${Number(arg.slice(7))})` })
