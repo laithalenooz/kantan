@@ -164,6 +164,22 @@ const ICONS = {
       <path d="M3.34 19a10 10 0 1 1 17.32 0" />
     </>
   ),
+  /**
+   * Lucide's `git-commit-horizontal`: a node on a line.
+   *
+   * Added rather than reused. The nearest existing glyph is `flag`, which is
+   * the *result* row - so a commit wearing it would read as a run outcome on a
+   * glance down the log, and a glance down the log is how this record is
+   * actually read. `check` was the other candidate and belongs to a successful
+   * tool result.
+   */
+  commit: (
+    <>
+      <circle cx="12" cy="12" r="3" />
+      <line x1="3" x2="9" y1="12" y2="12" />
+      <line x1="15" x2="21" y1="12" y2="12" />
+    </>
+  ),
   /** The dashes are the point: this shape says "not recognised", in greyscale. */
   queried: (
     <>
@@ -1038,6 +1054,49 @@ export function viewFor(row: StreamRow, open: boolean): View {
 
     case "result":
       return resultView(event, row.errors, open)
+
+    case "vcs": {
+      /**
+       * `system/vcs_state_changed`: the CLI saying the agent committed. It
+       * arrives twice per run that does.
+       *
+       * Three decisions, each the cheap direction of a lopsided pair:
+       *
+       * - **A verb, not the CLI's token.** "commit" beside a branch name
+       *   reads as a noun and leaves the tense to the reader. Only `commit`
+       *   gets one, because it is the only value four real events showed.
+       * - **An unrecognised change prints its own word.** `src/stream.ts`
+       *   carries the string through rather than enumerating it, so this has
+       *   to draw a word it has no verb for. Drawing nothing would hide a
+       *   repository event completely - worse than the raw blob this row
+       *   replaced. An awkward sentence for an event no CLI has sent yet is
+       *   the lesser cost.
+       * - **Neither field is assumed present.** `str()` answers `""` for an
+       *   absent one, so both halves are conditional and the row still names
+       *   what it is when the CLI sends a shape nobody here predicted.
+       */
+      const verb = event.change === "commit" ? "Committed" : event.change === "" ? "Repository changed" : event.change
+      return {
+        label: "git",
+        icon: "commit",
+        /* Deliberately not `text-pass-deep`: that green belongs to a passing
+           suite and an ok result, and a commit is not a verification. This is
+           a neutral note that something was saved. */
+        iconClass: "text-muted-500",
+        expandable: false,
+        body: (
+          <span className="block min-w-0 text-muted-500">
+            {verb}
+            {event.branch === "" ? null : (
+              <>
+                {" on "}
+                <Mono className="wrap-anywhere">{event.branch}</Mono>
+              </>
+            )}
+          </span>
+        ),
+      }
+    }
 
     case "unknown":
       /* Not an error, and never hidden. `src/stream.ts` routes a future CLI

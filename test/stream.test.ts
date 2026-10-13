@@ -153,6 +153,81 @@ test("system/thinking_tokens is not filtered", () => {
   expect(events).toEqual([{ kind: "thinking_tokens", tokens: 299, delta: 249 }])
 })
 
+/**
+ * `system/vcs_state_changed`, which the fixtures predate.
+ *
+ * The four payloads asserted against here were taken from two real run logs in
+ * `~/.orch/runs`, not from the handoff's description of them, and they agree:
+ * `{type, subtype, kind, branch, cwd, uuid, session_id}`, with `kind` reading
+ * `"commit"` in all four. It arrives **twice** per run that commits.
+ */
+describe("vcs_state_changed", () => {
+  const REAL = {
+    type: "system",
+    subtype: "vcs_state_changed",
+    kind: "commit",
+    branch: "orch/add-health-check-endpoin-t1-83bf0ec5",
+    cwd: "/home/dev/projects/lms-solutions",
+    uuid: "e8fef7dd-4c21-4ebe-8b23-b7ad9879149f",
+    session_id: "e5a82d7f-1e96-484f-a784-252947e2d4ea",
+  }
+
+  test("a real commit event is a vcs event, not an unknown blob", () => {
+    expect(classify(REAL)).toEqual([{ kind: "vcs", change: "commit", branch: REAL.branch }])
+  })
+
+  /**
+   * The CLI's own field is called `kind`, and so is the discriminant of this
+   * module's union. They are different things - one says what happened to the
+   * repository, the other says which `Event` this is - so the CLI's becomes
+   * `change`. Carrying it through under the same name would have made
+   * `event.kind` mean "commit" for exactly one variant.
+   */
+  test("the CLI's kind is carried as change, so it cannot shadow the discriminant", () => {
+    const [event] = classify(REAL)
+    expect(event?.kind).toBe("vcs")
+    expect(event).toMatchObject({ change: "commit" })
+  })
+
+  /**
+   * **This is a pass-through, deliberately, and not a skipping guard.**
+   *
+   * The dimension is the CLI's `kind` field. Its values are: `"commit"`, which
+   * is all four real events; whatever else a future CLI sends - a checkout, a
+   * branch change, a merge, an amend - none of which can be enumerated from
+   * here; absent; and not a string.
+   *
+   * The costs are lopsided. Recognising only `"commit"` would send every
+   * future value back to `unknown`, which is a raw JSON blob in the log for an
+   * event kantan *does* understand the type of - the exact defect this task
+   * exists to remove, reintroduced for its successor. Carrying the string
+   * through costs a row that names a change nobody has taught the UI a verb
+   * for, which is still a legible row. So nothing is enumerated: any
+   * `vcs_state_changed` is a `vcs` event, and the renderer handles the string.
+   */
+  test("an unrecognised change is still a vcs event, carrying the word", () => {
+    for (const change of ["checkout", "branch_change", "merge", "amend", "rebase"]) {
+      expect(classify({ ...REAL, kind: change })).toEqual([
+        { kind: "vcs", change, branch: REAL.branch },
+      ])
+    }
+  })
+
+  test("a missing field is an empty string, like everywhere else in this module", () => {
+    // `str()` is what the rest of the file uses, so absence reads the same way
+    // here as it does for `init`'s cwd. A thrown TypeError on a shape the CLI
+    // changed would take the whole run's stream with it.
+    expect(classify({ type: "system", subtype: "vcs_state_changed" })).toEqual([
+      { kind: "vcs", change: "", branch: "" },
+    ])
+  })
+
+  test("it is not filtered, and it is not a hook", () => {
+    expect(FILTERED_HOOK_SUBTYPES).not.toContain("vcs_state_changed")
+    expect(classify(REAL)).toHaveLength(1)
+  })
+})
+
 test("every system/thinking_tokens line in the fixtures survives", async () => {
   for (const name of FIXTURES) {
     const expected = (await fixtureLines(name)).filter(

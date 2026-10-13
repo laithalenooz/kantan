@@ -593,6 +593,68 @@ describe("a long path wraps instead of overflowing", () => {
   })
 })
 
+describe("a commit row says what was saved and where", () => {
+  /**
+   * `system/vcs_state_changed` - the CLI reporting that the agent committed,
+   * twice per run that does. It predates the stream fixtures, so until now it
+   * classified as `unknown` and a human watching a run saw a raw JSON blob for
+   * the one event that tells them their work was saved.
+   */
+  test("the branch is shown, because that is the part worth reading", async () => {
+    const branch = "orch/add-health-check-t1-83bf0ec5"
+    const mounted = await mount(
+      <api.Stream rows={[eventRow("v", { kind: "vcs", change: "commit", branch })]} />,
+    )
+    const text = mounted.row("v")?.textContent ?? ""
+    expect(text).toContain(branch)
+    // A verb, not the CLI's token: "commit" alone beside a branch name reads
+    // like a noun and leaves the reader to guess the tense.
+    expect(text.toLowerCase()).toContain("committed")
+  })
+
+  test("it is not drawn as a failure, because a commit is good news", async () => {
+    const mounted = await mount(
+      <api.Stream rows={[eventRow("v", { kind: "vcs", change: "commit", branch: "orch/x-t1-0000" })]} />,
+    )
+    const row = mounted.row("v")
+    // The two things this project uses to mean "something went wrong". A
+    // commit row wearing either would read as a problem on a glance down the
+    // log, which is how this record is actually read.
+    expect(row?.querySelector(".text-fail")).toBeNull()
+    expect((row?.className ?? "") + (row?.getAttribute("style") ?? "")).not.toContain("fail")
+  })
+
+  /**
+   * The renderer's half of the pass-through decision in `src/stream.ts`: that
+   * module carries the CLI's word through rather than enumerating it, so this
+   * one has to draw a word it has no verb for without going blank.
+   *
+   * The costs are lopsided in the same direction. A row that printed nothing
+   * for an unrecognised change would hide a repository event entirely - worse
+   * than the raw blob this task replaced. Printing the bare word costs a row
+   * that reads slightly awkwardly for an event no CLI has sent yet.
+   */
+  test("a change with no verb yet still prints the word and the branch", async () => {
+    for (const change of ["rebase", "checkout", "merge", "amend"]) {
+      const mounted = await mount(
+        <api.Stream rows={[eventRow("v", { kind: "vcs", change, branch: "orch/x-t1-0000" })]} />,
+      )
+      const text = mounted.row("v")?.textContent ?? ""
+      expect({ change, says: text.includes(change) }).toEqual({ change, says: true })
+      expect({ change, branch: text.includes("orch/x-t1-0000") }).toEqual({ change, branch: true })
+    }
+  })
+
+  test("an empty payload does not render a row that says nothing", async () => {
+    // `str()` in `src/stream.ts` answers "" for an absent field, so this is
+    // the shape a CLI change could really deliver - and the row still has to
+    // tell a reader which event it was looking at.
+    const mounted = await mount(<api.Stream rows={[eventRow("v", { kind: "vcs", change: "", branch: "" })]} />)
+    const text = (mounted.row("v")?.textContent ?? "").trim()
+    expect(text.length).toBeGreaterThan(8)
+  })
+})
+
 describe("an unknown event is never hidden and never an alarm", () => {
   /* Every shape `src/stream.ts` can route to `unknown`, including the four that
    * are valid JSON with no `.type` at all. */
@@ -636,9 +698,11 @@ describe("an unknown event is never hidden and never an alarm", () => {
      * mouse-up collapsed the row. Text inside a button is not selectable in
      * Chrome, and is not in Firefox either.
      *
-     * That is the whole point of this row lost. `system/vcs_state_changed` is
-     * a real event this version does not understand, and "shown as it arrived"
-     * means nothing if the thing shown cannot be copied into a bug report.
+     * That is the whole point of this row lost. This row exists for a real
+     * event a future CLI sends and this version does not understand - which
+     * `system/vcs_state_changed` was until it got a variant of its own - and
+     * "shown as it arrived" means nothing if the thing shown cannot be copied
+     * into a bug report.
      *
      * So the panel lives after the button, not in it. This is the DOM-visible
      * half of that — the half a later artboard-fidelity pass would otherwise
@@ -1271,6 +1335,9 @@ describe("every event kind draws something", () => {
     ["rate_limit, no status", eventRow("16", { kind: "rate_limit", status: "", utilization: 0, resetsAt: undefined }, { at })],
     ["result, success", eventRow("17", { kind: "result", subtype: "success", isError: false, costUsd: 0.0046, numTurns: 7, text: "Done.", permissionDenials: [] }, { at })],
     ["result, denials", eventRow("18", { kind: "result", subtype: "success", isError: false, costUsd: 0.0046, numTurns: 7, text: "Done.", permissionDenials: [{ tool: "Bash" }] }, { at })],
+    ["vcs, a commit", eventRow("19a", { kind: "vcs", change: "commit", branch: "orch/add-health-check-t1-83bf0ec5" }, { at })],
+    ["vcs, a change with no verb yet", eventRow("19b", { kind: "vcs", change: "rebase", branch: "orch/x-t1-0000" }, { at })],
+    ["vcs, nothing but the kind", eventRow("19c", { kind: "vcs", change: "", branch: "" }, { at })],
     ["unknown", eventRow("19", { kind: "unknown", raw: { type: "future" } }, { at })],
     ["parse_error", eventRow("20", { kind: "parse_error", line: "half a line", error: "boom" }, { at })],
     ["tests", { id: "21", at, tests: { exitCode: 1, attempt: 2, summary: "10 passing, 1 failing" } }],

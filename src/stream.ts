@@ -58,6 +58,27 @@ export type Event =
       /** Carried through verbatim: Task 8b needs denials by name, and the fixtures only ever show `[]`. */
       permissionDenials: unknown[]
     }
+  | {
+      kind: "vcs"
+      /**
+       * What happened to the repository: the CLI's own `kind` field, renamed.
+       *
+       * Renamed because `kind` is this union's discriminant and the collision
+       * is not cosmetic - carrying it through under its own name would make
+       * `event.kind` answer `"commit"` for exactly one variant, and every
+       * `switch` on it would be wrong in a way TypeScript could not catch.
+       *
+       * **Carried verbatim rather than enumerated.** All four real events seen
+       * read `"commit"`; a future CLI may send a checkout, a merge or something
+       * nobody here can name. Matching only `"commit"` would send those back
+       * to `unknown`, which is the raw-blob defect this variant exists to
+       * remove - reintroduced for its successor. A word the UI has no verb for
+       * is still a legible row.
+       */
+      change: string
+      /** The branch it happened on, which for kantan is `orch/<task>`. */
+      branch: string
+    }
   | { kind: "unknown"; raw: unknown }
   | { kind: "parse_error"; line: string; error: string }
 
@@ -203,6 +224,18 @@ function system(m: Record<string, unknown>, raw: unknown): Event[] {
         delta: num(m.estimated_tokens_delta),
       },
     ]
+  }
+
+  /**
+   * The CLI reporting that the agent committed - twice per run that does.
+   *
+   * Not in the fixtures, which predate it, so it classified as `unknown` and
+   * the log showed a human a raw JSON blob for the one event that says their
+   * work was saved. Keyed on the subtype alone and never on the `kind` inside
+   * it, for the reason the field's own doc comment gives.
+   */
+  if (subtype === "vcs_state_changed") {
+    return [{ kind: "vcs", change: str(m.kind), branch: str(m.branch) }]
   }
 
   return [{ kind: "unknown", raw }]
