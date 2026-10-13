@@ -6,7 +6,7 @@ tags: claude, ai, typescript, devtools
 cover_image: https://raw.githubusercontent.com/laithalenooz/kantan/master/docs/screenshots/gate.png
 ---
 
-I spent a while building a local web UI that drives the real `claude` CLI through one coding task at a time — plan, a human approval gate, then implement and test until the exit code is zero. It's called [kantan](https://github.com/laithalenooz/kantan) (簡単: simple, brief), it's MIT, and `curl get.kantan.sh | sh` installs it.
+I spent a while building a local web UI that drives the real `claude` CLI through one coding task at a time — plan, a human approval gate, then implement and test until the exit code is zero. It's called [kantan](https://github.com/laithalenooz/kantan) (簡単: simple, brief), it's MIT, and `curl -fsSL https://get.kantan.sh | sh` installs it.
 
 This post isn't about the tool. It's about four things I had to find out the hard way, each of which is now a rerunnable script in `docs/probes/`. All of them were probed against Claude Code `2.1.296`; the stream-json shape depends on the CLI version, which is why every run log records `claude --version`.
 

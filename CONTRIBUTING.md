@@ -11,7 +11,7 @@ bun install
 bun run check                        # typecheck then tests
 ```
 
-(`curl get.kantan.sh | sh` is the user-facing install — [`kantan.sh`](kantan.sh) in
+(`curl -fsSL https://get.kantan.sh | sh` is the user-facing install — [`kantan.sh`](kantan.sh) in
 this repo. Contributors want a clone they can commit from, which is this.)
 
 **Finish every change on `bun run check`.** It is typecheck *then* tests, in

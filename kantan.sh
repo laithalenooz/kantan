@@ -1,11 +1,18 @@
 #!/bin/sh
 #
-# kantan installer.  curl get.kantan.sh | sh
+# kantan installer.  curl -fsSL https://get.kantan.sh | sh
 #
 # Two URLs fetch this file, and they are the only two:
 #
-#     curl get.kantan.sh | sh           what the README and the site say
-#     curl kantan.sh/install.sh | sh    the same bytes, served by the site
+#     curl -fsSL https://get.kantan.sh | sh         what the README and the site say
+#     curl -fsSL https://kantan.sh/install.sh | sh  the same bytes, served by the site
+#
+# The scheme and the -L are not decoration, and the bare "curl get.kantan.sh"
+# this file advertised until now was broken. curl assumes http when you leave
+# the scheme off; the host answers 308 to https with a body of "Redirecting...";
+# and curl without -L prints that body and exits 0. So the pipe fed
+# "Redirecting..." to your shell and the install quietly did nothing. -f does
+# not catch it either, because a 308 is not an error.
 #
 # "curl kantan.sh | sh" is not one of them. That is the landing page, and it
 # pipes a page of HTML into your shell. The separate host exists because a

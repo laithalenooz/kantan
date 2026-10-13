@@ -114,7 +114,7 @@ done
 
 head2 "Arguments"
 out=$(run_stage 'git bun node claude' --help)
-if printf '%s' "$out" | grep -qF 'curl get.kantan.sh | sh' && printf '%s' "$out" | grep -q '^EXIT:0$'; then
+if printf '%s' "$out" | grep -qF 'curl -fsSL https://get.kantan.sh | sh' && printf '%s' "$out" | grep -q '^EXIT:0$'; then
   ok "--help prints the header and exits 0"
 else
   bad "--help did not print the header and exit 0"
@@ -140,6 +140,38 @@ if grep -q '<' "$REPO_ROOT/kantan.sh"; then
 else
   ok "no left angle bracket - safe to read in a browser before piping"
 fi
+
+head2 "Every documented one-liner survives the redirect"
+# The bug this guards against shipped in three release notes, the README, the
+# landing page's hero and its copy button, and this script's own header.
+#
+# `curl get.kantan.sh | sh` is broken, and silently. curl assumes http when the
+# scheme is left off; the host answers 308 to https with a body of
+# "Redirecting..."; curl without -L prints that body and exits **0**. So the
+# pipe feeds "Redirecting..." to sh and the install does nothing while looking
+# like it ran. `-f` does not catch it, because a 308 is not an error.
+#
+# So the rule is the class, not the instance: anything piped into a shell must
+# name its scheme or pass -L. Checked across every file a reader copies from.
+bare=0
+for f in README.md CONTRIBUTING.md kantan.sh docs/marketing/SYSTEM.md \
+         docs/marketing/POSTS.md docs/marketing/posts/reddit.md \
+         docs/marketing/posts/devto.md docs/marketing/posts/discord.txt \
+         docs/marketing/posts/linkedin.txt; do
+  [ -f "$REPO_ROOT/$f" ] || continue
+  # Lines that pipe curl into a shell, minus the one sentence in kantan.sh that
+  # quotes the broken form in order to warn about it.
+  hits=$(grep -n 'curl[^|]*|[[:space:]]*sh' "$REPO_ROOT/$f" \
+    | grep -v 'is not one of them' \
+    | grep -v 'not decoration' \
+    | grep -vE 'curl -[a-zA-Z]*L|curl [^|]*https://' || true)
+  if [ -n "$hits" ]; then
+    bad "$f pipes curl into sh without a scheme or -L"
+    printf '       %s\n' "$hits" | head -3
+    bare=$((bare + 1))
+  fi
+done
+[ "$bare" -eq 0 ] && ok "no bare one-liner in any file a reader copies from"
 
 head2 "A step that fails says something of its own"
 # The four refusals above were always there. These were not: until this probe

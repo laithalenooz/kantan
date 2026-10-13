@@ -8,7 +8,7 @@ Two things that are deliberate: **one task, one session, one human** — no org 
 
 The thing that cost me the most to learn is in there too: a question and a completion are indistinguishable in `claude -p`, because `AskUserQuestion` doesn't exist headless. Both exit `success` with text. So there's a sentinel line, and its absence is how an agent asking something gets noticed.
 
-MIT, loopback only, `curl get.kantan.sh | sh`
+MIT, loopback only, `curl -fsSL https://get.kantan.sh | sh`
 
 https://kantan.sh
 Source: <https://github.com/laithalenooz/kantan>

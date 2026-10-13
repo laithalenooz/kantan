@@ -90,7 +90,7 @@ which kind of verification it saw, it does not get to imply either.
 ## Running it
 
 ```bash
-curl get.kantan.sh | sh
+curl -fsSL https://get.kantan.sh | sh
 ```
 
 That is [`kantan.sh`](kantan.sh) in this repository, and it is short so you can

@@ -29,6 +29,6 @@ The hard-won facts about `claude -p` are in `docs/probes/` and every script ther
 
 MIT, runs on loopback only, talks to no service.
 
-`curl get.kantan.sh | sh` — or read it first, it's short: https://kantan.sh
+`curl -fsSL https://get.kantan.sh | sh` — or read it first, it's short: https://kantan.sh
 
 Source: https://github.com/laithalenooz/kantan

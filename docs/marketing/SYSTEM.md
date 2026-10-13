@@ -287,7 +287,7 @@ Usable more or less verbatim.
 Install, which is genuinely one line:
 
 ```bash
-curl get.kantan.sh | sh
+curl -fsSL https://get.kantan.sh | sh
 ```
 
 Or three, by hand:
