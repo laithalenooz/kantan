@@ -122,6 +122,26 @@ if ! command -v claude >/dev/null 2>&1; then
   exit 1
 fi
 
+# Advisory, like the node check above, and for the same reason: the costs are not
+# symmetric. Both phase prompts open by invoking a skill from the `superpowers`
+# plugin - `planPrompt` with writing-plans, `implementPrompt` with
+# executing-plans - so without it a run loses that skill's discipline, and
+# nothing else: an unresolvable slash command is passed to the model as literal
+# text and every instruction after it is obeyed normally. Measured, not assumed;
+# docs/probes/slash-fallback.sh reruns it. Refusing an install over an optional
+# plugin would cost more than saying so does.
+#
+# Matched on the plugin name before the `@`, not on the word wherever it appears:
+# the marketplace is *also* called `superpowers-marketplace`, so a bare grep
+# counts `double-shot-latte@superpowers-marketplace` as a hit and the check would
+# pass on a machine that does not have the plugin at all.
+if ! claude plugin list 2>/dev/null | grep -qE '(^|[^a-zA-Z0-9-])superpowers@'; then
+  warn "The superpowers plugin is not installed."
+  printf '  Both phase prompts invoke one of its skills. Runs still work without it;\n' >&2
+  printf '  they lose its task-by-task discipline and nothing else.\n' >&2
+  printf '  Add it with:  claude plugin install superpowers@superpowers-marketplace\n' >&2
+fi
+
 if [ -d "$DIR/.git" ]; then
   say "Updating the copy in $DIR."
   git -C "$DIR" pull --ff-only || die \

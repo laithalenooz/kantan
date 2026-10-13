@@ -242,6 +242,100 @@ if [ "$code" != "0" ]; then
   printf '%s\n' "$out" | grep -v '^EXIT:' | tail -8 | sed 's/^/    /'
 fi
 
+head2 "A missing superpowers plugin warns and carries on"
+# The stub `claude` answers `plugin list` with nothing, which is exactly what a
+# machine without the plugin looks like to this check. Both halves matter: that
+# it says so, and that it does not refuse - the prompts degrade to literal text
+# when the skill is absent (docs/probes/slash-fallback.sh), so blocking an
+# install over it would cost more than the warning does.
+out=$(docker run --rm \
+  -v "$REPO_ROOT/kantan.sh:/work/kantan.sh:ro" \
+  "$IMAGE" sh -c '
+    apt-get update -qq >/dev/null 2>&1
+    apt-get install -y -qq git >/dev/null 2>&1
+    for t in bun node; do printf "#!/bin/sh\nexit 0\n" > "/stage/$t"; chmod +x "/stage/$t"; done
+    printf "#!/bin/sh\necho 2.1.296\n" > /stage/claude; chmod +x /stage/claude
+    PATH="/stage:$PATH"; export PATH
+    KANTAN_REPO=/src/nope.git sh /work/kantan.sh 2>&1
+    printf "EXIT:%s\n" "$?"
+  ' 2>&1)
+if printf '%s' "$out" | grep -qF "superpowers plugin is not installed"; then
+  ok "says the plugin is missing"
+else
+  bad "no warning about the missing plugin"
+fi
+if printf '%s' "$out" | grep -qF "claude plugin install superpowers"; then
+  ok "and gives the command that installs it"
+else
+  bad "the warning does not say how to fix it"
+fi
+# It must have gone past the check: the clone is the next step, and it is the
+# failure reported here rather than the plugin.
+if printf '%s' "$out" | grep -qF "Could not clone"; then
+  ok "and carried on to the clone rather than refusing"
+else
+  bad "the plugin warning stopped the install"
+fi
+
+head2 "The plugin check reads the name, not the marketplace"
+# The dimension is what `claude plugin list` prints. Its values include the
+# plugin itself, other plugins from the *same* marketplace - which is also
+# called `superpowers-marketplace`, so its name contains the word - no plugins
+# at all, and a `claude` too old to have the subcommand. A bare `grep
+# superpowers` passes on the second of those, which is a machine without the
+# plugin, and the warning would then never appear for the people who need it.
+#
+# Both directions are cheap here, which is why this is a warning and not a gate:
+# a false "missing" costs one line of noise, a false "present" costs the skill's
+# discipline on a run that still completes. The enumeration is tested anyway,
+# because the costs being small is not a reason to be wrong.
+# The stub is a real file rather than a printf inside a printf inside an sh -c:
+# the nested version was three levels of quoting deep and silently produced a
+# broken script, which `set -eu` then turned into the whole probe aborting after
+# the heading.
+cat > "$WORK/fake-claude" <<'FAKE'
+#!/bin/sh
+if [ "$1" = plugin ]; then
+  printf '%s\n' "$LISTING"
+else
+  echo 2.1.296
+fi
+FAKE
+chmod +x "$WORK/fake-claude"
+
+plugin_case() {
+  label=$1; listing=$2; want=$3
+  # `|| true`: the installer exits non-zero here on purpose (the clone is
+  # pointed at nothing), and without this `set -e` takes the probe down with it.
+  out=$(docker run --rm \
+    -v "$REPO_ROOT/kantan.sh:/work/kantan.sh:ro" \
+    -v "$WORK/fake-claude:/stage/claude:ro" \
+    -e "LISTING=$listing" \
+    "$IMAGE" sh -c '
+      apt-get update -qq >/dev/null 2>&1
+      apt-get install -y -qq git >/dev/null 2>&1
+      for t in bun node; do printf "#!/bin/sh\nexit 0\n" > "/stage/$t"; chmod +x "/stage/$t"; done
+      PATH="/stage:$PATH"; export PATH
+      KANTAN_REPO=/src/nope.git sh /work/kantan.sh 2>&1
+    ' 2>&1 || true)
+  if printf '%s' "$out" | grep -qF "superpowers plugin is not installed"; then
+    got=warns
+  else
+    got=silent
+  fi
+  if [ "$got" = "$want" ]; then
+    ok "$label -> $got"
+  else
+    bad "$label -> $got, expected $want"
+    printf '       listing was: %s\n' "$listing"
+  fi
+}
+
+plugin_case "the plugin itself          " "  superpowers@superpowers-marketplace" silent
+plugin_case "only a sibling from its mkt" "  double-shot-latte@superpowers-marketplace" warns
+plugin_case "nothing installed          " "Installed plugins:" warns
+plugin_case "a plugin merely named like " "  my-superpowers-fork@other" warns
+
 head2 "Node 18 is warned about before the clone, not only after the build"
 out=$(docker run --rm \
   -v "$REPO_ROOT/kantan.sh:/work/kantan.sh:ro" \

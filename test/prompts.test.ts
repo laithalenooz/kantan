@@ -731,3 +731,50 @@ test("the dirty section composes with a project that has no test command", () =>
   expect(out).toContain("src/importer.ts")
   expect(out).not.toMatch(/runs the project's test command/i)
 })
+
+// --- A prompt that invokes a plugin is a dependency on that plugin ----------
+
+/**
+ * **Every plugin skill a prompt invokes must be named in the README.**
+ *
+ * `planPrompt` opens with `/superpowers:writing-plans` and `implementPrompt`
+ * with `/superpowers:executing-plans`, so kantan does not work as designed
+ * unless that plugin is installed - and for two days it was documented nowhere
+ * a user reads: not the README, not CONTRIBUTING, not `kantan.sh`, which checks
+ * for git, bun, node and `claude` and not for this.
+ *
+ * Probed before writing this, because the answer decided whether it was a
+ * documentation gap or a broken product: **an unresolvable slash command is
+ * passed through as literal text.** `claude -p` with a command that cannot
+ * exist returned `result/success` and obeyed the rest of the prompt
+ * (`docs/probes/slash-fallback.sh`). So a missing plugin costs the skill's
+ * discipline, not the run - a documentation gap, which is this test.
+ *
+ * It reads the **generated** prompts rather than the source, because what
+ * reaches the agent is what creates the dependency, and it matches any
+ * `/plugin:skill` rather than this plugin by name, so adding a second one
+ * silently is the case it catches.
+ */
+test("every plugin skill a prompt invokes is named in the README", async () => {
+  const readme = await Bun.file(new URL("../README.md", import.meta.url)).text()
+
+  const invoked = new Set<string>()
+  for (const [, prompt] of ALL) {
+    // Only an opening slash command invokes anything: the CLI resolves one at
+    // the start of the prompt, and `/superpowers:executing-plans` named in the
+    // middle of a sentence is prose about a skill, not a call to it.
+    const first = prompt.match(/^\/([a-z0-9-]+):([a-z0-9-]+)/)
+    if (first !== null) invoked.add(`${first[1]}:${first[2]}`)
+  }
+
+  // If this is empty the test is worthless, so say so rather than passing.
+  expect(invoked.size).toBeGreaterThan(0)
+
+  for (const skill of invoked) {
+    const plugin = skill.split(":")[0] ?? ""
+    expect(
+      readme.includes(skill) || readme.includes(plugin),
+      `${skill} is invoked by a prompt but never named in README.md, so a user cannot know to install it`,
+    ).toBe(true)
+  }
+})

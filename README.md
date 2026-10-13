@@ -124,6 +124,32 @@ Two things you will need: the `claude` CLI on your `PATH`, already logged in, an
 `docs/features/<slug>.md` holding `- [ ] T1 ...` lines. Point kantan at the repo from the empty
 state and it will read the task file.
 
+### The `superpowers` plugin, which is recommended rather than required
+
+Both phase prompts open by invoking a skill from it — `planPrompt` with
+`/superpowers:writing-plans`, `implementPrompt` with
+`/superpowers:executing-plans` — so kantan works best with it installed:
+
+```bash
+claude plugin install superpowers@superpowers-marketplace
+```
+
+**Without it, runs still work.** That is measured rather than assumed: an
+unresolvable slash command is passed through to the model as literal text, so
+the prompt's first line becomes a meaningless token and every instruction after
+it is obeyed normally. `claude -p` with a command that cannot exist returns
+`result/success` and does what the rest of the prompt said —
+[`docs/probes/slash-fallback.sh`](docs/probes/slash-fallback.sh) reruns it, and
+it spends real money, so it asks before it does.
+
+What you lose is the skill's discipline: writing a plan task by task, and
+implementing it the same way. What you do not lose is the gate, the test run,
+the exit-code branch or the sentinel, none of which come from the plugin.
+
+`kantan.sh` says so if the plugin is missing and carries on regardless, for the
+same reason it does not refuse an old Node: the install still works, and
+blocking it over something optional would cost more than the warning does.
+
 **If you used this before it was called kantan**, it kept its state in `~/.orch` and named its
 branches `orch/<task>`. Nothing moved: kantan reads `~/.orch` when it exists and `~/.kantan` does
 not, and says so at startup with the one command that moves it. `KANTAN_PORT`, `KANTAN_DEV` and
