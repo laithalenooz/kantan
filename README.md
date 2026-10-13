@@ -43,6 +43,19 @@ to grow faster than the usefulness.
              +--> plan                     +--> refine --> test
 ```
 
+![One task through the whole pipeline: the plan waiting at the gate, a human approving it, an implement phase, a failing test run, a refine, a passing test run, and the finished task](docs/media/flow.gif)
+
+*That diagram, running. 37 seconds: the gate, the approval, the implement phase,
+a test run that **fails**, a refine, a test run that passes, and a finished task
+on a branch you have not merged yet.*
+
+*The server, the routes, the run log, the replay and the click are all real —
+`docs/probes/record.ts` presses that button over CDP. **The agent is
+re-enacted**, writing the records a `claude` child would have written rather
+than being spawned, so a take costs nothing.
+[`docs/media/README.md`](docs/media/README.md) says exactly which is which, and
+how to make a clip with no re-enactment in it at all.*
+
 It spawns the real `claude` binary. It does not reimplement an agent loop, so your
 `CLAUDE.md`, skills, plugins, hooks, settings and auth all load exactly as they do in your
 terminal. There is nothing to port and nothing to configure twice.

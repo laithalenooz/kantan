@@ -1,0 +1,23 @@
+▞▞▞ Plain text, no markdown. Paste as-is — LinkedIn has no formatting syntax, so every asterisk would show up literally. ▞▞▞
+
+Every coding-agent tool I tried grew an org chart before it could finish a single task.
+
+Specialist personas. A scheduler. A tracker database. A fleet of agents negotiating with each other. The ceremony grew faster than the usefulness, and I abandoned two of my own attempts for exactly that reason.
+
+So I built the smallest thing that does the part I actually wanted, and I want to describe it by what it refuses to do.
+
+One task at a time. An agent reads the repository and writes a plan. Then it stops. A human reads that plan and either approves it or sends it back with a note. Nothing else moves until that happens.
+
+The harness runs the tests, not the agent. It branches on the exit code of your own test command, and never on the agent reporting success. Verification from outside the agent cannot be talked out of — which is the difference between a tool you can hand to a team and a demo.
+
+The backlog is markdown in your own repository. Not a database. The interface renders and remote-controls; it never owns the truth.
+
+The part I am most pleased with is the least visible. A project can legitimately have no test suite — most repositories don't — and in that case the agent verifies its own work, which is a weaker claim. So the system records which of the two happened, and no screen prints an exit code, a green tick or the word "passed" for a run that checked itself. If a surface cannot tell you which kind of verification it saw, it does not get to imply either.
+
+That rule is not about AI. It is the same rule as not labelling an untested deployment "verified", and it is the one I would carry into any system that reports on its own work.
+
+It is open source under MIT, it runs entirely on localhost, and it is rough in places — the README lists them by name, which was also a deliberate choice.
+
+kantan.sh
+
+#OpenSource #DeveloperTools #AI #SoftwareEngineering

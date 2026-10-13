@@ -1,0 +1,14 @@
+▞▞▞ Paste as one message, then attach docs/media/flow.gif ▞▞▞
+
+Built a local web UI that drives the real `claude` CLI through one coding task at a time: an agent reads the repo and writes a plan, **stops**, you approve it or send it back with a note, then a fresh session implements it and your test command runs until the exit code is zero.
+
+It spawns the actual binary rather than reimplementing an agent loop, so your `CLAUDE.md`, skills, plugins, hooks and auth load exactly as they do in your terminal.
+
+Two things that are deliberate: **one task, one session, one human** — no org chart, no autonomy, no multi-agent anything — and **the server runs your tests, not the agent**, branching on the exit code and never on the agent saying it worked.
+
+The thing that cost me the most to learn is in there too: a question and a completion are indistinguishable in `claude -p`, because `AskUserQuestion` doesn't exist headless. Both exit `success` with text. So there's a sentinel line, and its absence is how an agent asking something gets noticed.
+
+MIT, loopback only, `curl get.kantan.sh | sh`
+
+https://kantan.sh
+Source: <https://github.com/laithalenooz/kantan>
