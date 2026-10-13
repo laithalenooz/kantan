@@ -7,7 +7,7 @@ plan, you approve, then implement and test until the tests pass.
 
 > **Status: it works, and it is rough in places.** The pipeline runs end to end — plan,
 > gate, implement, test, commit — against the real `claude` binary, from one process on one
-> port. 71 modules, 2527 tests, one of them skipped. [Rough edges](#rough-edges) lists what is still unfinished,
+> port. 72 modules, 2562 tests, one of them skipped. [Rough edges](#rough-edges) lists what is still unfinished,
 > by name, including the parts that are merely hidden rather than done.
 >
 > The hard-won facts about `claude -p` are in [`docs/probes/`](docs/probes/), and every
@@ -147,6 +147,13 @@ afternoon and wonder whether you had broken it.
   past run logs. Between runs it can only tell you what it last saw and when — and it says
   so, in those words, rather than drawing a stale bar. If you have been using `claude` in
   your terminal, kantan does not know about it.
+- **A second Claude account has to be named by hand, once.** The accounts screen scans your
+  home directory for folders that look like profiles — the test is a `.credentials.json`
+  inside them, not the name, because a plugin's `~/.claude-mem` matches every name-based
+  rule — and then asks you what to call it and whether it bills as personal or work. It will
+  not guess the last part: billing a client from the wrong account is the mistake the whole
+  design is arranged to prevent. A profile kept outside your home directory is not found, and
+  you paste its path instead.
 - **`src/run.ts` is 2695 lines.** It is one state machine, and that is measured rather than
   excused: 34 of its 67 functions mutate the same `ActiveRun`, so a split would be two files
   sharing mutable state instead of one file holding it. The two groups that *were* separable

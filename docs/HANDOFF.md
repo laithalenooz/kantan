@@ -1550,6 +1550,53 @@ The 201 body is now `{ok, path, tasks, warning?}`. `warning` is present only
 when there is something to say, so a client can treat its presence as "tell the
 human" rather than comparing against `""`.
 
+### `Project.account` is a label, and `~/.orch/accounts.json` is the registry - BUILT
+
+Two reports from use had one cause: *"why other accounts are not detected?"* and
+*"if I try to add a new account nothing happens?"*
+
+`accountOptionsFor` derived the account list **from the registered projects** -
+the default profile plus one option per project's `(kind, configDir)`. A profile
+on disk was therefore invisible, and the only way to make an account selectable
+was to already have a project billing to it. The add-account form closed that
+circle by `PATCH`ing the *project* to the new pair, which discarded the typed
+label (the chip is derived from `configDir`) and silently moved that project's
+billing - the one path that skipped the confirmation dialog the switch control
+has, in a design where switching asks first because getting it wrong costs
+money.
+
+What landed, and the parts worth keeping:
+
+- **The registry is a second store, derived from `projectsFile`'s directory.**
+  Not a second `ServerOptions` path: `defaultProjectsFile()` stays the only
+  place that knows where `~/.orch` is, and a second injectable path is one more
+  thing every test must remember, whose failure mode is writing into the
+  developer's own `~/.orch`.
+- **`~` is expanded in the store.** The add form promises it in so many words
+  and the CLI expands nothing - handed `~/.claude-work` it creates a directory
+  called `~`.
+- **An account that has never run is still listed**, as `never used` with a
+  sentence. Absent is indistinguishable from "no such account".
+- **Discovery keys on `.credentials.json`, not on the name.** This machine has
+  `.claude-work` (a profile) and `.claude-mem` (a plugin's data directory), and
+  every name-based rule matches both. It is conservative on purpose, because
+  pasting a path by hand is always available: a missed profile costs one paste,
+  a suggested folder with no credentials costs a run that stops for a login
+  kantan cannot answer.
+- **The kind is never inferred from the path**, so a suggestion fills the folder
+  field in and stops. `accountOf` refuses to default to `personal` for the same
+  reason.
+- **`accounts` and `foundAccounts` are two keys all the way through.** One is
+  what the user said, the other is what a scan suspects; merged, a guess looks
+  like a record.
+
+And one trap for anything else that reads the machine: **`discoverProfiles`
+defaulted to the real home**, so the tree answered the developer's own
+`~/.claude-work` inside `bun test`. `homeDir` is injected now, like `runsDir`
+and `distDir`. An exact-shape assertion on the tree body is the only reason it
+was noticed - a test asserting only the keys it cared about would have passed on
+every machine and meant nothing.
+
 ## Settled: decisions with non-obvious reasons
 
 | Decision | Why it is not the obvious thing |
