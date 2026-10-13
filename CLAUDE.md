@@ -198,7 +198,7 @@ of the code.
 Key every scratch path on `process.pid`:
 
 ```ts
-const dir = join(repoRoot, ".orch-test", "<suite>", `${name}-${process.pid}`)
+const dir = join(repoRoot, ".kantan-test", "<suite>", `${name}-${process.pid}`)
 ```
 
 `test/run.test.ts` and `test/spawn.test.ts` both do this. Any new suite that writes to disk must.

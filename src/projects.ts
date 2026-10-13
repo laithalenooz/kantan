@@ -260,7 +260,7 @@ export function projectIdentity(path: unknown): string {
  * it - so that throw is a library caller's mistake rather than a request's.
  *
  * **The run logs of a removed project are deliberately left where they are.**
- * They live in `~/.orch/runs` keyed by run id, they are the record of work that
+ * They live in `~/.kantan/runs` keyed by run id, they are the record of work that
  * cost real money, and nothing can rebuild one: removing a project changes what
  * kantan tracks, and reading that as "delete this project's history" would be
  * an unrecoverable answer to a recoverable request. `src/runindex.ts` already

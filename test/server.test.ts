@@ -116,7 +116,7 @@ async function call(l: Launch, c: Call = {}): Promise<{ status: number; headers:
   const headers = new Headers({ Host: c.host ?? `127.0.0.1:${l.port}` })
   const origin = c.origin === undefined ? `http://127.0.0.1:${l.port}` : c.origin
   if (origin !== null) headers.set("Origin", origin)
-  const cookie = c.cookie === undefined ? `orch_token=${l.token}` : c.cookie
+  const cookie = c.cookie === undefined ? `kantan_token=${l.token}` : c.cookie
   if (cookie !== null) headers.set("Cookie", cookie)
   if (c.contentType !== undefined) headers.set("Content-Type", c.contentType)
 
@@ -239,17 +239,17 @@ test("mints a different token each launch", () => {
 
 test("requires the token on a GET, not only on writes", async () => {
   expect((await call(app, { cookie: null })).status).toBe(401)
-  expect((await call(app, { cookie: "orch_token=" })).status).toBe(401)
-  expect((await call(app, { cookie: `orch_token=${app.token}x` })).status).toBe(401)
-  expect((await call(app, { cookie: `orch_token=${app.token.slice(0, -1)}` })).status).toBe(401)
+  expect((await call(app, { cookie: "kantan_token=" })).status).toBe(401)
+  expect((await call(app, { cookie: `kantan_token=${app.token}x` })).status).toBe(401)
+  expect((await call(app, { cookie: `kantan_token=${app.token.slice(0, -1)}` })).status).toBe(401)
   expect((await call(app, { cookie: "nottheone=1" })).status).toBe(401)
   // Another launch's token is somebody else's.
-  expect((await call(app, { cookie: `orch_token=${serve().token}` })).status).toBe(401)
+  expect((await call(app, { cookie: `kantan_token=${serve().token}` })).status).toBe(401)
 })
 
 test("a cookie-authenticated request succeeds where an unauthenticated one fails", async () => {
   expect((await call(app, { cookie: null })).status).toBe(401)
-  expect((await call(app, { cookie: `orch_token=${app.token}` })).status).toBe(200)
+  expect((await call(app, { cookie: `kantan_token=${app.token}` })).status).toBe(200)
 })
 
 test("reads the token from a cookie, never from a header, because EventSource cannot send headers", async () => {
@@ -265,15 +265,15 @@ test("reads the token from a cookie, never from a header, because EventSource ca
 
 test("accepts the token among other cookies, and when a local neighbour has tossed a decoy", async () => {
   // Cookies ignore ports, so any page on another localhost port can set
-  // orch_token for this host. It cannot know the real value, so the browser
+  // kantan_token for this host. It cannot know the real value, so the browser
   // sends both and we accept if any value matches: a decoy is then noise
   // rather than a denial of service, and still never a bypass.
-  expect((await call(app, { cookie: `theme=dark; orch_token=${app.token}; tz=UTC` })).status).toBe(200)
-  expect((await call(app, { cookie: `orch_token=decoy; orch_token=${app.token}` })).status).toBe(200)
-  expect((await call(app, { cookie: `orch_token=${app.token}; orch_token=decoy` })).status).toBe(200)
+  expect((await call(app, { cookie: `theme=dark; kantan_token=${app.token}; tz=UTC` })).status).toBe(200)
+  expect((await call(app, { cookie: `kantan_token=decoy; kantan_token=${app.token}` })).status).toBe(200)
+  expect((await call(app, { cookie: `kantan_token=${app.token}; kantan_token=decoy` })).status).toBe(200)
   // A name that merely contains ours is a different cookie.
-  expect((await call(app, { cookie: `xorch_token=${app.token}` })).status).toBe(401)
-  expect((await call(app, { cookie: `orch_token_x=${app.token}` })).status).toBe(401)
+  expect((await call(app, { cookie: `xkantan_token=${app.token}` })).status).toBe(401)
+  expect((await call(app, { cookie: `kantan_token_x=${app.token}` })).status).toBe(401)
 })
 
 // ---------------------------------------------------------------------------
@@ -286,7 +286,7 @@ test("page load sets the token as a SameSite=Strict cookie", async () => {
   expect(res.status).toBe(200)
 
   const setCookie = res.headers.get("set-cookie") ?? ""
-  expect(setCookie).toContain(`orch_token=${l.token}`)
+  expect(setCookie).toContain(`kantan_token=${l.token}`)
   expect(setCookie).toContain("SameSite=Strict")
   expect(setCookie).toContain("HttpOnly")
   expect(setCookie).toContain("Path=/")
@@ -300,7 +300,7 @@ test("page load sets the token as a SameSite=Strict cookie", async () => {
   expect(res.body).not.toContain(l.token)
 
   // And the cookie it handed out works.
-  expect((await call(l, { cookie: `orch_token=${l.token}` })).status).toBe(200)
+  expect((await call(l, { cookie: `kantan_token=${l.token}` })).status).toBe(200)
 })
 
 test("the bootstrap route is behind the guards: a bad Host gets no cookie", async () => {
@@ -363,20 +363,20 @@ test("Host absent entirely -> 403, never read as local", async () => {
 
   const ten = await raw(
     PORT,
-    `GET /api/health HTTP/1.0\r\nCookie: orch_token=${app.token}\r\nConnection: close\r\n\r\n`,
+    `GET /api/health HTTP/1.0\r\nCookie: kantan_token=${app.token}\r\nConnection: close\r\n\r\n`,
   )
   expect(ten).toStartWith("HTTP/1.1 403")
 })
 
 test("Host empty, or sent twice, -> 403", async () => {
-  const empty = await raw(PORT, `GET /api/health HTTP/1.1\r\nHost:\r\nCookie: orch_token=${app.token}\r\nConnection: close\r\n\r\n`)
+  const empty = await raw(PORT, `GET /api/health HTTP/1.1\r\nHost:\r\nCookie: kantan_token=${app.token}\r\nConnection: close\r\n\r\n`)
   expect(empty).toStartWith("HTTP/1.1 403")
 
   // Two Host headers arrive joined as "a, b", which matches no allowlist
   // entry. Smuggling one good value past us needs the pair to be accepted.
   const twice = await raw(
     PORT,
-    `GET /api/health HTTP/1.1\r\nHost: 127.0.0.1:${PORT}\r\nHost: evil.example.com\r\nCookie: orch_token=${app.token}\r\nConnection: close\r\n\r\n`,
+    `GET /api/health HTTP/1.1\r\nHost: 127.0.0.1:${PORT}\r\nHost: evil.example.com\r\nCookie: kantan_token=${app.token}\r\nConnection: close\r\n\r\n`,
   )
   expect(twice).toStartWith("HTTP/1.1 403")
 })
@@ -389,7 +389,7 @@ test("a whitespace-padded Host never reaches the guard: the parser strips it fir
   // and because the day a parser stops trimming, this fails and says so.
   const padded = await raw(
     PORT,
-    `GET /api/health HTTP/1.1\r\nHost: \t127.0.0.1:${PORT} \t\r\nCookie: orch_token=${app.token}\r\nConnection: close\r\n\r\n`,
+    `GET /api/health HTTP/1.1\r\nHost: \t127.0.0.1:${PORT} \t\r\nCookie: kantan_token=${app.token}\r\nConnection: close\r\n\r\n`,
   )
   expect(padded).toStartWith("HTTP/1.1 200")
 })
@@ -398,7 +398,7 @@ test("0.0.0.0 really reaches a loopback-bound server, and is refused there", asy
   // Not a hypothetical row: Linux routes a connect to 0.0.0.0 to loopback, so
   // this is a live request with a Host we do not allowlist.
   const res = await fetch(`http://0.0.0.0:${PORT}/api/health`, {
-    headers: { Cookie: `orch_token=${app.token}` },
+    headers: { Cookie: `kantan_token=${app.token}` },
     signal: AbortSignal.timeout(3000),
   })
   await res.arrayBuffer()
@@ -472,7 +472,7 @@ test("the vite dev flow works end to end in dev mode: bootstrap, cookie, then an
   // cookie has to arrive through the proxy.
   const boot = await call(l, { path: "/api/session", cookie: null, host: viteHost, origin: viteOrigin })
   expect(boot.status).toBe(200)
-  expect(boot.headers.get("set-cookie") ?? "").toContain(`orch_token=${l.token}`)
+  expect(boot.headers.get("set-cookie") ?? "").toContain(`kantan_token=${l.token}`)
 
   expect((await call(l, { host: viteHost, origin: viteOrigin })).status).toBe(200)
   // http-proxy with changeOrigin rewrites Host but never Origin, so the other
@@ -727,7 +727,7 @@ async function stream(l: Launch, runId: string, c: StreamCall = {}): Promise<Str
   const headers = new Headers({ Host: c.host ?? `127.0.0.1:${l.port}` })
   const accept = c.accept === undefined ? "text/event-stream" : c.accept
   if (accept !== null) headers.set("Accept", accept)
-  const cookie = c.cookie === undefined ? `orch_token=${l.token}` : c.cookie
+  const cookie = c.cookie === undefined ? `kantan_token=${l.token}` : c.cookie
   if (cookie !== null) headers.set("Cookie", cookie)
 
   const path = c.path ?? `/api/runs/${runId}/stream`
@@ -1159,7 +1159,7 @@ test("an EventSource-shaped request authenticates: the cookie alone, no Authoriz
   const url = `http://127.0.0.1:${l.port}/api/runs/es/stream`
 
   const ok = await fetch(url, {
-    headers: { Host: `127.0.0.1:${l.port}`, Accept: "text/event-stream", Cookie: `orch_token=${l.token}` },
+    headers: { Host: `127.0.0.1:${l.port}`, Accept: "text/event-stream", Cookie: `kantan_token=${l.token}` },
   })
   expect(ok.status).toBe(200)
   expect(ok.headers.get("content-type")).toStartWith("text/event-stream")
@@ -1175,7 +1175,7 @@ test("an EventSource-shaped request authenticates: the cookie alone, no Authoriz
 
   // And a top-level EventSource sends no Origin, as every GET does not.
   const noOrigin = await fetch(url, {
-    headers: { Host: `127.0.0.1:${l.port}`, Cookie: `orch_token=${l.token}` },
+    headers: { Host: `127.0.0.1:${l.port}`, Cookie: `kantan_token=${l.token}` },
   })
   expect(noOrigin.status).toBe(200)
   await noOrigin.body?.cancel()
@@ -1195,7 +1195,7 @@ test("the run stream is registered in ROUTES, behind the guards, and is not toke
   const l = serve({ runsDir: dir })
   expect((await call(l, { path: "/api/runs/abc/stream", host: "evil.example.com" })).status).toBe(403)
   expect((await call(l, { path: "/api/runs/abc/stream", cookie: null })).status).toBe(401)
-  expect((await call(l, { path: "/api/runs/abc/stream", cookie: `orch_token=${l.token}x` })).status).toBe(401)
+  expect((await call(l, { path: "/api/runs/abc/stream", cookie: `kantan_token=${l.token}x` })).status).toBe(401)
 })
 
 // --- Ids the matcher and runLogPath must refuse -----------------------------
@@ -1457,7 +1457,7 @@ const TASK: StartRequest = { projectPath: "/repo", featureFile: "docs/features/x
  * A store path in a directory of its own, with **no file at it yet**: an absent
  * store reads as "no projects", which is what a fresh install is.
  *
- * Never the developer's own `~/.orch/projects.json`. `ServerOptions` has no
+ * Never the developer's own `~/.kantan/projects.json`. `ServerOptions` has no
  * default for it for exactly this reason - a test that forgot to inject one
  * would register projects in the store the developer runs kantan against.
  */
@@ -4149,7 +4149,7 @@ test("a raise on a server with no machine is a 503, not a 500", async () => {
 // of its own, and drives it over HTTP.
 
 /** A free port, released immediately. The window between this and the server's
- * own bind is the price of `ORCH_PORT` refusing 0 - which it should, since a
+ * own bind is the price of `KANTAN_PORT` refusing 0 - which it should, since a
  * port nobody can predict is no use to a person opening a browser. */
 async function freePort(): Promise<number> {
   const probe = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("probe") })
@@ -4158,6 +4158,93 @@ async function freePort(): Promise<number> {
   if (port === undefined) throw new Error("the probe server bound no TCP port")
   return port
 }
+
+/**
+ * The one guarantee the rename had to come with, asserted through the **real
+ * entry point** rather than against `stateDirIn`.
+ *
+ * `test/statedir.test.ts` covers the four states of the dimension as a unit.
+ * This covers the thing that unit cannot: that the entry point, the project
+ * store and the phase machine all land on the same answer. They each default
+ * on their own, and the failure if they disagree is a server that registers a
+ * project into one directory while the machine looks in another - a 201
+ * followed by `unknown-project` on every start, which is what the sibling test
+ * below exists to catch for the fresh case.
+ *
+ * `projects.json` is the only state in this system that no repository and no
+ * log can rebuild, so reading the wrong directory is the one failure here that
+ * is not recoverable.
+ */
+test("a pre-rename install keeps its projects, read from ~/.orch by the real entry point", async () => {
+  const home = await scratch("kantan-legacy-home-")
+  const repo = await cleanRepo()
+
+  /* The state of anyone who used kantan before today: a populated `.orch` and
+     no `.kantan` at all. Written with the store's own writer, so this fixture
+     cannot drift from the format the server reads. */
+  const legacy = join(home, ".orch")
+  await mkdir(legacy, { recursive: true })
+  await addProject(join(legacy, "projects.json"), defaults({ path: repo, testCmd: "true" }))
+
+  const port = await freePort()
+  const env: Record<string, string> = {}
+  for (const [key, value] of Object.entries(process.env)) if (value !== undefined) env[key] = value
+  env["HOME"] = home
+  env["KANTAN_PORT"] = String(port)
+  env["KANTAN_CLAUDE_BIN"] = join(import.meta.dir, "fake-claude.ts")
+  delete env["KANTAN_DEV"]
+  delete env["ORCH_DEV"]
+  delete env["CLAUDE_CONFIG_DIR"]
+
+  const server = Bun.spawn(["bun", "run", join(import.meta.dir, "..", "src", "server.ts")], {
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  try {
+    const reader = server.stdout.getReader()
+    const decoder = new TextDecoder()
+    let greeting = ""
+    while (!greeting.includes(`127.0.0.1:${port}`)) {
+      const chunk = await reader.read()
+      if (chunk.done) throw new Error(`the server exited before greeting: ${JSON.stringify(greeting)}`)
+      greeting += decoder.decode(chunk.value, { stream: true })
+    }
+    void (async () => {
+      for (;;) if ((await reader.read()).done) return
+    })().catch(() => {})
+
+    /* Said out loud. A fallback nobody can see is indistinguishable from a
+       tool that lost their projects, so the greeting names the directory it
+       chose and how to move it. */
+    expect(greeting).toContain(legacy)
+
+    const bootstrap = await fetch(`http://127.0.0.1:${port}/`, { headers: { Host: `127.0.0.1:${port}` } })
+    await bootstrap.arrayBuffer()
+    const token = /kantan_token=([^;]+)/.exec(bootstrap.headers.get("set-cookie") ?? "")?.[1]
+    if (token === undefined) throw new Error("no token cookie")
+
+    const tree = await fetch(`http://127.0.0.1:${port}/api/projects`, {
+      headers: { Host: `127.0.0.1:${port}`, Cookie: `kantan_token=${token}` },
+    })
+    const body = (await tree.json()) as { projects?: Array<{ path: string }> }
+
+    // The project written before the rename, still there. Not an empty tree,
+    // which is what pointing at a fresh `~/.kantan` would have answered - and
+    // the next write would have made that permanent.
+    expect(body.projects?.map((p) => p.path)).toEqual([repo])
+
+    /* And kantan created no `.kantan` beside it: a fallback, not a migration.
+     * Asserted on that one name rather than on the whole home directory,
+     * because the spawned `bun` makes a `~/.bun` of its own - so a
+     * whole-directory assertion would be about Bun's behaviour, not ours. */
+    expect(await readdir(home)).not.toContain(".kantan")
+    expect(await readdir(home)).toContain(".orch")
+  } finally {
+    server.kill()
+    await server.exited
+  }
+}, 20_000)
 
 test("the real entry point builds a server that can register a project and start a run", async () => {
   const home = await scratch("orch-home-")
@@ -4171,14 +4258,14 @@ test("the real entry point builds a server that can register a project and start
   const env: Record<string, string> = {}
   for (const [key, value] of Object.entries(process.env)) if (value !== undefined) env[key] = value
   env["HOME"] = home
-  env["ORCH_PORT"] = String(port)
+  env["KANTAN_PORT"] = String(port)
   // The double, so no real `claude` is spawned and no money is spent. Its
   // shebang needs `bun` on PATH, which the inherited PATH has.
-  env["ORCH_CLAUDE_BIN"] = join(import.meta.dir, "fake-claude.ts")
+  env["KANTAN_CLAUDE_BIN"] = join(import.meta.dir, "fake-claude.ts")
   // Both deleted rather than left: a developer's shell or a leaked value would
   // otherwise decide whether this test runs in dev mode or against their own
   // CLI profile, and it would pass for the wrong reason on one machine.
-  delete env["ORCH_DEV"]
+  delete env["KANTAN_DEV"]
   delete env["CLAUDE_CONFIG_DIR"]
 
   const server = Bun.spawn(["bun", "run", join(import.meta.dir, "..", "src", "server.ts")], {
@@ -4226,7 +4313,7 @@ test("the real entry point builds a server that can register a project and start
     const bootstrap = await fetch(`http://127.0.0.1:${port}/`, { headers: { Host: `127.0.0.1:${port}` } })
     await bootstrap.arrayBuffer()
     const setCookie = bootstrap.headers.get("set-cookie") ?? ""
-    const token = /orch_token=([^;]+)/.exec(setCookie)?.[1]
+    const token = /kantan_token=([^;]+)/.exec(setCookie)?.[1]
     if (token === undefined) throw new Error(`no token cookie in ${JSON.stringify(setCookie)}`)
 
     const live = (path: string, body: unknown): Promise<Response> =>
@@ -4235,7 +4322,7 @@ test("the real entry point builds a server that can register a project and start
         headers: {
           Host: `127.0.0.1:${port}`,
           Origin: `http://127.0.0.1:${port}`,
-          Cookie: `orch_token=${token}`,
+          Cookie: `kantan_token=${token}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify(body),
@@ -4252,7 +4339,7 @@ test("the real entry point builds a server that can register a project and start
     const added = await live("/api/projects", { path: repo, testCmd: "true" })
     expect(added.status).toBe(201)
     // Written where the entry point said, which is also where the machine looks.
-    expect(await loadProjects(join(home, ".orch", "projects.json"))).toHaveLength(1)
+    expect(await loadProjects(join(home, ".kantan", "projects.json"))).toHaveLength(1)
 
     // 3. And now a run starts: a 201 with a run id, and a log under the same
     // HOME. The phase itself fails behind us - the double is scriptless - which
@@ -4261,10 +4348,10 @@ test("the real entry point builds a server that can register a project and start
     const startedBody = (await started.json()) as { ok?: boolean; runId?: string }
     expect(started.status).toBe(201)
     expect(startedBody.runId).toBeTypeOf("string")
-    const log = join(home, ".orch", "runs", `${startedBody.runId}.jsonl`)
+    const log = join(home, ".kantan", "runs", `${startedBody.runId}.jsonl`)
     await until(
       async () =>
-        (await readdir(join(home, ".orch", "runs")).catch((): string[] => [])).includes(`${startedBody.runId}.jsonl`),
+        (await readdir(join(home, ".kantan", "runs")).catch((): string[] => [])).includes(`${startedBody.runId}.jsonl`),
       "the run log the machine opened under this HOME",
     )
 
@@ -4373,7 +4460,7 @@ test("it commits the change, because kantan wrote into someone's repository", as
  *
  * A draft that cannot be committed still exists - the caller got what they
  * asked for, untracked. A removal that cannot be committed has already changed
- * a file the user can see, on a checkout sitting on the run's own `orch/<task>`
+ * a file the user can see, on a checkout sitting on the run's own `kantan/<task>`
  * branch, and `returnToBase` would then bring the task back after the UI said
  * it was gone. The assertion that matters here is the second one: the file is
  * untouched.
@@ -5143,7 +5230,7 @@ test("proposing needs all three fields", async () => {
  * The six settings that were hand-edit-only.
  *
  * The store has held and validated them since it was written; only
- * `EDITABLE_KEYS` withheld them, so `~/.orch/projects.json` was the single way
+ * `EDITABLE_KEYS` withheld them, so `~/.kantan/projects.json` was the single way
  * to change the model a phase runs on. The refusals in the table above prove
  * the validation still bites - this proves the acceptance, one field at a time,
  * because `PATCH` is a partial update and the point is that touching one does

@@ -76,7 +76,7 @@ export type Event =
        * is still a legible row.
        */
       change: string
-      /** The branch it happened on, which for kantan is `orch/<task>`. */
+      /** The branch it happened on, which for kantan is `kantan/<task>`. */
       branch: string
     }
   | { kind: "unknown"; raw: unknown }

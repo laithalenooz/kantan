@@ -44,10 +44,17 @@ Four nouns, three of which already exist on your disk:
 
 | Noun | Is actually | Lives in |
 |---|---|---|
-| Project | a repo directory, a test command (or none), a profile | `~/.orch/projects.json` |
+| Project | a repo directory, a test command (or none), a profile | `~/.kantan/projects.json` |
 | Feature | a markdown file | `<repo>/docs/features/<slug>.md` |
 | Task | a `- [ ]` line in that file | the same file |
-| Run | one task through the pipeline | `~/.orch/runs/<uuid>.jsonl`, raw stream-json |
+| Run | one task through the pipeline | `~/.kantan/runs/<uuid>.jsonl`, raw stream-json |
+
+**Your run logs are raw stream-json, and that means prompts, tool inputs and file
+contents.** `~/.kantan/runs/<uuid>.jsonl` is what the CLI emitted, byte for byte, because
+replaying it is what makes the UI reconnectable. So read one before you attach it to a bug
+report: it can contain source from the repository the run was working in, and anything your
+`CLAUDE.md` or a skill put into a prompt. Nothing is sent anywhere — kantan binds loopback and
+talks to no service — but the file is yours to share by accident.
 
 **The server runs your tests, not the agent.** It branches on the exit code and never on the
 agent reporting success. Verification from outside the agent cannot be talked out of.
@@ -83,6 +90,13 @@ If you skip `bun run build`, the server still starts and the page tells you so r
 Two things you will need: the `claude` CLI on your `PATH`, already logged in, and a repo with a
 `docs/features/<slug>.md` holding `- [ ] T1 ...` lines. Point kantan at the repo from the empty
 state and it will read the task file.
+
+**If you used this before it was called kantan**, it kept its state in `~/.orch` and named its
+branches `orch/<task>`. Nothing moved: kantan reads `~/.orch` when it exists and `~/.kantan` does
+not, and says so at startup with the one command that moves it. `KANTAN_PORT`, `KANTAN_DEV` and
+`KANTAN_CLAUDE_BIN` are the names now, and the `ORCH_*` spellings still work. Branches an
+interrupted run left under `orch/` are still recognised and still resumable; new ones are
+`kantan/<task>`.
 
 ### Working on kantan itself
 

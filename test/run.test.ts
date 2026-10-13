@@ -10,9 +10,9 @@ import { taskBranchName } from "../src/git"
  *
  * **No test here may reach the real API.** `CLAUDE_BIN` binds when
  * `src/version.ts` loads (docs/HANDOFF.md), so setting
- * `process.env.ORCH_CLAUDE_BIN` in a test body is a no-op: every case runs the
+ * `process.env.KANTAN_CLAUDE_BIN` in a test body is a no-op: every case runs the
  * machine in a **fresh process**, through a generated driver, with
- * `ORCH_CLAUDE_BIN` in that process's environment. This is the pattern
+ * `KANTAN_CLAUDE_BIN` in that process's environment. This is the pattern
  * `test/spawn.test.ts` and `test/version.test.ts` already use, and it is the
  * only one that cannot accidentally spawn the developer's real `claude`.
  *
@@ -35,7 +35,7 @@ const SONNET = "claude-sonnet-5-5"
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 /**
- * The driver. A separate process per case, generated because `.orch-test/` is
+ * The driver. A separate process per case, generated because `.kantan-test/` is
  * gitignored and therefore **not typechecked**: a type error in here surfaces
  * as a driver that fails at runtime, which `drive` reports with its stderr.
  *
@@ -352,7 +352,7 @@ async function workspace(
   // directory the second one's `rm -rf` deletes the first one's repo, cursor
   // and argv log mid-test. Reproduced: two concurrent runs failed 10 and 1
   // cases respectively; keyed per process, both pass.
-  const dir = join(repoRoot, ".orch-test", "run", `${name}-${process.pid}`)
+  const dir = join(repoRoot, ".kantan-test", "run", `${name}-${process.pid}`)
   await rm(dir, { recursive: true, force: true })
   const repo = join(dir, "repo")
   await mkdir(join(repo, "docs", "features"), { recursive: true })
@@ -481,7 +481,7 @@ interface Out {
 }
 
 /**
- * The driver's environment: the ambient one with every `ORCH_FAKE_*` stripped
+ * The driver's environment: the ambient one with every `KANTAN_FAKE_*` stripped
  * and `CLAUDE_CONFIG_DIR` deleted, plus this workspace's wiring. Both scrubs
  * matter: an inherited script would make a case depend on who ran the suite,
  * and an ambient `CLAUDE_CONFIG_DIR` would reach the child (docs/HANDOFF.md).
@@ -489,12 +489,12 @@ interface Out {
 function driverEnv(ws: Ws, over: Record<string, string> = {}): Record<string, string> {
   const env: Record<string, string> = {}
   for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined && !key.startsWith("ORCH_FAKE_")) env[key] = value
+    if (value !== undefined && !key.startsWith("KANTAN_FAKE_")) env[key] = value
   }
   delete env["CLAUDE_CONFIG_DIR"]
-  env["ORCH_CLAUDE_BIN"] = FAKE
-  env["ORCH_FAKE_SCRIPT"] = ws.script
-  env["ORCH_FAKE_ARGV_LOG"] = ws.log
+  env["KANTAN_CLAUDE_BIN"] = FAKE
+  env["KANTAN_FAKE_SCRIPT"] = ws.script
+  env["KANTAN_FAKE_ARGV_LOG"] = ws.log
   return { ...env, ...over }
 }
 
@@ -1699,7 +1699,7 @@ test("a multi-byte character split across reads survives into the run log", asyn
   const out = await drive(ws, {
     // Seven-byte writes, with the double's delay between them, so the reads
     // really do land mid-character.
-    env: { ORCH_FAKE_CHUNK: "7", ORCH_FAKE_CHUNK_DELAY_MS: "1" },
+    env: { KANTAN_FAKE_CHUNK: "7", KANTAN_FAKE_CHUNK_DELAY_MS: "1" },
     steps: [{ action: "start" }],
   })
   expect(out.results[0]).toMatchObject({ state: { kind: "waiting", reason: "gate" } })
@@ -1818,7 +1818,7 @@ test("the transition is accepted before the phase finishes", async () => {
   const out = await drive(ws, {
     // The plan turn is stretched over many small writes, so "accepted" lands a
     // long way before the gate record does.
-    env: { ORCH_FAKE_CHUNK: "64", ORCH_FAKE_CHUNK_DELAY_MS: "2" },
+    env: { KANTAN_FAKE_CHUNK: "64", KANTAN_FAKE_CHUNK_DELAY_MS: "2" },
     steps: [{ action: "start" }],
   })
   expect(out.results[0]).toMatchObject({ state: { kind: "waiting", reason: "gate" } })
@@ -1917,7 +1917,7 @@ test("the runner accepts a start before the plan phase finishes, and names the r
   await script(ws, [{ fixture: PLAN_FIXTURE }])
 
   const out = await drive(ws, {
-    env: { ORCH_FAKE_CHUNK: "64", ORCH_FAKE_CHUNK_DELAY_MS: "2" },
+    env: { KANTAN_FAKE_CHUNK: "64", KANTAN_FAKE_CHUNK_DELAY_MS: "2" },
     steps: [
       {
         action: "runner",
@@ -2060,7 +2060,7 @@ test("a start that fails after taking the branch puts the checkout back on base"
   // the repo on `orch/...`, and the next run then refused with "you are on a
   // kantan task branch" - a refusal about the wrong thing entirely.
   const out = await drive(ws, {
-    env: { ORCH_CLAUDE_BIN: join(ws.dir, "no-such-binary") },
+    env: { KANTAN_CLAUDE_BIN: join(ws.dir, "no-such-binary") },
     steps: [{ action: "start" }],
   })
   expect(String(out.results[0]?.["error"])).toContain("no-such-binary")
@@ -2314,7 +2314,7 @@ test("a self-check interrupted mid-turn resumes into the implement conversation"
       // rehydration bug. Chunking the double's output stretches the turn into a
       // window a poll can land in. Only on **this** job, so the plan phase in
       // the driver before it stays fast.
-      env: { ORCH_FAKE_CHUNK: "40", ORCH_FAKE_CHUNK_DELAY_MS: "20" },
+      env: { KANTAN_FAKE_CHUNK: "40", KANTAN_FAKE_CHUNK_DELAY_MS: "20" },
     },
     async () => {
       const log = await runLog(ws, runId)

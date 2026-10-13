@@ -131,7 +131,7 @@ test("keeps the end of a long output, where the failure is", async () => {
 const repoRoot = join(import.meta.dir, "..")
 
 test("the default call goes through CLAUDE_BIN on claude-haiku-5-5", async () => {
-  const dir = join(repoRoot, ".orch-test", "summarize-seam")
+  const dir = join(repoRoot, ".kantan-test", "summarize-seam")
   await rm(dir, { recursive: true, force: true })
   await mkdir(dir, { recursive: true })
 
@@ -162,7 +162,7 @@ test("the default call goes through CLAUDE_BIN on claude-haiku-5-5", async () =>
   )
 
   const p = Bun.spawn([process.execPath, "run", probe], {
-    env: { ...process.env, ORCH_CLAUDE_BIN: stub },
+    env: { ...process.env, KANTAN_CLAUDE_BIN: stub },
     stdout: "pipe",
     stderr: "pipe",
   })

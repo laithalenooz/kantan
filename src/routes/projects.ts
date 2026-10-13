@@ -104,7 +104,7 @@ const REMOVE_KEYS = ["path"] as const
  * It was these four, and the store has held eleven since it was written - so
  * `planModel`, `implementModel`, `planEffort`, `implementEffort`,
  * `permissionMode` and `allowedTools` could only be changed by hand-editing
- * `~/.orch/projects.json`. Nothing was wrong with the write path: `editProject`
+ * `~/.kantan/projects.json`. Nothing was wrong with the write path: `editProject`
  * copies whichever of these keys the body carried and `updateProject` validates
  * the merged record, naming the field in its own refusal. The only thing
  * missing was the key being listed here, and a surface for it.
@@ -274,7 +274,7 @@ export async function registerProject(req: Request, ctx: RouteContext): Promise<
  *
  * Three questions this answers, each decided rather than assumed:
  *
- * 1. **The run logs stay.** They live in `~/.orch/runs` keyed by run id, they
+ * 1. **The run logs stay.** They live in `~/.kantan/runs` keyed by run id, they
  *    are the record of work that cost real money, and nothing can rebuild one.
  *    `indexRuns` already skips a log whose project is no longer registered and
  *    says so in a warning - the warning the person who asked for this route had

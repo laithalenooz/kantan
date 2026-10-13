@@ -8,7 +8,7 @@ const FAKE = join(import.meta.dir, "fake-claude.ts")
 
 /** A scratch directory per test, so no script, cursor or log is shared. */
 async function workspace(name: string): Promise<string> {
-  const dir = join(repoRoot, ".orch-test", "fake-claude", name)
+  const dir = join(repoRoot, ".kantan-test", "fake-claude", name)
   await rm(dir, { recursive: true, force: true })
   await mkdir(dir, { recursive: true })
   return dir
@@ -17,7 +17,7 @@ async function workspace(name: string): Promise<string> {
 type Run = { out: string; err: string; code: number }
 
 /**
- * The child's environment: the ambient one with every `ORCH_FAKE_*` stripped,
+ * The child's environment: the ambient one with every `KANTAN_FAKE_*` stripped,
  * plus what the test asks for.
  *
  * Without the strip, a test that deliberately configures no script would pick
@@ -27,7 +27,7 @@ type Run = { out: string; err: string; code: number }
 function childEnv(overrides: Record<string, string | undefined> = {}): Record<string, string> {
   const env: Record<string, string> = {}
   for (const [k, v] of Object.entries(process.env)) {
-    if (v !== undefined && !k.startsWith("ORCH_FAKE_")) env[k] = v
+    if (v !== undefined && !k.startsWith("KANTAN_FAKE_")) env[k] = v
   }
   for (const [k, v] of Object.entries(overrides)) {
     if (v === undefined) delete env[k]
@@ -36,7 +36,7 @@ function childEnv(overrides: Record<string, string | undefined> = {}): Record<st
   return env
 }
 
-/** Spawns the fake by bare path, the way a spawner holding ORCH_CLAUDE_BIN does. */
+/** Spawns the fake by bare path, the way a spawner holding KANTAN_CLAUDE_BIN does. */
 async function runFake(opts: {
   args: string[]
   stdin?: string
@@ -112,7 +112,7 @@ function baseArgs(sessionFlag: string[], extra: string[] = []): string[] {
 // Requirement 1: --version answers with an X.Y.Z string.
 //
 // test/version.test.ts's first test calls the configured binary and asserts a
-// version. If a later task points ORCH_CLAUDE_BIN at this fake suite-wide,
+// version. If a later task points KANTAN_CLAUDE_BIN at this fake suite-wide,
 // that test must still pass.
 // ---------------------------------------------------------------------------
 
@@ -153,11 +153,11 @@ test("a positional argument is refused as unemulatable, not as an unknown option
   // pass against a parser that ignored the positional and then exited 2 for the
   // unrelated reason that no script is configured.
   expect(err).toContain("write me a haiku")
-  expect(err).not.toContain("ORCH_FAKE_SCRIPT")
+  expect(err).not.toContain("KANTAN_FAKE_SCRIPT")
   expect(err).not.toContain("unknown option")
 })
 
-test("claudeVersion() reads a version from the fake through ORCH_CLAUDE_BIN", async () => {
+test("claudeVersion() reads a version from the fake through KANTAN_CLAUDE_BIN", async () => {
   // The real proof of requirement 1: the production code path, not a bare
   // spawn. CLAUDE_BIN binds at module load, so the override needs a fresh
   // process (docs/HANDOFF.md).
@@ -170,7 +170,7 @@ test("claudeVersion() reads a version from the fake through ORCH_CLAUDE_BIN", as
       `catch (e) { process.stderr.write((e as Error).message); process.exit(1) }\n`,
   )
   const p = Bun.spawn([process.execPath, "run", probe], {
-    env: { ...process.env, ORCH_CLAUDE_BIN: FAKE },
+    env: { ...process.env, KANTAN_CLAUDE_BIN: FAKE },
     stdout: "pipe",
     stderr: "pipe",
   })
@@ -201,7 +201,7 @@ test("the flag set src/spawn.ts passes is accepted by the parser", async () => {
   // configured here, so the complaint must be about the missing script.
   const { err, code } = await runFake({ args: baseArgs(["--session-id", randomUUID()]) })
   expect(err).not.toContain("unknown option")
-  expect(err).toContain("ORCH_FAKE_SCRIPT")
+  expect(err).toContain("KANTAN_FAKE_SCRIPT")
   expect(code).toBe(2)
 })
 
@@ -364,7 +364,7 @@ test("replays one fixture per stdin turn, in script order", async () => {
   const { out, code } = await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: userTurn("plan this") + userTurn("and now ask me something"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   expect(code).toBe(0)
   const rs = results(out)
@@ -380,7 +380,7 @@ test("replays every line of the fixture, hook noise included", async () => {
   const { out } = await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: userTurn("plan this"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   const fixture = (await Bun.file(PLAN).text()).split("\n").filter((l) => l.trim() !== "")
   expect(events(out).length).toBe(fixture.length)
@@ -391,19 +391,19 @@ test("replays every line of the fixture, hook noise included", async () => {
 test("the turn cursor advances across processes, not just within one", async () => {
   // The keystone. A run spawns the binary once per phase plus once per
   // escalation (design §3.1), and every spawn inherits the same environment, so
-  // a test cannot swap ORCH_FAKE_SCRIPT between them. A per-process cursor
+  // a test cannot swap KANTAN_FAKE_SCRIPT between them. A per-process cursor
   // would replay turn 1 to every process and silently defeat Tasks 13 and 14.
   const dir = await workspace("cursor-across-processes")
   const script = await writeScript(dir, [{ fixture: PLAN }, { fixture: QUESTION }])
   const first = await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: userTurn("plan this"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   const second = await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: userTurn("now implement"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   expect(String(results(first.out)[0]?.["result"])).toContain("I wrote the plan")
   expect(String(results(second.out)[0]?.["result"])).toContain("AskUserQuestion")
@@ -424,7 +424,7 @@ test("a fixture path is resolved relative to the script, and absolute paths pass
   const { out, code } = await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: userTurn("hi"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   expect(code).toBe(0)
   expect(String(results(out)[0]?.["result"])).toBe("local fixture")
@@ -436,7 +436,7 @@ test("exits 0 at stdin EOF with turns still unspent", async () => {
   const { out, code } = await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: userTurn("just the one"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   expect(code).toBe(0)
   expect(results(out).length).toBe(1)
@@ -450,7 +450,7 @@ test("an unknown --effort value warns but still replays the turn", async () => {
   const { out, err, code } = await runFake({
     args: baseArgs(["--session-id", randomUUID()]).map((a) => (a === "medium" ? "hgih" : a)),
     stdin: userTurn("plan this"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   expect(code).toBe(0)
   expect(err).toContain("Unknown --effort value 'hgih'")
@@ -471,7 +471,7 @@ test("every event carries the --session-id from the invocation", async () => {
   const { out } = await runFake({
     args: baseArgs(["--session-id", sid]),
     stdin: userTurn("plan this"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   const ids = new Set(events(out).map((e) => e["session_id"]))
   expect([...ids]).toEqual([sid])
@@ -487,7 +487,7 @@ test("the fixture's own captured session id never reaches stdout", async () => {
   const { out } = await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: userTurn("plan this"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   // Without this the assertion would also hold for an empty stdout.
   expect(events(out).length).toBeGreaterThan(40)
@@ -501,12 +501,12 @@ test("a resumed process reports the session id it resumed", async () => {
   await runFake({
     args: baseArgs(["--session-id", sid]),
     stdin: userTurn("plan this"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   const { out } = await runFake({
     args: baseArgs(["--resume", sid]),
     stdin: userTurn("more please"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   const ids = new Set(events(out).map((e) => e["session_id"]))
   expect([...ids]).toEqual([sid])
@@ -521,12 +521,12 @@ test("with neither session flag it invents an id, as the real CLI does", async (
   const a = await runFake({
     args: baseArgs([]),
     stdin: userTurn("plan this"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   const b = await runFake({
     args: baseArgs([]),
     stdin: userTurn("plan this"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   const idA = events(a.out)[0]?.["session_id"]
   const idB = events(b.out)[0]?.["session_id"]
@@ -543,7 +543,7 @@ test("resuming a session no earlier process ran is refused, as the real CLI refu
   const { err, code } = await runFake({
     args: baseArgs(["--resume", randomUUID()]),
     stdin: userTurn("where were we"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   expect(code).toBe(1)
   expect(err).toContain("No conversation found with session ID")
@@ -558,13 +558,13 @@ test("a session that ran no turn is not resumable, as the real CLI has it", asyn
   const sid = randomUUID()
   const first = await runFake({
     args: baseArgs(["--session-id", sid]),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   expect(first.code).toBe(0)
   const { err, code } = await runFake({
     args: baseArgs(["--resume", sid]),
     stdin: userTurn("where were we"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   expect(code).toBe(1)
   expect(err).toContain("No conversation found with session ID")
@@ -580,7 +580,7 @@ test("a blank stdin line is skipped without spending a turn", async () => {
   const { out, code } = await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: "\n" + userTurn("plan this") + "\n",
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   expect(code).toBe(0)
   expect(results(out).length).toBe(1)
@@ -595,7 +595,7 @@ test("a stdin line that is not JSON is refused, as the real CLI refuses it", asy
   const { err, code } = await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: "not json at all\n",
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   expect(code).toBe(1)
   expect(err).toContain("Error parsing streaming input line")
@@ -611,7 +611,7 @@ test("a stdin line that is JSON but not a user message is refused loudly", async
   const { err, code } = await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: JSON.stringify({ type: "banana" }) + "\n",
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   expect(code).toBe(2)
   expect(err).toContain("fake-claude")
@@ -626,7 +626,7 @@ test("more stdin turns than the script has is refused loudly", async () => {
   const { err, code } = await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: userTurn("plan this") + userTurn("one too many"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   expect(code).toBe(2)
   expect(err).toContain("fake-claude")
@@ -660,12 +660,12 @@ test("appends one record per spawn rather than overwriting", async () => {
   await runFake({
     args: baseArgs(["--session-id", sid]),
     stdin: userTurn("plan this"),
-    env: { ORCH_FAKE_SCRIPT: script, ORCH_FAKE_ARGV_LOG: log },
+    env: { KANTAN_FAKE_SCRIPT: script, KANTAN_FAKE_ARGV_LOG: log },
   })
   await runFake({
     args: baseArgs(["--resume", sid], ["--effort", "high"]),
     stdin: userTurn("again, harder"),
-    env: { ORCH_FAKE_SCRIPT: script, ORCH_FAKE_ARGV_LOG: log },
+    env: { KANTAN_FAKE_SCRIPT: script, KANTAN_FAKE_ARGV_LOG: log },
   })
   const spawns = (await readLog(log)).filter((r) => r["kind"] === "spawn")
   expect(spawns.length).toBe(2)
@@ -681,12 +681,12 @@ test("the log shows which session flag each spawn passed", async () => {
   await runFake({
     args: baseArgs(["--session-id", sid]),
     stdin: userTurn("plan this"),
-    env: { ORCH_FAKE_SCRIPT: script, ORCH_FAKE_ARGV_LOG: log },
+    env: { KANTAN_FAKE_SCRIPT: script, KANTAN_FAKE_ARGV_LOG: log },
   })
   await runFake({
     args: baseArgs(["--resume", sid]),
     stdin: userTurn("carry on"),
-    env: { ORCH_FAKE_SCRIPT: script, ORCH_FAKE_ARGV_LOG: log },
+    env: { KANTAN_FAKE_SCRIPT: script, KANTAN_FAKE_ARGV_LOG: log },
   })
   const [first, second] = (await readLog(log)).filter((r) => r["kind"] === "spawn")
   expect(first?.["argv"]).toContain("--session-id")
@@ -703,7 +703,7 @@ test("the log carries the model, effort and budget each spawn asked for", async 
   await runFake({
     args: baseArgs(["--session-id", randomUUID()]).map((a) => (a === "5" ? "4.75" : a)),
     stdin: userTurn("plan this"),
-    env: { ORCH_FAKE_SCRIPT: script, ORCH_FAKE_ARGV_LOG: log },
+    env: { KANTAN_FAKE_SCRIPT: script, KANTAN_FAKE_ARGV_LOG: log },
   })
   const argv = (await readLog(log))[0]?.["argv"] as string[]
   expect(argv[argv.indexOf("--model") + 1]).toBe("claude-sonnet-5-5")
@@ -718,7 +718,7 @@ test("the log records CLAUDE_CONFIG_DIR, which selects the account", async () =>
   await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: userTurn("plan this"),
-    env: { ORCH_FAKE_SCRIPT: script, ORCH_FAKE_ARGV_LOG: log, CLAUDE_CONFIG_DIR: "/tmp/acct-b" },
+    env: { KANTAN_FAKE_SCRIPT: script, KANTAN_FAKE_ARGV_LOG: log, CLAUDE_CONFIG_DIR: "/tmp/acct-b" },
   })
   const env = (await readLog(log))[0]?.["env"] as Record<string, string>
   expect(env["CLAUDE_CONFIG_DIR"]).toBe("/tmp/acct-b")
@@ -734,7 +734,7 @@ test("an unset CLAUDE_CONFIG_DIR is absent from the record, not blank", async ()
   await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: userTurn("plan this"),
-    env: { ORCH_FAKE_SCRIPT: script, ORCH_FAKE_ARGV_LOG: log, CLAUDE_CONFIG_DIR: undefined },
+    env: { KANTAN_FAKE_SCRIPT: script, KANTAN_FAKE_ARGV_LOG: log, CLAUDE_CONFIG_DIR: undefined },
   })
   const record = (await readLog(log))[0]
   const env = record?.["env"] as Record<string, string>
@@ -743,7 +743,7 @@ test("an unset CLAUDE_CONFIG_DIR is absent from the record, not blank", async ()
   // names it saw. Otherwise an absent record would be indistinguishable from a
   // double that logs no environment at all.
   expect(record?.["envKeys"]).toBeArray()
-  expect(record?.["envKeys"]).toContain("ORCH_FAKE_SCRIPT")
+  expect(record?.["envKeys"]).toContain("KANTAN_FAKE_SCRIPT")
 })
 
 test("an unrelated variable is recorded by name but not by value", async () => {
@@ -756,7 +756,7 @@ test("an unrelated variable is recorded by name but not by value", async () => {
   await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: userTurn("plan this"),
-    env: { ORCH_FAKE_SCRIPT: script, ORCH_FAKE_ARGV_LOG: log, ANTHROPIC_API_KEY: "sk-ant-secret" },
+    env: { KANTAN_FAKE_SCRIPT: script, KANTAN_FAKE_ARGV_LOG: log, ANTHROPIC_API_KEY: "sk-ant-secret" },
   })
   const record = (await readLog(log))[0]
   expect(record?.["envKeys"]).toContain("ANTHROPIC_API_KEY")
@@ -770,7 +770,7 @@ test("the log records the working directory the binary ran in", async () => {
   await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: userTurn("plan this"),
-    env: { ORCH_FAKE_SCRIPT: script, ORCH_FAKE_ARGV_LOG: log },
+    env: { KANTAN_FAKE_SCRIPT: script, KANTAN_FAKE_ARGV_LOG: log },
   })
   expect((await readLog(log))[0]?.["cwd"]).toBe(process.cwd())
 })
@@ -785,7 +785,7 @@ test("the log records each turn's stdin line and the session it ran under", asyn
   await runFake({
     args: baseArgs(["--session-id", sid]),
     stdin: userTurn("read docs/plans/2026-10-11-t1-slugger.md") + userTurn("second turn"),
-    env: { ORCH_FAKE_SCRIPT: script, ORCH_FAKE_ARGV_LOG: log },
+    env: { KANTAN_FAKE_SCRIPT: script, KANTAN_FAKE_ARGV_LOG: log },
   })
   const turnRecords = (await readLog(log)).filter((r) => r["kind"] === "turn")
   expect(turnRecords.length).toBe(2)
@@ -799,19 +799,19 @@ test("a refused invocation is logged too, so the argv that failed is visible", a
   const log = join(dir, "argv.jsonl")
   const { code } = await runFake({
     args: ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--nope"],
-    env: { ORCH_FAKE_ARGV_LOG: log },
+    env: { KANTAN_FAKE_ARGV_LOG: log },
   })
   expect(code).toBe(1)
   expect((await readLog(log))[0]?.["argv"]).toContain("--nope")
 })
 
-test("no log is written when ORCH_FAKE_ARGV_LOG is unset", async () => {
+test("no log is written when KANTAN_FAKE_ARGV_LOG is unset", async () => {
   const dir = await workspace("log-absent")
   const script = await writeScript(dir, [{ fixture: PLAN }])
   const { code, out } = await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: userTurn("plan this"),
-    env: { ORCH_FAKE_SCRIPT: script, ORCH_FAKE_ARGV_LOG: undefined },
+    env: { KANTAN_FAKE_SCRIPT: script, KANTAN_FAKE_ARGV_LOG: undefined },
   })
   expect(code).toBe(0)
   expect(results(out).length).toBe(1)
@@ -831,7 +831,7 @@ test("a turn's cost override replaces total_cost_usd in the result", async () =>
   const { out } = await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: userTurn("plan this"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   expect(results(out)[0]?.["total_cost_usd"]).toBe(0.25)
 })
@@ -842,7 +842,7 @@ test("without an override a turn reports the capture's own cost", async () => {
   const { out } = await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: userTurn("plan this"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   expect(results(out)[0]?.["total_cost_usd"]).toBe(0.18015684999999998)
 })
@@ -860,7 +860,7 @@ test("within one process total_cost_usd accumulates across turns", async () => {
   const { out } = await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: userTurn("plan this") + userTurn("and again"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   const rs = results(out)
   expect(rs[0]?.["total_cost_usd"]).toBe(0.1)
@@ -880,12 +880,12 @@ test("a new process starts its cost total over, as the real CLI does", async () 
   const first = await runFake({
     args: baseArgs(["--session-id", sid]),
     stdin: userTurn("plan this"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   const second = await runFake({
     args: baseArgs(["--resume", sid]),
     stdin: userTurn("and again"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   expect(results(first.out)[0]?.["total_cost_usd"]).toBe(0.1)
   expect(results(second.out)[0]?.["total_cost_usd"]).toBe(0.02)
@@ -907,7 +907,7 @@ test("a cost override on a fixture with no result line is refused", async () => 
   const { err, code } = await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: userTurn("hi"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   expect(code).toBe(2)
   expect(err).toContain("cost")
@@ -922,7 +922,7 @@ test("a misspelled key in the script is refused, not ignored", async () => {
   const { err, code } = await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: userTurn("plan this"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   expect(code).toBe(2)
   expect(err).toContain("costs")
@@ -938,7 +938,7 @@ test("exits 1 when the turn's fixture is an error result", async () => {
   const { out, code } = await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: userTurn("write an essay"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   expect(code).toBe(1)
   expect(results(out)[0]?.["subtype"]).toBe("error_max_budget_usd")
@@ -955,7 +955,7 @@ test("the error result arrives whole, not truncated by the exit", async () => {
   const { out } = await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: userTurn("write an essay"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   const lines = out.split("\n").filter((l) => l.trim() !== "")
   const fixtureLines = (await Bun.file(BUDGET).text()).split("\n").filter((l) => l.trim() !== "")
@@ -973,7 +973,7 @@ test("an error result stops the process from serving a further turn", async () =
   const { out, code } = await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: userTurn("write an essay") + userTurn("are you still there"),
-    env: { ORCH_FAKE_SCRIPT: script, ORCH_FAKE_ARGV_LOG: log },
+    env: { KANTAN_FAKE_SCRIPT: script, KANTAN_FAKE_ARGV_LOG: log },
   })
   expect(code).toBe(1)
   expect(results(out).length).toBe(1)
@@ -983,7 +983,7 @@ test("an error result stops the process from serving a further turn", async () =
   const next = await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: userTurn("fresh process"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   expect(String(results(next.out)[0]?.["subtype"])).toBe("success")
 })
@@ -1025,7 +1025,7 @@ test("a result line whose shape the double cannot read is refused loudly", async
     const { err, code } = await runFake({
       args: baseArgs(["--session-id", randomUUID()]),
       stdin: userTurn("hi"),
-      env: { ORCH_FAKE_SCRIPT: script },
+      env: { KANTAN_FAKE_SCRIPT: script },
     })
     expect({ case: c.name, code }).toEqual({ case: c.name, code: 2 })
     expect(err).toContain(c.expect)
@@ -1046,7 +1046,7 @@ test("writes nothing to stderr on a successful turn", async () => {
   const { err } = await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: userTurn("plan this"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   expect(err).toBe("")
 })
@@ -1060,7 +1060,7 @@ test("replays the capture's own bytes, changing only the session id", async () =
   const { out } = await runFake({
     args: baseArgs(["--session-id", sid]),
     stdin: userTurn("ask me something"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   const fixture = await Bun.file(QUESTION).text()
   const captured = (JSON.parse(fixture.split("\n")[0] ?? "{}") as { session_id?: string }).session_id
@@ -1075,7 +1075,7 @@ test("a negative cost override is refused", async () => {
   const { err, code } = await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: userTurn("plan this"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   expect(code).toBe(2)
   expect(err).toContain("cost")
@@ -1103,7 +1103,7 @@ test("an ambiguous total_cost_usd is refused rather than guessed at", async () =
   const { err, code } = await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: userTurn("hi"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   expect(code).toBe(2)
   expect(err).toContain("total_cost_usd")
@@ -1120,8 +1120,8 @@ test("a credential-shaped CLAUDE_ variable is recorded by name but not by value"
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: userTurn("plan this"),
     env: {
-      ORCH_FAKE_SCRIPT: script,
-      ORCH_FAKE_ARGV_LOG: log,
+      KANTAN_FAKE_SCRIPT: script,
+      KANTAN_FAKE_ARGV_LOG: log,
       CLAUDE_CODE_MESSAGING_TOKEN: "tok-do-not-log",
       CLAUDE_CONFIG_DIR: "/tmp/acct-b",
     },
@@ -1141,7 +1141,7 @@ test("a corrupt cursor file is refused loudly rather than crashing", async () =>
   const { err, code } = await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: userTurn("plan this"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   expect(code).toBe(2)
   expect(err).toContain("cursor")
@@ -1197,7 +1197,7 @@ async function sparkleFixture(dir: string): Promise<{ path: string; line: string
   return { path, line }
 }
 
-test("ORCH_FAKE_CHUNK splits a JSON line across reads", async () => {
+test("KANTAN_FAKE_CHUNK splits a JSON line across reads", async () => {
   // Deliberately a one-line fixture: replaying a 93KB capture produces reads
   // that end mid-line anyway, because the OS splits a write larger than the
   // pipe buffer. This test would then pass with the knob unimplemented.
@@ -1207,7 +1207,7 @@ test("ORCH_FAKE_CHUNK splits a JSON line across reads", async () => {
   const { chunks } = await runFakeReads({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: userTurn("hi"),
-    env: { ORCH_FAKE_SCRIPT: script, ORCH_FAKE_CHUNK: "10", ORCH_FAKE_CHUNK_DELAY_MS: "5" },
+    env: { KANTAN_FAKE_SCRIPT: script, KANTAN_FAKE_CHUNK: "10", KANTAN_FAKE_CHUNK_DELAY_MS: "5" },
   })
   expect(chunks.length).toBeGreaterThan(1)
   // At least one read ends somewhere other than a line boundary, which is the
@@ -1235,13 +1235,13 @@ test("a chunk boundary can fall inside a multi-byte character", async () => {
     args: baseArgs(["--session-id", sid]),
     stdin: userTurn("hi"),
     env: {
-      ORCH_FAKE_SCRIPT: script,
-      ORCH_FAKE_CHUNK: String(lead + 1),
+      KANTAN_FAKE_SCRIPT: script,
+      KANTAN_FAKE_CHUNK: String(lead + 1),
       // Generous on purpose: the assertion below is about where the boundary
       // falls, and a short gap on a loaded machine lets two writes arrive as
       // one read. If this ever flakes, raise the delay rather than weakening
       // the assertion.
-      ORCH_FAKE_CHUNK_DELAY_MS: "40",
+      KANTAN_FAKE_CHUNK_DELAY_MS: "40",
     },
   })
 
@@ -1254,7 +1254,7 @@ test("a chunk boundary can fall inside a multi-byte character", async () => {
   expect(new TextDecoder().decode(concat(chunks))).toBe(new TextDecoder().decode(expected))
 })
 
-test("without ORCH_FAKE_CHUNK the output arrives as whole lines", async () => {
+test("without KANTAN_FAKE_CHUNK the output arrives as whole lines", async () => {
   const dir = await workspace("chunk-default")
   const { path, line } = await sparkleFixture(dir)
   const script = await writeScript(dir, [{ fixture: path }])
@@ -1262,7 +1262,7 @@ test("without ORCH_FAKE_CHUNK the output arrives as whole lines", async () => {
   const { chunks } = await runFakeReads({
     args: baseArgs(["--session-id", sid]),
     stdin: userTurn("hi"),
-    env: { ORCH_FAKE_SCRIPT: script, ORCH_FAKE_CHUNK: undefined },
+    env: { KANTAN_FAKE_SCRIPT: script, KANTAN_FAKE_CHUNK: undefined },
   })
   expect(chunks.every((c) => c.at(-1) === 0x0a)).toBe(true)
   expect(new TextDecoder().decode(concat(chunks))).toBe(
@@ -1277,20 +1277,20 @@ test("a chunking knob that is not a positive integer is refused", async () => {
   const dir = await workspace("chunk-bad-knob")
   const script = await writeScript(dir, [{ fixture: PLAN }])
   for (const env of [
-    { ORCH_FAKE_CHUNK: "0" },
-    { ORCH_FAKE_CHUNK: "-5" },
-    { ORCH_FAKE_CHUNK: "lots" },
-    { ORCH_FAKE_CHUNK: "1.5" },
-    { ORCH_FAKE_CHUNK: "10", ORCH_FAKE_CHUNK_DELAY_MS: "soon" },
+    { KANTAN_FAKE_CHUNK: "0" },
+    { KANTAN_FAKE_CHUNK: "-5" },
+    { KANTAN_FAKE_CHUNK: "lots" },
+    { KANTAN_FAKE_CHUNK: "1.5" },
+    { KANTAN_FAKE_CHUNK: "10", KANTAN_FAKE_CHUNK_DELAY_MS: "soon" },
   ]) {
     await rm(`${script}.cursor`, { force: true })
     const { err, code } = await runFake({
       args: baseArgs(["--session-id", randomUUID()]),
       stdin: userTurn("plan this"),
-      env: { ORCH_FAKE_SCRIPT: script, ...env },
+      env: { KANTAN_FAKE_SCRIPT: script, ...env },
     })
     expect({ env, code }).toEqual({ env, code: 2 })
-    expect(err).toContain("ORCH_FAKE_CHUNK")
+    expect(err).toContain("KANTAN_FAKE_CHUNK")
   }
 })
 
@@ -1304,7 +1304,7 @@ test("a script path that does not exist is refused", async () => {
   const { err, code } = await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: userTurn("hi"),
-    env: { ORCH_FAKE_SCRIPT: join(dir, "nope.json") },
+    env: { KANTAN_FAKE_SCRIPT: join(dir, "nope.json") },
   })
   expect(code).toBe(2)
   expect(err).toContain("nope.json")
@@ -1317,7 +1317,7 @@ test("a script that is not valid JSON is refused", async () => {
   const { err, code } = await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: userTurn("hi"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   expect(code).toBe(2)
   expect(err).toContain("not valid JSON")
@@ -1329,7 +1329,7 @@ test("a script with an unknown top-level key is refused", async () => {
   const { err, code } = await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: userTurn("hi"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   expect(code).toBe(2)
   expect(err).toContain("unknown key 'turn'")
@@ -1342,7 +1342,7 @@ test("a script whose turns are not an array is refused", async () => {
   const { err, code } = await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: userTurn("hi"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   expect(code).toBe(2)
   expect(err).toContain("turns")
@@ -1354,7 +1354,7 @@ test("a turn with no fixture is refused", async () => {
   const { err, code } = await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: userTurn("hi"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   expect(code).toBe(2)
   expect(err).toContain("fixture")
@@ -1366,7 +1366,7 @@ test("a fixture file that does not exist is refused", async () => {
   const { err, code } = await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: userTurn("hi"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   expect(code).toBe(2)
   expect(err).toContain("ghost.jsonl")
@@ -1383,7 +1383,7 @@ test("a fixture line carrying no session_id is refused rather than passed throug
   const { err, code } = await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: userTurn("hi"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   expect(code).toBe(2)
   expect(err).toContain("session_id")
@@ -1397,7 +1397,7 @@ test("a fixture line that is not JSON is refused", async () => {
   const { err, code } = await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: userTurn("hi"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   expect(code).toBe(2)
   expect(err).toContain("line 1")
@@ -1419,7 +1419,7 @@ test("serves each turn while stdin is still open", async () => {
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
-    env: childEnv({ ORCH_FAKE_SCRIPT: script }),
+    env: childEnv({ KANTAN_FAKE_SCRIPT: script }),
   })
 
   const reader = p.stdout.getReader()
@@ -1468,7 +1468,7 @@ test("--allowedTools is accepted, in both spellings the real CLI offers", async 
     const { err, code } = await runFake({
       args: baseArgs(["--session-id", randomUUID()], [flag, "Edit Write Bash(git *)"]),
       stdin: userTurn("plan this"),
-      env: { ORCH_FAKE_SCRIPT: script, ORCH_FAKE_ARGV_LOG: log },
+      env: { KANTAN_FAKE_SCRIPT: script, KANTAN_FAKE_ARGV_LOG: log },
     })
     expect({ flag, code, err }).toEqual({ flag, code: 0, err: "" })
   }
@@ -1487,7 +1487,7 @@ test("--allowedTools spread over several tokens is refused, naming the token", a
   const { err, code } = await runFake({
     args: baseArgs(["--session-id", randomUUID()], ["--allowedTools", "Edit", "Write"]),
     stdin: userTurn("plan this"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   expect(code).toBe(2)
   expect(err).toContain("Write")
@@ -1515,7 +1515,7 @@ test("a fixture with two result events is refused, override or not", async () =>
   const { err, code } = await runFake({
     args: baseArgs(["--session-id", randomUUID()]),
     stdin: userTurn("hi"),
-    env: { ORCH_FAKE_SCRIPT: script },
+    env: { KANTAN_FAKE_SCRIPT: script },
   })
   expect(code).toBe(2)
   expect(err).toContain("result")

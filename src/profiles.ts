@@ -31,10 +31,10 @@ export type AccountKind = "personal" | "work"
  * Where the registry lives: beside the project store.
  *
  * **Derived rather than a second injectable path**, which is a decision worth
- * stating. `defaultProjectsFile()` in `src/run.ts` owns where `~/.orch` is,
+ * stating. `defaultProjectsFile()` in `src/run.ts` owns where the state directory is,
  * and deriving keeps that the single source - a second `ServerOptions` field
  * would be one more thing every test has to remember, and the cost of
- * forgetting is a test writing into the developer's own `~/.orch`.
+ * forgetting is a test writing into the developer's own the state directory.
  *
  * It also means a launch with no project store has no registry, which is the
  * honest reading: both are "the user's kantan state", so there is nowhere to

@@ -1,12 +1,12 @@
 import { createHash, randomUUID } from "node:crypto"
 import { unlink } from "node:fs/promises"
-import { homedir } from "node:os"
 import { isAbsolute, join, relative, resolve } from "node:path"
 import { readFeature, tickTaskInFile } from "./featurefile"
 import type { FeatureFile } from "./featurefile"
 import {
   acquireRunLock,
   BRANCH_PREFIX,
+  taskSlug,
   createTaskBranch,
   recordBaseBranch,
   releaseRunLock,
@@ -19,6 +19,7 @@ import {
 } from "./git"
 import type { Repo, RunLock } from "./git"
 import { permissionDenials, describeDenials } from "./permissions"
+import { stateDir } from "./statedir"
 import {
   answerPrompt,
   feedbackPrompt,
@@ -146,7 +147,7 @@ export interface StartRunOptions {
    * for the string it was parsed from.
    */
   task: { ref: string | null; text?: string; line?: number }
-  /** Default `~/.orch/runs`. A test passes its own. */
+  /** Default `~/.kantan/runs`. A test passes its own. */
   runsDir?: string
   /** Overrides `project.budgetUsd` for this run. */
   budgetUsd?: number
@@ -208,7 +209,7 @@ export interface ActionOptions {
  * that clears them, and forwarding that is the point.
  *
  * `no-base` and `branch-exists` are deliberately their own codes rather than
- * `dirty`. A detached HEAD, a checkout left on an `orch/` branch and a task
+ * `dirty`. A detached HEAD, a checkout left on a task branch and a task
  * whose branch already holds unmerged work are three different conversations
  * with the user, and none of them is "you have uncommitted work".
  */
@@ -222,7 +223,7 @@ export type RefusalCode =
   | "busy"
   | "dirty"
   /** No base branch could be recorded: a detached HEAD, or a checkout an
-   * earlier run left on its `orch/` branch. */
+   * earlier run left on its task branch. */
   | "no-base"
   /** The task's branch already exists, so the task has run before. */
   | "branch-exists"
@@ -438,13 +439,16 @@ function requireRef(task: { ref: string | null; text?: string; line?: number }):
 /**
  * The dictated plan path, `docs/plans/<date>-<task-slug>.md` (design §3.1).
  *
- * The slug is the branch name with its `orch/` prefix removed, so the plan file
+ * The slug is the branch name with its prefix removed, so the plan file
  * and the branch carry the same identity and `src/git.ts` stays the only
  * slugger. A second one would drift and point the gate at a file nothing wrote.
  */
 function planPathFor(branch: string, now: Date): string {
   const date = now.toISOString().slice(0, 10)
-  return `docs/plans/${date}-${branch.slice(BRANCH_PREFIX.length)}.md`
+  /* `taskSlug`, not a slice by `BRANCH_PREFIX.length`: a resumed run may be on
+     a legacy `orch/*` branch, and the two prefixes are different lengths - so
+     a fixed slice would write the plan under a name with characters missing. */
+  return `docs/plans/${date}-${taskSlug(branch)}.md`
 }
 
 // ---------------------------------------------------------------------------
@@ -482,7 +486,7 @@ export async function startRun(options: StartRunOptions): Promise<RunResult> {
   try {
     // The feature file and the task are read **before** any git mutation, and
     // under the lock so the bytes are this run's own. Validating them after
-    // `createTaskBranch` would leave the checkout on a new `orch/` branch for a
+    // `createTaskBranch` would leave the checkout on a new task branch for a
     // task that does not exist, and the *next* run would then refuse with "you
     // are on a kantan task branch" - a refusal about the wrong thing entirely.
     const feature = await refusing("unknown-feature", () =>
@@ -1759,7 +1763,7 @@ async function tickCheckbox(run: ActiveRun, verifiedBy: Verification): Promise<v
 /**
  * Returns the checkout to the base recorded at run start (design §3.6).
  *
- * Never `recordBaseBranch`: the checkout is on the task's own `orch/` branch by
+ * Never `recordBaseBranch`: the checkout is on the task's own task branch by
  * now, which that function refuses, and re-deriving a base is the stacking bug
  * it exists to prevent. A run whose log carries no base says so and stays on
  * its branch rather than guessing.
@@ -1966,7 +1970,7 @@ function resultOfEvent(event: unknown): RawResult | null {
  *
  * Steps 1 and 2 of `src/git.ts`'s order, then `resumeTaskBranch` - and
  * **never** `recordBaseBranch`: the branch and the base come from the header,
- * and re-deriving them is both refused (HEAD is on the task's own `orch/`
+ * and re-deriving them is both refused (HEAD is on the task's own `kantan/`
  * branch) and the branch-stacking bug the base discipline exists to prevent.
  * The dirty check `resumeTaskBranch` carries is the resume-shaped one: a run's
  * own half-written files are exempt only while the checkout is still on its
@@ -2358,14 +2362,16 @@ async function continueFrom(run: ActiveRun): Promise<RunResult> {
 // ---------------------------------------------------------------------------
 
 /**
- * `~/.orch/projects.json`, the location the README and design §2 give.
+ * `~/.kantan/projects.json`, or `~/.kantan/projects.json` for anyone who has one.
  *
  * Here rather than in `src/projects.ts`, which deliberately takes a path: the
  * store's location is a deployment fact, and this is the only code that has to
- * resolve a project from a request that names one by path.
+ * resolve a project from a request that names one by path. Which of the two
+ * directories, and why it is a fallback rather than a migration, is
+ * `src/statedir.ts`.
  */
 export function defaultProjectsFile(): string {
-  return join(homedir(), ".orch", "projects.json")
+  return join(stateDir().dir, "projects.json")
 }
 
 /** The three parts of a start request, as the HTTP layer receives them. */
@@ -2474,9 +2480,9 @@ export interface Runner {
 }
 
 export interface RunnerOptions {
-  /** Default `~/.orch/projects.json`. */
+  /** Default `~/.kantan/projects.json`. */
   projectsFile?: string
-  /** Default `~/.orch/runs`. */
+  /** Default `~/.kantan/runs`. */
   runsDir?: string
   /** Called when a transition is accepted, for a caller that wants to know;
    * the accepted callback is what each action races internally. */

@@ -157,7 +157,7 @@ test("system/thinking_tokens is not filtered", () => {
  * `system/vcs_state_changed`, which the fixtures predate.
  *
  * The four payloads asserted against here were taken from two real run logs in
- * `~/.orch/runs`, not from the handoff's description of them, and they agree:
+ * `~/.kantan/runs`, not from the handoff's description of them, and they agree:
  * `{type, subtype, kind, branch, cwd, uuid, session_id}`, with `kind` reading
  * `"commit"` in all four. It arrives **twice** per run that commits.
  */

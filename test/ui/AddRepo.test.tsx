@@ -588,7 +588,7 @@ describe("the refusals `src/git.ts` will actually make", () => {
     {
       code: "commits",
       says:
-        "/home/dev/projects/fresh has no commits yet, so orch/<task> has no base commit to branch from." +
+        "/home/dev/projects/fresh has no commits yet, so kantan/<task> has no base commit to branch from." +
         " Make the first commit, then start the run.",
     },
     {

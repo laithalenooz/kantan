@@ -13,7 +13,7 @@ import type { PhaseSpawn } from "../src/spawn"
  * pass against a module that built argv and then threw it away.
  *
  * `CLAUDE_BIN` binds when `src/version.ts` loads (docs/HANDOFF.md), so setting
- * `process.env.ORCH_CLAUDE_BIN` in a test body is a no-op. Every case therefore
+ * `process.env.KANTAN_CLAUDE_BIN` in a test body is a no-op. Every case therefore
  * runs `spawnPhase` in a **fresh process**, through a generated driver script,
  * following the pattern in `test/version.test.ts`.
  */
@@ -28,7 +28,7 @@ const BUDGET = join(FIXTURES, "budget-exhausted.jsonl")
 
 /**
  * The driver, generated because it must be a separate process and
- * `.orch-test/` is gitignored. Being under a dot-prefixed directory, it is
+ * `.kantan-test/` is gitignored. Being under a dot-prefixed directory, it is
  * **not** typechecked: tsc's wildcard include skips those, so a type error in
  * here surfaces only as a driver that fails at runtime, which `drive` reports
  * with its stderr.
@@ -156,7 +156,7 @@ type Turn = { fixture: string; cost?: number }
  * with nothing wrong in either copy of the code.
  */
 async function workspace(name: string, turns: Turn[] = [{ fixture: PLAN }]): Promise<Ws> {
-  const dir = join(repoRoot, ".orch-test", "spawn", `${name}-${process.pid}`)
+  const dir = join(repoRoot, ".kantan-test", "spawn", `${name}-${process.pid}`)
   await rm(dir, { recursive: true, force: true })
   await mkdir(dir, { recursive: true })
   const script = join(dir, "script.json")
@@ -224,7 +224,7 @@ interface Job {
 }
 
 /**
- * The driver's environment: the ambient one with every `ORCH_FAKE_*` stripped
+ * The driver's environment: the ambient one with every `KANTAN_FAKE_*` stripped
  * and `CLAUDE_CONFIG_DIR` deleted, plus what the case asks for.
  *
  * Both scrubs matter. A script inherited from the developer's shell would make
@@ -235,12 +235,12 @@ interface Job {
 function driverEnv(ws: Ws, over: Record<string, string | undefined> = {}): Record<string, string> {
   const env: Record<string, string> = {}
   for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined && !key.startsWith("ORCH_FAKE_")) env[key] = value
+    if (value !== undefined && !key.startsWith("KANTAN_FAKE_")) env[key] = value
   }
   delete env["CLAUDE_CONFIG_DIR"]
-  env["ORCH_CLAUDE_BIN"] = FAKE
-  env["ORCH_FAKE_SCRIPT"] = ws.script
-  env["ORCH_FAKE_ARGV_LOG"] = ws.log
+  env["KANTAN_CLAUDE_BIN"] = FAKE
+  env["KANTAN_FAKE_SCRIPT"] = ws.script
+  env["KANTAN_FAKE_ARGV_LOG"] = ws.log
   for (const [key, value] of Object.entries(over)) {
     if (value === undefined) delete env[key]
     else env[key] = value

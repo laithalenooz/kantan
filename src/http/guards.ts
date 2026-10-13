@@ -68,7 +68,16 @@ export const DEFAULT_PORT = 3100
 /** Vite's default. Only ever consulted in dev mode. */
 export const DEFAULT_DEV_PORT = 5173
 
-export const TOKEN_COOKIE = "orch_token"
+/**
+ * The session cookie's name.
+ *
+ * Renamed with everything else, and **without a fallback**, unlike the state
+ * directory and the environment variables. It needs none: the token is minted
+ * per launch, so a cookie from before this change already names a token that
+ * no longer exists and is already refused. There is nothing to be compatible
+ * with.
+ */
+export const TOKEN_COOKIE = "kantan_token"
 
 /** Session-lifetime on purpose: the token dies with the launch, so a cookie
  * that outlived it would only produce a confusing 401 after a restart.
@@ -107,7 +116,7 @@ export function refuse(status: number, message: string): Response {
 }
 
 /**
- * Accepts if **any** `orch_token` value matches. Cookies ignore ports, so any
+ * Accepts if **any** `kantan_token` value matches. Cookies ignore ports, so any
  * page on another localhost port can set one for this host; it cannot know the
  * real value, so the browser sends both and taking the first would turn a
  * decoy into a denial of service. Accepting any match cannot be a bypass,

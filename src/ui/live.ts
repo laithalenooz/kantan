@@ -532,7 +532,7 @@ export interface TreePayload {
   /** Keyed by `taskKey` from `src/runindex.ts`: the three parts joined by NUL. */
   runs: Readonly<Record<string, RunRef>>
   /**
-   * Accounts the user has recorded, from `~/.orch/accounts.json`.
+   * Accounts the user has recorded, from `~/.kantan/accounts.json`.
    *
    * Separate from `foundAccounts` because they are different claims: this is
    * what somebody told kantan, that is what a directory scan suspects.

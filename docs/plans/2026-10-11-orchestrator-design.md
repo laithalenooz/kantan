@@ -51,7 +51,7 @@ version-dependent, and the fixtures and parser encode it.
 
 | Noun | Is actually | Lives in |
 |---|---|---|
-| Project | a repo directory, a test command, a profile, and its models | `~/.orch/projects.json` |
+| Project | a repo directory, a test command, a profile, and its models | `~/.kantan/projects.json` |
 | Feature | a markdown file | `<repo>/docs/features/<slug>.md` |
 | Task | a `- [ ]` line in that file | the same file |
 | Run | one task through the pipeline | `~/.orch/runs/<uuid>.jsonl` |
@@ -83,7 +83,7 @@ the same problem rather than two. A log with no `end` record is an interrupted r
 Keeping the `cli` payloads untouched matters: they are the replay source for a future parser, so
 filtering on write would make old logs unreadable by new code. Filtering is a display concern.
 
-Delete `~/.orch` and you lose history, nothing else.
+Delete `~/.kantan` and you lose history, nothing else.
 
 **The UI renders and remote-controls. It never owns truth.**
 
@@ -469,7 +469,7 @@ default applies.
 
 ### 3.6 Where a run works
 
-A task owns **one branch**, created in the project's main checkout as `orch/<task-slug>`. The
+A task owns **one branch**, created in the project's main checkout as `kantan/<task-slug>`. The
 agent commits its own work there, so the repo never sits dirty between runs and a bad run rolls
 back by deleting the branch.
 
@@ -485,7 +485,7 @@ uncommitted work and against a second run entering an occupied repo.
 - Record the base branch at run start. Every task branches from **that base**, never from
   whatever branch the last run left checked out.
 - The plan phase commits its plan file, so the gate does not sit on a dirty tree.
-- On `done`, return the checkout to base. The task's tick then lives on `orch/<task-slug>` until
+- On `done`, return the checkout to base. The task's tick then lives on `kantan/<task-slug>` until
   merged, so the tree would read it as open.
 - **The tree therefore reads task state from the run logs, not only from the working tree**, and
   shows "done, unmerged on orch/T1" as its own state. A task in that state cannot be started

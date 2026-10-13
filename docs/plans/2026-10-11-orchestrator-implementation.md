@@ -130,12 +130,12 @@ Expected: fails, cannot resolve `../src/version`.
 # .gitignore
 node_modules/
 dist/
-.orch-test/
+.kantan-test/
 ```
 
 ```ts
 // src/version.ts
-const CLAUDE_BIN = process.env.ORCH_CLAUDE_BIN ?? "claude"
+const CLAUDE_BIN = process.env.KANTAN_CLAUDE_BIN ?? "claude"
 
 /** The CLI version string, recorded in every run log header. */
 export async function claudeVersion(): Promise<string> {
@@ -149,7 +149,7 @@ export async function claudeVersion(): Promise<string> {
 export { CLAUDE_BIN }
 ```
 
-`ORCH_CLAUDE_BIN` is the seam the fake binary uses in Task 5. Every spawn in this codebase goes through `CLAUDE_BIN`.
+`KANTAN_CLAUDE_BIN` is the seam the fake binary uses in Task 5. Every spawn in this codebase goes through `CLAUDE_BIN`.
 
 **Step 4: Run the test and watch it pass**
 
@@ -484,14 +484,14 @@ This is the keystone of the test suite. It makes the phase machine, the gate, re
 - Create: `test/fake-claude.ts`
 - Test: `test/fake-claude.test.ts`
 
-Behaviour: read `ORCH_FAKE_SCRIPT`, a JSON file listing one fixture per turn. Accept the same flags the real binary does and ignore most. Read newline-delimited user messages on stdin and, for each, emit the next fixture's lines to stdout. Exit 0, or exit 1 when that turn's fixture is an error result.
+Behaviour: read `KANTAN_FAKE_SCRIPT`, a JSON file listing one fixture per turn. Accept the same flags the real binary does and ignore most. Read newline-delimited user messages on stdin and, for each, emit the next fixture's lines to stdout. Exit 0, or exit 1 when that turn's fixture is an error result.
 
 **Step 1: Write the failing tests**
 
 ```ts
 test("replays one fixture per stdin turn", async () => { /* two turns, two results */ })
 test("records the flags it was invoked with for assertions", async () => {
-  // writes argv to ORCH_FAKE_ARGV_LOG so tests can assert on
+  // writes argv to KANTAN_FAKE_ARGV_LOG so tests can assert on
   // --session-id, --resume, --model, --effort, --max-budget-usd
 })
 test("exits 1 when the turn's fixture is an error result", async () => { /* budget-exhausted */ })
@@ -642,7 +642,7 @@ git add -A && git commit -m "feat: append-only run log with replay and tail"
 Nothing yet answers the question both the UI and the git guard need: **what state is this task in?**
 
 Design §3.6 requires the tree to read task state from the run logs rather than only from the
-working tree, because a task's tick lives on `orch/<task-slug>` until merged, so the checked-out
+working tree, because a task's tick lives on `kantan/<task-slug>` until merged, so the checked-out
 markdown reads it as open. Task 12 needs "a task done-but-unmerged cannot be started again", and
 that guard has nothing to consult without this.
 
@@ -676,7 +676,7 @@ Tests:
 - Several runs for one task ref: the **newest** wins, and earlier ones are still listed as
   attempts.
 - A `done` run whose branch is unmerged reports `merged: false`, and Task 12's guard can refuse it.
-- An empty `~/.orch/runs` yields an empty index rather than throwing.
+- An empty `~/.kantan/runs` yields an empty index rather than throwing.
 - A log whose `header` names a project that is no longer registered is skipped with a warning, not
   a crash. Someone will delete a project from `projects.json`.
 
@@ -875,7 +875,7 @@ git add -A && git commit -m "feat: run the project test command and branch on ex
 
 Per design §3.6 and §5. One branch per task in the main checkout, one active run per project.
 
-Tests: a dirty repo refuses to start, and the error names the dirty files; a clean repo creates `orch/<task-slug>` and checks it out; a run whose branch already exists resumes it rather than failing; a second run on a busy project refuses; the lock releases on normal completion **and** on crash (a stale lock whose pid is gone is reclaimed, or a run is unlockable by hand).
+Tests: a dirty repo refuses to start, and the error names the dirty files; a clean repo creates `kantan/<task-slug>` and checks it out; a run whose branch already exists resumes it rather than failing; a second run on a busy project refuses; the lock releases on normal completion **and** on crash (a stale lock whose pid is gone is reclaimed, or a run is unlockable by hand).
 
 That last one is easy to miss and locks a repo permanently. Write the test first.
 
@@ -1256,14 +1256,14 @@ git add -A && git commit -m "feat: haiku-backed feature drafting and stall summa
 
 ## Task 27: The live smoke test
 
-**Files:** `test/live/smoke.test.ts`, skipped unless `ORCH_LIVE=1`
+**Files:** `test/live/smoke.test.ts`, skipped unless `KANTAN_LIVE=1`
 
 Everything up to here ran against the fake binary. This is the one test that spends money.
 
 One task, in a scratch git repo, end to end on the real binary: plan, approve, implement, test, done, checkbox ticked, branch created, cost recorded. Keep the task trivial. Budget it at a few cents with `--max-budget-usd`.
 
 ```bash
-ORCH_LIVE=1 bun test test/live/smoke.test.ts
+KANTAN_LIVE=1 bun test test/live/smoke.test.ts
 ```
 
 ```bash
@@ -1278,7 +1278,7 @@ REQUIRED SUB-SKILL: Use superpowers:verification-before-completion. Evidence bef
 
 ```bash
 bun run check                               # typecheck then every suite, paste the output
-ORCH_LIVE=1 bun test test/live/smoke.test.ts
+KANTAN_LIVE=1 bun test test/live/smoke.test.ts
 bun run server                              # confirm it binds 127.0.0.1 only
 ```
 

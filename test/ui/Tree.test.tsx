@@ -377,7 +377,7 @@ describe("taskStateOf", () => {
    * **A ticked box is not a verification kantan performed.**
    *
    * This read used to be `"passed"`, on the reasoning that only a passing run
-   * ticks a box. It does not hold: a run log lives in `~/.orch/runs` and stays
+   * ticks a box. It does not hold: a run log lives in `~/.kantan/runs` and stays
    * there, so a ticked task whose run kantan knows about arrives here *with* a
    * run and is handled below. A ticked task with **no** run is one of
    *

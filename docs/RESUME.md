@@ -30,11 +30,11 @@ Check `git status` first: anything uncommitted there is one of these four, not a
 ```bash
 export PATH="$HOME/.bun/bin:$PATH"
 bun run check                                  # typecheck then tests
-ORCH_DEV=1 bun run server                      # API on 127.0.0.1:3100
+KANTAN_DEV=1 bun run server                      # API on 127.0.0.1:3100
 bunx vite                                      # UI on localhost:5173
 ```
 
-`ORCH_DEV=1` is required or the Vite origin is refused with a 403 — that refusal is the
+`KANTAN_DEV=1` is required or the Vite origin is refused with a 403 — that refusal is the
 rebinding guard working, not a bug.
 
 ## Ports freed for kantan

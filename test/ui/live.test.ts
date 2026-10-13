@@ -708,7 +708,7 @@ describe("a server restart must not strand the open tab", () => {
         authed = true
         return Response.json({ ok: true, dev: true, origin: "http://127.0.0.1:3100" })
       }
-      if (!authed) return new Response(JSON.stringify({ error: "refused: no valid orch_token cookie" }), { status: 401 })
+      if (!authed) return new Response(JSON.stringify({ error: "refused: no valid kantan_token cookie" }), { status: 401 })
       return Response.json({ ok: true, projects: [], runs: {}, warnings: [] })
     }) as unknown as typeof fetch
 

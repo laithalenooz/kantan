@@ -12,12 +12,12 @@
  *
  * ## Invocation
  *
- *   ORCH_FAKE_SCRIPT=<path>  a JSON file: { "turns": [{ "fixture": "...", "cost": 0.01 }] }
+ *   KANTAN_FAKE_SCRIPT=<path>  a JSON file: { "turns": [{ "fixture": "...", "cost": 0.01 }] }
  *                            `fixture` resolves relative to the script's own directory.
  *                            `cost` overrides that turn's own spend in the result event.
- *   ORCH_FAKE_ARGV_LOG=<path>  append-only JSONL of every invocation and every turn.
- *   ORCH_FAKE_CHUNK=<bytes>    split stdout writes at this many bytes. Default: whole lines.
- *   ORCH_FAKE_CHUNK_DELAY_MS   milliseconds between chunked writes. Default: 1, so the
+ *   KANTAN_FAKE_ARGV_LOG=<path>  append-only JSONL of every invocation and every turn.
+ *   KANTAN_FAKE_CHUNK=<bytes>    split stdout writes at this many bytes. Default: whole lines.
+ *   KANTAN_FAKE_CHUNK_DELAY_MS   milliseconds between chunked writes. Default: 1, so the
  *                              reader sees separate reads rather than one coalesced buffer.
  *
  * The turn list is consumed **across processes**, through a cursor file beside
@@ -209,7 +209,7 @@ function validateValues(inv: Invocation): void {
  * log could otherwise quietly break: "CLAUDE_CONFIG_DIR is absent" must mean
  * absent from the environment, not merely absent from the log.
  */
-const LOGGED_ENV_PREFIXES = ["CLAUDE_", "ORCH_"]
+const LOGGED_ENV_PREFIXES = ["CLAUDE_", "KANTAN_"]
 
 /**
  * Names whose values are never logged, whatever their prefix.
@@ -220,16 +220,16 @@ const LOGGED_ENV_PREFIXES = ["CLAUDE_", "ORCH_"]
  */
 const SECRET_ENV_NAME = /token|secret|key|password|credential|cookie|auth/i
 
-/** Appends one record to ORCH_FAKE_ARGV_LOG, if a path is configured. */
+/** Appends one record to KANTAN_FAKE_ARGV_LOG, if a path is configured. */
 async function logRecord(record: Record<string, unknown>): Promise<void> {
-  const path = process.env.ORCH_FAKE_ARGV_LOG
+  const path = process.env.KANTAN_FAKE_ARGV_LOG
   if (path === undefined || path === "") return
   try {
     await appendFile(path, JSON.stringify(record) + "\n")
   } catch (cause) {
     // Loudly: a silently dropped write leaves a later task asserting against an
     // empty log, which looks like the orchestrator never spawned anything.
-    die(2, `fake-claude: cannot append to ORCH_FAKE_ARGV_LOG ${path}: ${(cause as Error).message}`)
+    die(2, `fake-claude: cannot append to KANTAN_FAKE_ARGV_LOG ${path}: ${(cause as Error).message}`)
   }
 }
 
@@ -258,7 +258,7 @@ const TURN_KEYS = new Set(["fixture", "cost"])
  */
 async function loadScript(path: string): Promise<Turn[]> {
   const file = Bun.file(path)
-  if (!(await file.exists())) die(2, `fake-claude: ORCH_FAKE_SCRIPT ${path} does not exist`)
+  if (!(await file.exists())) die(2, `fake-claude: KANTAN_FAKE_SCRIPT ${path} does not exist`)
 
   let raw: unknown
   try {
@@ -307,7 +307,7 @@ async function loadScript(path: string): Promise<Turn[]> {
  *
  * It lives in a file beside the script because the turn list is consumed across
  * processes: a run spawns the binary once per phase plus once per escalation,
- * and all of them inherit one ORCH_FAKE_SCRIPT.
+ * and all of them inherit one KANTAN_FAKE_SCRIPT.
  */
 type Cursor = { next: number; sessions: string[] }
 
@@ -363,7 +363,7 @@ function numericEnv(name: string, min: number, fallback?: number): number | unde
  * Writes the turn's lines to stdout, awaiting every write so none is lost when
  * the process exits.
  *
- * With `ORCH_FAKE_CHUNK` set, the turn is written in fixed-size slices of the
+ * With `KANTAN_FAKE_CHUNK` set, the turn is written in fixed-size slices of the
  * **encoded bytes**, never of the string, so a boundary can fall inside a
  * multi-byte character. That is the case the captured fixtures cannot produce:
  * Task 4's redaction pass re-serialised them as pure ASCII, so a parser that
@@ -372,13 +372,13 @@ function numericEnv(name: string, min: number, fallback?: number): number | unde
  * coalesced buffer.
  */
 async function emit(lines: string[]): Promise<void> {
-  const chunk = numericEnv("ORCH_FAKE_CHUNK", 1)
+  const chunk = numericEnv("KANTAN_FAKE_CHUNK", 1)
   if (chunk === undefined) {
     for (const line of lines) await Bun.write(Bun.stdout, line + "\n")
     return
   }
 
-  const delay = numericEnv("ORCH_FAKE_CHUNK_DELAY_MS", 0, 1) ?? 1
+  const delay = numericEnv("KANTAN_FAKE_CHUNK_DELAY_MS", 0, 1) ?? 1
   const bytes = new TextEncoder().encode(lines.map((l) => l + "\n").join(""))
   for (let at = 0; at < bytes.length; at += chunk) {
     await Bun.write(Bun.stdout, bytes.subarray(at, at + chunk))
@@ -579,11 +579,11 @@ async function main(): Promise<void> {
     )
   }
 
-  const scriptPath = process.env.ORCH_FAKE_SCRIPT
+  const scriptPath = process.env.KANTAN_FAKE_SCRIPT
   if (scriptPath === undefined || scriptPath === "") {
     die(
       2,
-      "fake-claude: ORCH_FAKE_SCRIPT is not set; this double replays a scripted turn list " +
+      "fake-claude: KANTAN_FAKE_SCRIPT is not set; this double replays a scripted turn list " +
         "and has nothing to say without one",
     )
   }
@@ -635,7 +635,7 @@ async function main(): Promise<void> {
       die(
         2,
         `fake-claude: the script has ${turns.length} turn(s) and this is turn ${cursor.next + 1}; ` +
-          "add a turn to ORCH_FAKE_SCRIPT or send fewer",
+          "add a turn to KANTAN_FAKE_SCRIPT or send fewer",
       )
     }
     // The prompt arrives on stdin, not in argv, so this record is the only

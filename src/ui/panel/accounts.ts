@@ -79,7 +79,7 @@ export function optionId(option: { kind: Account["kind"]; configDir?: string }):
 export function accountOptionsFor(
   projects: ReadonlyArray<{ account: Account; configDir?: string }>,
   /**
-   * The accounts the user recorded, from `~/.orch/accounts.json`.
+   * The accounts the user recorded, from `~/.kantan/accounts.json`.
    *
    * **The second source, and the one that makes this list usable.** Reported
    * from use: *"why other accounts are not detected?"* - because the only

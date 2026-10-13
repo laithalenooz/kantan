@@ -17,7 +17,7 @@ import { createServer, type Launch } from "../src/server"
 const launched: Launch[] = []
 /* Keyed on the pid: several agents run `bun run check` at once here, and a
  * fixed path means one process's `rm -rf` deletes another's fixture mid-test. */
-const ROOT = join(import.meta.dir, "..", ".orch-test", "assets", `${process.pid}`)
+const ROOT = join(import.meta.dir, "..", ".kantan-test", "assets", `${process.pid}`)
 
 afterAll(async () => {
   for (const l of launched) l.stop()
@@ -61,9 +61,9 @@ function get(l: Launch, path: string, cookie?: string): Promise<Response> {
 async function bootstrap(l: Launch): Promise<string> {
   const res = await get(l, "/")
   await res.arrayBuffer()
-  const cookie = /orch_token=([^;]+)/.exec(res.headers.get("set-cookie") ?? "")?.[1]
+  const cookie = /kantan_token=([^;]+)/.exec(res.headers.get("set-cookie") ?? "")?.[1]
   if (cookie === undefined) throw new Error("the page load handed out no token")
-  return `orch_token=${cookie}`
+  return `kantan_token=${cookie}`
 }
 
 // --- GET / ------------------------------------------------------------------
@@ -77,7 +77,7 @@ test("GET / serves the built index when there is one, with the cookie", async ()
   expect(await res.text()).toBe(BUILT)
   // The bootstrap's other job. A built page that answered without this would
   // load and then 401 on its own first API call.
-  expect(res.headers.get("set-cookie")).toContain("orch_token=")
+  expect(res.headers.get("set-cookie")).toContain("kantan_token=")
   expect(res.headers.get("set-cookie")).toContain("HttpOnly")
   /* The HTML names hashed asset files, so a cached copy would ask for the
    * previous build's chunks after a rebuild. This header is half of what makes
@@ -98,7 +98,7 @@ test("GET / falls back to a page naming the build command when dist is absent", 
   expect(body).toContain("bun run build")
   expect(body).toContain("bun run ui")
   // Still a bootstrap, so a dev-server page proxying through here gets a token.
-  expect(res.headers.get("set-cookie")).toContain("orch_token=")
+  expect(res.headers.get("set-cookie")).toContain("kantan_token=")
 })
 
 test("GET / never puts the token in the body, built or not", async () => {

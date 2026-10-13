@@ -97,7 +97,7 @@ Nothing needs to be running. To bring it back:
 
 ```bash
 export PATH="$HOME/.bun/bin:$PATH"
-ORCH_DEV=1 bun run src/server.ts &   # 3100, the API and the token
+KANTAN_DEV=1 bun run src/server.ts &   # 3100, the API and the token
 bun run ui &                         # 5173, Vite
 ```
 
@@ -115,7 +115,7 @@ had, and one failure hashes two ways depending on how much the suite printed. Th
 the digest even if the windows do change.
 
 ### `CLAUDE_BIN` binds at module load — anything spawning
-`src/version.ts` resolves `process.env.ORCH_CLAUDE_BIN` **once, when the module is imported**.
+`src/version.ts` resolves `process.env.KANTAN_CLAUDE_BIN` **once, when the module is imported**.
 Setting `process.env` inside a test body is a no-op. Any test that substitutes the binary must set
 it in the environment of a **fresh process**. `test/version.test.ts` and
 `test/fake-claude.test.ts`'s `claudeVersion()` test both do this; the pattern is worth copying.
@@ -251,17 +251,17 @@ one by construction, because the machine dictates `docs/plans/<date>-<slug>.md` 
 legitimate there contains a `..`.
 
 ### Driving the fake binary — Tasks 8 through 14
-`test/fake-claude.ts` is executable with a `bun` shebang, so `ORCH_CLAUDE_BIN=<abs>/test/fake-claude.ts`
+`test/fake-claude.ts` is executable with a `bun` shebang, so `KANTAN_CLAUDE_BIN=<abs>/test/fake-claude.ts`
 is all a spawner needs. It answers `--version` with `2.1.296 (Claude Code)` before validating
 anything else, so installing it suite-wide leaves `test/version.test.ts` passing.
 
-- **`ORCH_FAKE_SCRIPT`** names a `{"turns":[{"fixture":"...","cost":0.01}]}` file. The turn list is
+- **`KANTAN_FAKE_SCRIPT`** names a `{"turns":[{"fixture":"...","cost":0.01}]}` file. The turn list is
   consumed **across processes** through `<script>.cursor`, because a run spawns the binary once per
   phase plus once per escalation and they all inherit one environment. **Give every test its own
   script path**, or it inherits the previous test's cursor.
-- **`ORCH_FAKE_ARGV_LOG`** appends a `kind:"spawn"` record per invocation (`argv`, `cwd`, `pid`,
+- **`KANTAN_FAKE_ARGV_LOG`** appends a `kind:"spawn"` record per invocation (`argv`, `cwd`, `pid`,
   `env`, `envKeys`) and a `kind:"turn"` record per turn (`index`, `fixture`, `session`, raw
-  `stdin`). Env **values** are recorded only for `CLAUDE_*`/`ORCH_*` names that do not look like
+  `stdin`). Env **values** are recorded only for `CLAUDE_*`/`KANTAN_*` names that do not look like
   credentials; every name appears in `envKeys`, so an absence assertion is still meaningful.
 - **`CLAUDE_CONFIG_DIR` leaks in from the developer's own shell** through `{...process.env}`. A test
   asserting it is unset must delete it explicitly, or it passes for the wrong reason on one machine
@@ -312,7 +312,7 @@ Task 4's redaction pass re-serialised every line through Python, so the committe
 `"key": "value"` spacing and are **pure ASCII** with `\uXXXX` escapes, where the real CLI emits
 compact JSON with raw UTF-8. Two consequences: no chunk boundary inside a fixture can ever split a
 multi-byte character, so a parser that decoded each read independently would pass against them and
-corrupt real output — use `ORCH_FAKE_CHUNK` against a UTF-8 fixture of your own, as
+corrupt real output — use `KANTAN_FAKE_CHUNK` against a UTF-8 fixture of your own, as
 `test/fake-claude.test.ts` does; and never assert that re-serialising a parsed event reproduces the
 fixture's bytes.
 
@@ -353,7 +353,7 @@ cannot put back the separator the URL parser already resolved away.
 
 `RouteContext` also carries `runsDir`, `streamPollMs` and `streamKeepAliveMs`, resolved from
 `ServerOptions` so a handler never consults a default. `runsDir` is what lets a test keep away from
-the developer's own `~/.orch/runs`; Task 18's actions will want it for the same reason.
+the developer's own run directory; Task 18's actions will want it for the same reason.
 
 ### The run stream's contract, and the two things the UI must do — the UI tasks
 `GET /api/runs/:id/stream` sends **one SSE event per log record**, always named `record`, with the
@@ -567,7 +567,7 @@ It is wired: `import.meta.main` in `src/server.ts` constructs one and shares `pr
   one clause that differs by phase. The UI needs two controls on one reply box, not one route that
   guesses which conversation it is talking to.
 - **Two refusal codes collapse.** The machine refuses with nine codes (`RefusalCode`); the HTTP
-  vocabulary has seven. `no-base` (a detached HEAD, or a checkout an earlier run left on `orch/*`)
+  vocabulary has seven. `no-base` (a detached HEAD, or a checkout an earlier run left on `kantan/*`)
   and `branch-exists` (the task has run before) both arrive as `wrong-state`, because `dirty` would
   be a lie and the UI hangs `git stash` advice off it. **The vocabulary is missing a "the repo is
   not in a state a run can start from" code**; the messages carry the explanation meanwhile.
@@ -594,7 +594,7 @@ human edited it.
 
 | Field | Why it had to exist |
 |---|---|
-| `RunHeader.baseBranch` | a resumed run has nothing to `returnToBase` to otherwise. The branch can be recomputed from `featureFile` + `taskRef`; the base cannot be recomputed from anything, and `recordBaseBranch` both refuses on an `orch/` checkout and is the stacking bug |
+| `RunHeader.baseBranch` | a resumed run has nothing to `returnToBase` to otherwise. The branch can be recomputed from `featureFile` + `taskRef`; the base cannot be recomputed from anything, and `recordBaseBranch` both refuses on a task-branch checkout and is the stacking bug |
 | `PhaseRecord.detail` | nothing else holds *why* a run is waiting. A `question` has the agent's text in the `cli` records before it, but a `blocked` the orchestrator decided (an exhausted budget) and a `stalled` one have no agent text at all, so a restarted server rendered the previous turn's prose as the reason |
 | `EndRecord.warnings` | a `done` run can still have things a human must see - a feature file edited mid-run, a task already ticked, a checkout that could not return to base. `why` is documented as why a run *failed*, and the log is the only place such a note survives the server that wrote it |
 
@@ -620,7 +620,7 @@ replay in the same change - two sources will drift.
   `test/fake-claude.ts` (which cannot create files) could not have tested it.
 - **A plan phase killed mid-first-turn cannot be resumed.** The session never completed a turn, so
   `--resume` meets `No conversation found` and the run fails with that message. Recovering means
-  `git branch -D orch/<task>` and starting over. The same kill *after* the first turn resumes fine.
+  `git branch -D kantan/<task>` and starting over. The same kill *after* the first turn resumes fine.
 - **A stop during a test run waits for the suite.** `runTests` has no cancel, only its timeout, so
   `stopRun` kills the agent child at once and the test command runs to its end; the run then parks
   interrupted without ticking or committing. Bounded by `DEFAULT_TIMEOUT_MS`, which is ten minutes.
@@ -784,7 +784,7 @@ Vite proxies `/api` to 3100 and **deliberately does not set `changeOrigin`**
 real one from the rebinding check). So the server receives `Host:
 localhost:5173`, which `allowedHosts` refuses with a 403 reading *"the Host
 header must be exactly 127.0.0.1:3100 or localhost:3100"* unless `dev` is on.
-`ORCH_DEV=1` is the switch and nothing in `package.json` set it, so the obvious
+`KANTAN_DEV=1` is the switch and nothing in `package.json` set it, so the obvious
 two-terminal dev workflow failed at the first request with a message that
 sounds like a misconfigured reverse proxy.
 
@@ -869,7 +869,7 @@ Confirmed by the first live run (2026-10-11, `claude 2.1.296`), which failed a
 test that asserted the obvious thing.
 
 After a run finishes, `tickCheckbox` ticks the task and commits it **on
-`orch/<slug>`**, and `goHome` then returns the checkout to the base branch the
+`kantan/<slug>`**, and `goHome` then returns the checkout to the base branch the
 run started from, because design §3.6 makes merging the human's decision. So:
 
 - the working tree is on **base**, and shows the task still `- [ ]`
@@ -923,7 +923,7 @@ parser its own instruction. Correct, but it means a multi-kilobyte skill dump
 renders as one unknown row. Worth collapsing in the UI; not worth
 reclassifying.
 
-To regenerate: `ORCH_LIVE=1 ORCH_KEEP=1 bun test test/live/smoke.test.ts`
+To regenerate: `KANTAN_LIVE=1 KANTAN_KEEP=1 bun test test/live/smoke.test.ts`
 prints where it kept the repo and the runs directory. The log is **not**
 committed as a fixture: it carries absolute home paths, and this repo has
 already been burned once by committing machine-local strings.
@@ -1538,7 +1538,7 @@ Three things worth not relearning:
   file rather than a staged one the user's next bare `git commit` sweeps up.
 
 **The caveat, and it is a deliberate gap:** the route does **not** commit while
-a run is in flight in that repo. The checkout is on the run's `orch/<task>`
+a run is in flight in that repo. The checkout is on the run's `kantan/<task>`
 branch then, so the commit would land there and `returnToBase` would take the
 drafted file back out of the working tree — the user watching a file they just
 made disappear. The file is still written and still answered 201, with a
@@ -1550,7 +1550,7 @@ The 201 body is now `{ok, path, tasks, warning?}`. `warning` is present only
 when there is something to say, so a client can treat its presence as "tell the
 human" rather than comparing against `""`.
 
-### `Project.account` is a label, and `~/.orch/accounts.json` is the registry - BUILT
+### `Project.account` is a label, and `~/.kantan/accounts.json` is the registry - BUILT
 
 Two reports from use had one cause: *"why other accounts are not detected?"* and
 *"if I try to add a new account nothing happens?"*
@@ -1569,9 +1569,9 @@ What landed, and the parts worth keeping:
 
 - **The registry is a second store, derived from `projectsFile`'s directory.**
   Not a second `ServerOptions` path: `defaultProjectsFile()` stays the only
-  place that knows where `~/.orch` is, and a second injectable path is one more
+  place that knows where the state directory is, and a second injectable path is one more
   thing every test must remember, whose failure mode is writing into the
-  developer's own `~/.orch`.
+  developer's own state directory.
 - **`~` is expanded in the store.** The add form promises it in so many words
   and the CLI expands nothing - handed `~/.claude-work` it creates a directory
   called `~`.

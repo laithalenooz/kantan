@@ -10,8 +10,8 @@ test("reads the claude CLI version", async () => {
   expect(v).toMatch(/^\d+\.\d+\.\d+$/)
 })
 
-test("honours ORCH_CLAUDE_BIN when spawning the CLI", async () => {
-  const dir = join(repoRoot, ".orch-test", "version-seam")
+test("honours KANTAN_CLAUDE_BIN when spawning the CLI", async () => {
+  const dir = join(repoRoot, ".kantan-test", "version-seam")
   await rm(dir, { recursive: true, force: true })
   await mkdir(dir, { recursive: true })
 
@@ -31,7 +31,7 @@ test("honours ORCH_CLAUDE_BIN when spawning the CLI", async () => {
   )
 
   const p = Bun.spawn([process.execPath, "run", probe], {
-    env: { ...process.env, ORCH_CLAUDE_BIN: stub },
+    env: { ...process.env, KANTAN_CLAUDE_BIN: stub },
     stdout: "pipe",
     stderr: "pipe",
   })
@@ -45,12 +45,12 @@ test("honours ORCH_CLAUDE_BIN when spawning the CLI", async () => {
   expect(out).toBe("99.88.77")
 })
 
-// A wrong ORCH_CLAUDE_BIN is one of the likelier misconfigurations, so the
+// A wrong KANTAN_CLAUDE_BIN is one of the likelier misconfigurations, so the
 // failure has to name what went wrong rather than report an empty parse.
 
 /** Runs claudeVersion() in a fresh process, since CLAUDE_BIN binds at import. */
 async function versionWith(bin: string): Promise<{ out: string; err: string; code: number }> {
-  const dir = join(repoRoot, ".orch-test", "version-failure")
+  const dir = join(repoRoot, ".kantan-test", "version-failure")
   await mkdir(dir, { recursive: true })
   const probe = join(dir, "probe.ts")
   await writeFile(
@@ -60,7 +60,7 @@ async function versionWith(bin: string): Promise<{ out: string; err: string; cod
       `catch (e) { process.stderr.write((e as Error).message); process.exit(1) }\n`,
   )
   const p = Bun.spawn([process.execPath, "run", probe], {
-    env: { ...process.env, ORCH_CLAUDE_BIN: bin },
+    env: { ...process.env, KANTAN_CLAUDE_BIN: bin },
     stdout: "pipe",
     stderr: "pipe",
   })
@@ -73,13 +73,13 @@ async function versionWith(bin: string): Promise<{ out: string; err: string; cod
 }
 
 test("names the binary when it does not exist", async () => {
-  const { err, code } = await versionWith(join(repoRoot, ".orch-test", "definitely-not-here"))
+  const { err, code } = await versionWith(join(repoRoot, ".kantan-test", "definitely-not-here"))
   expect(code).toBe(1)
   expect(err).toContain("definitely-not-here")
 })
 
 test("reports the exit code and stderr when the binary fails", async () => {
-  const dir = join(repoRoot, ".orch-test", "version-failure")
+  const dir = join(repoRoot, ".kantan-test", "version-failure")
   await mkdir(dir, { recursive: true })
   const stub = join(dir, "angry-claude")
   await writeFile(stub, '#!/bin/sh\necho "could not reach the keychain" >&2\nexit 3\n')
@@ -91,7 +91,7 @@ test("reports the exit code and stderr when the binary fails", async () => {
 })
 
 test("reports the output when it succeeds but prints no version", async () => {
-  const dir = join(repoRoot, ".orch-test", "version-failure")
+  const dir = join(repoRoot, ".kantan-test", "version-failure")
   await mkdir(dir, { recursive: true })
   const stub = join(dir, "chatty-claude")
   await writeFile(stub, '#!/bin/sh\necho "update available, run claude install"\n')

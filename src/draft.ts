@@ -405,7 +405,7 @@ export interface HaikuRun {
  *
  * `--output-format json` rather than `stream-json`: these jobs need one
  * answer, not a feed. Every failure throws with what the CLI actually said,
- * because a wrong `ORCH_CLAUDE_BIN` and a refused request look identical from
+ * because a wrong `KANTAN_CLAUDE_BIN` and a refused request look identical from
  * an empty string.
  */
 export function haikuReply(run: HaikuRun): string {

@@ -1,11 +1,11 @@
 import { mkdir, open, stat } from "node:fs/promises"
 import type { FileHandle } from "node:fs/promises"
-import { homedir } from "node:os"
 import { dirname, join } from "node:path"
+import { stateDir } from "./statedir"
 import type { Effort } from "./projects"
 
 /**
- * One append-only JSONL file per run, at `~/.orch/runs/<runId>.jsonl`.
+ * One append-only JSONL file per run, at `~/.kantan/runs/<runId>.jsonl`.
  *
  * It is the live feed, the permanent history, and the only source of run state
  * (design §2). There is no database: a run's state is the fold of its log,
@@ -97,7 +97,7 @@ export interface RunHeader {
    * Without it a resumed run has nothing to return to on `done`: the branch can
    * be recomputed from `featureFile` and `taskRef`, but the base cannot be
    * recomputed from anything. Re-deriving it with `recordBaseBranch` is both
-   * refused - HEAD is on the task's own `orch/` branch by then - and the
+   * refused - HEAD is on the task's own task branch by then - and the
    * branch-stacking bug the base discipline exists to prevent.
    *
    * Optional, unlike `profile` and `featureFileHash`, because it is younger
@@ -347,9 +347,11 @@ export type RunRecord = HeaderRecord | CliRecord | OwnRecord
 
 // --- Where logs live --------------------------------------------------------
 
-/** `~/.orch/runs`. Delete `~/.orch` and you lose history, nothing else. */
+/** `~/.kantan/runs`, or `~/.kantan/runs` for anyone who has one - see
+ *  `src/statedir.ts`. Delete that directory and you lose history, nothing
+ *  else: every project, branch and commit is reconstructible without it. */
 export function defaultRunsDir(): string {
-  return join(homedir(), ".orch", "runs")
+  return join(stateDir().dir, "runs")
 }
 
 /**
@@ -386,7 +388,7 @@ export interface RunLog {
 /**
  * Starts a log at `path` and writes its header as line one.
  *
- * Creates `~/.orch/runs` if this is the first run ever, and refuses a path
+ * Creates `~/.kantan/runs` if this is the first run ever, and refuses a path
  * that already exists: a repeated run id would interleave two runs into one
  * file whose fold belongs to neither.
  *

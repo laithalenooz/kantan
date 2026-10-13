@@ -217,7 +217,7 @@ function startChild(argv: string[], project: Project) {
   } catch (cause) {
     // Bun throws synchronously for both a missing binary and a missing cwd,
     // and probed, the ENOENT names the **binary** either way - so a repo that
-    // has moved reads as a broken ORCH_CLAUDE_BIN. Naming the directory too is
+    // has moved reads as a broken KANTAN_CLAUDE_BIN. Naming the directory too is
     // what tells the two apart.
     throw new Error(`cannot spawn ${CLAUDE_BIN} in ${cwd}: ${(cause as Error).message}`, { cause })
   }

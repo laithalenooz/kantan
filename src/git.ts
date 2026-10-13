@@ -5,7 +5,7 @@
  * with years of history. Every function here exists to stop it clobbering work
  * a person cares about, so each one is named for what it protects.
  *
- * Design §3.6: a task owns one branch, `orch/<task-slug>`, created in the
+ * Design §3.6: a task owns one branch, `kantan/<task-slug>`, created in the
  * project's main checkout from the base branch recorded at run start; the server
  * allows one active run per project; on `done` the checkout returns to base.
  *
@@ -24,7 +24,7 @@
  * Resuming is steps 1 and 2, then `resumeTaskBranch`. It must **not** call
  * `recordBaseBranch`: the branch and the base were recorded in the run log at
  * run start, and re-deriving them is both wrong (the checkout is on the task's
- * own `orch/` branch, which `recordBaseBranch` refuses by design) and the
+ * own task branch, which `recordBaseBranch` refuses by design) and the
  * stacking bug that recording the base exists to prevent.
  *
  * `resumeTaskBranch` carries its own dirty check, exempt in exactly one case:
@@ -45,7 +45,7 @@ export interface Repo {
    * is why this matters: it is the first place the two spellings converge. */
   root: string
   /** `$GIT_COMMON_DIR`. The run lock lives here, so every worktree of one
-   * repository contends for one lock - which is right, because `orch/<slug>`
+   * repository contends for one lock - which is right, because `kantan/<slug>`
    * is a single ref namespace shared by all of them. */
   gitDir: string
 }
@@ -59,7 +59,67 @@ export interface TaskId {
   ref: string
 }
 
-export const BRANCH_PREFIX = "orch/"
+/**
+ * What a **new** task branch is created under.
+ *
+ * The product is kantan; this said `orch` until the rename. It is the only
+ * identifier kantan writes into somebody else's git history, which is why it
+ * was changed before publishing and could not be changed afterwards.
+ */
+export const BRANCH_PREFIX = "kantan/"
+
+/**
+ * Every prefix that **counts as** a task branch, newest first.
+ *
+ * Recognition and creation are deliberately two questions, and that split is
+ * the whole of the rename's migration. A skipping guard, so the dimension is
+ * enumerated: the leading segment of a branch name. Its values are
+ * `kantan/...`, `orch/...` - which is what every run created until the rename,
+ * and some are mid-flight on disk right now - a base branch like `main`, a
+ * branch that merely contains one of the words, and a branch that is exactly a
+ * prefix with nothing after it.
+ *
+ * The costs are badly lopsided:
+ *
+ * - **Dropping `orch/` is the dangerous direction.** `recordBaseBranch`
+ *   refuses to record a task branch as a base, so that a run cannot branch a
+ *   task off another task. If `orch/*` stopped counting, that guard would go
+ *   quiet on exactly the repositories that have one checked out - an
+ *   interrupted run - and a resume would branch off it. Those runs would also
+ *   become unresumable, since `resumeTaskBranch` asks the same question.
+ * - Accepting it costs a user who named a branch `orch/...` themselves being
+ *   told it is kantan's. That was already true yesterday, so it is not a
+ *   regression, and every message names the branch it means.
+ *
+ * Nothing new is ever created under a legacy prefix: `taskBranchName` uses
+ * `BRANCH_PREFIX` alone.
+ */
+export const TASK_BRANCH_PREFIXES = [BRANCH_PREFIX, "orch/"] as const
+
+/**
+ * Whether `branch` is a branch some run of kantan's created.
+ *
+ * A prefix test rather than a search, and the empty remainder is refused: a
+ * branch called exactly `kantan/` carries no task, so no run made it.
+ */
+export function isTaskBranch(branch: string): boolean {
+  return TASK_BRANCH_PREFIXES.some((prefix) => branch.startsWith(prefix) && branch.length > prefix.length)
+}
+
+/**
+ * The slug inside a task branch, whichever prefix it carries.
+ *
+ * Exists because `src/run.ts` builds a plan path from it. Slicing by
+ * `BRANCH_PREFIX.length` would cut the wrong number of characters off a legacy
+ * branch - the two words are not the same length - and the plan for a resumed
+ * run would be written under a mangled name.
+ */
+export function taskSlug(branch: string): string {
+  for (const prefix of TASK_BRANCH_PREFIXES) {
+    if (branch.startsWith(prefix)) return branch.slice(prefix.length)
+  }
+  return branch
+}
 
 // --- Is this path a usable git repository at all? ---------------------------
 
@@ -144,7 +204,7 @@ export async function requireUsableRepo(path: string): Promise<Repo> {
  *   the stacking this prevents. The fix is one `git switch`, so refusing is the
  *   cheap direction. Note that `git branch --show-current` exits 0 and prints
  *   nothing here (probed), which is why `currentBranch` reads `symbolic-ref`.
- * - **A checkout left on an `orch/` branch.** This is the crash case: a run
+ * - **A checkout left on a task branch.** This is the crash case: a run
  *   that never returned to base. Recording it would make the next task a child
  *   of the last one, which is exactly the failure base discipline exists for.
  */
@@ -156,7 +216,10 @@ export async function recordBaseBranch(repo: Repo): Promise<string> {
       `${repo.root} has a detached HEAD at ${at}, so there is no base branch to record and none to return to when the run finishes. An unfinished rebase, bisect or cherry-pick looks like this too. Run \`git switch <your base branch>\` first.`,
     )
   }
-  if (branch.startsWith(BRANCH_PREFIX)) {
+  // `isTaskBranch`, not a `BRANCH_PREFIX` test: a checkout left on a legacy
+  // `orch/*` branch is exactly the interrupted run this refusal is for, and
+  // the rename must not make this guard go quiet on it.
+  if (isTaskBranch(branch)) {
     throw new Error(
       `${repo.root} is checked out on ${branch}, which is a kantan task branch rather than a base - an earlier run was interrupted before it returned to base. Recording ${branch} as the base would branch this task off that one. Run \`git switch <your base branch>\` first.`,
     )
@@ -190,7 +253,7 @@ export async function recordBaseBranch(repo: Repo): Promise<string> {
  * | a submodule holding only untracked content | build output inside a vendored repo | **allowed** |
  *
  * **Why untracked blocks, concretely.** The agent commits its own work on
- * `orch/<slug>`. A `git add -A` sweeps an untracked file in with it; returning
+ * `kantan/<slug>`. A `git add -A` sweeps an untracked file in with it; returning
  * to base then takes that file out of the working tree, and `git branch -D` as
  * a rollback loses it for good. A person's `notes.md` or un-ignored `.env`
  * vanishing is exactly the "never stash someone's work silently" failure. Build
@@ -356,7 +419,7 @@ export async function commitPaths(
 // --- Slugifying a task into a branch name ----------------------------------
 
 /**
- * The branch this task owns: `orch/<feature>-<ref>-<hash>`.
+ * The branch this task owns: `kantan/<feature>-<ref>-<hash>`.
  *
  * ## What git refuses in a branch name, and how each is handled
  *
@@ -375,8 +438,8 @@ export async function commitPaths(
  * Two further rules come from the filesystem rather than from git:
  *
  * - **Lowercase only.** A loose ref is a file. macOS and a `/mnt/c` mount fold
- *   case, so `orch/Fix` and `orch/fix` would be one ref there and two here.
- * - **One component under `orch/`.** `orch/t1` and `orch/t1/sub` cannot both
+ *   case, so `kantan/Fix` and `kantan/fix` would be one ref there and two here.
+ * - **One component under the prefix.** `kantan/t1` and `kantan/t1/sub` cannot both
  *   exist in a ref store; a slug containing `/` would make that collision
  *   reachable from two ordinary task names.
  *
@@ -443,7 +506,7 @@ function fileStem(path: string): string {
   return dot > 0 ? name.slice(0, dot) : name
 }
 
-// --- Create or resume orch/<task-slug> from the recorded base --------------
+// --- Create or resume <prefix><task-slug> from the recorded base ----------
 
 /**
  * Creates `branch` at `base` and checks it out, for a **new** run.
@@ -991,8 +1054,8 @@ function gitSaid(r: GitResult): string {
  * The branch HEAD is on, or null when HEAD is detached.
  *
  * `symbolic-ref --short` is deliberately not used. Probed: it shortens only as
- * far as the name stays unambiguous, so a **tag** named `orch/t1-9f3a1c08`
- * makes it print `heads/orch/t1-9f3a1c08`, and every comparison against a
+ * far as the name stays unambiguous, so a **tag** named `kantan/t1-9f3a1c08`
+ * makes it print `heads/kantan/t1-9f3a1c08`, and every comparison against a
  * branch name here would quietly stop matching - including the one that refuses
  * `orch/*` as a base, which is what stops tasks stacking.
  */
@@ -1016,7 +1079,7 @@ async function resolveCommit(repo: Repo, rev: string): Promise<string | null> {
 }
 
 function requireTaskBranch(branch: string): void {
-  if (!branch.startsWith(BRANCH_PREFIX)) {
+  if (!isTaskBranch(branch)) {
     throw new Error(
       `${JSON.stringify(branch)} is not a kantan task branch: a run only ever creates or enters ${BRANCH_PREFIX}<task-slug>, so that a base branch can never be the target. Use taskBranchName().`,
     )

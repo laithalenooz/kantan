@@ -2,8 +2,9 @@ import { randomBytes, timingSafeEqual } from "node:crypto"
 import { constants } from "node:fs"
 import { homedir } from "node:os"
 import { mkdir, open, realpath, stat, writeFile } from "node:fs/promises"
-import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path"
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import type { Server } from "bun"
+import { STATE_DIR, stateDir } from "./statedir"
 import { parseFeature } from "./backlog"
 import type { Task } from "./backlog"
 import { draftFeature, type Draft } from "./draft"
@@ -472,17 +473,39 @@ export function createServer(opts: ServerOptions = {}): Launch {
   return { server, token: ctx.token, port, stop: () => server.stop(true) }
 }
 
-function parsePort(raw: string | undefined): number {
+/**
+ * The port, from `KANTAN_PORT`.
+ *
+ * `named` is in the message so it says which variable was wrong: the rename
+ * left two that work, and a refusal naming the wrong one sends somebody to
+ * edit a setting they never set.
+ */
+function parsePort(raw: string | undefined, named = "KANTAN_PORT"): number {
   if (raw === undefined) return DEFAULT_PORT
   const port = Number(raw)
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error(`ORCH_PORT must be a port number between 1 and 65535, got ${JSON.stringify(raw)}`)
+    throw new Error(`${named} must be a port number between 1 and 65535, got ${JSON.stringify(raw)}`)
   }
   return port
 }
 
+/**
+ * An environment variable under its new name, falling back to the old one.
+ *
+ * The rename cost nothing to accept both, and refusing the old name would
+ * break the shell history and any script of anyone who used kantan before it.
+ * The new name is the documented one and wins when both are set, which is the
+ * only stable rule - the alternative makes the answer depend on which the
+ * shell happened to export last.
+ */
+function envVar(name: string, legacy: string): { value: string | undefined; named: string } {
+  const fresh = process.env[name]
+  if (fresh !== undefined) return { value: fresh, named: name }
+  return { value: process.env[legacy], named: legacy }
+}
+
 if (import.meta.main) {
-  const dev = process.env.ORCH_DEV === "1"
+  const dev = envVar("KANTAN_DEV", "ORCH_DEV").value === "1"
 
   // Imported here and nowhere else in this file. The `Runner` port exists so
   // the server does not depend on the phase machine - the types either side
@@ -501,8 +524,23 @@ if (import.meta.main) {
   const runsDir = defaultRunsDir()
   const projectsFile = defaultProjectsFile()
 
+  /* Said out loud, because a fallback nobody can see is indistinguishable from
+     a tool that lost their projects. `src/statedir.ts` reads the state directory when it
+     exists and `~/.kantan` does not; this is the only way a person finds out
+     which one they are on, and what to do about it. */
+  const state = stateDir()
+  if (state.legacy) {
+    console.log(
+      `kantan is reading its state from ${state.dir}, which is where it lived before the rename. ` +
+        `To move to the new name: mv ${state.dir} ${join(homedir(), STATE_DIR)}`,
+    )
+  }
+
   const launch = createServer({
-    port: parsePort(process.env.ORCH_PORT),
+    port: ((): number => {
+      const { value, named } = envVar("KANTAN_PORT", "ORCH_PORT")
+      return parsePort(value, named)
+    })(),
     dev,
     runsDir,
     projectsFile,

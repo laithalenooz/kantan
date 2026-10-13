@@ -17,7 +17,7 @@ import { addProfile, discoverProfiles, loadProfiles, profileId } from "../src/pr
  * to already have a project using it. Circular.
  */
 
-const ROOT = join(import.meta.dir, "..", ".orch-test", "profiles", `${process.pid}`)
+const ROOT = join(import.meta.dir, "..", ".kantan-test", "profiles", `${process.pid}`)
 let made = 0
 
 afterAll(async () => {

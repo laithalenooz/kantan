@@ -227,7 +227,7 @@ export interface ServerOptions {
    * can be turned off - one that cannot is not an exception. */
   dev?: boolean
   devPort?: number
-  /** Where the run logs are. Defaults to `~/.orch/runs`; injectable so a test
+  /** Where the run logs are. Defaults to `~/.kantan/runs`; injectable so a test
    * never reads or writes the developer's own history. */
   runsDir?: string
   /**
@@ -264,7 +264,7 @@ export interface ServerOptions {
    * `defaultProjectsFile()` in `src/run.ts` owns, and the entry point passes
    * the same path to the machine, so the two provably read one file. A default
    * here would also mean every test that forgot to inject one registering
-   * projects in the developer's own `~/.orch/projects.json`.
+   * projects in the developer's own `~/.kantan/projects.json`.
    */
   projectsFile?: string
   /**

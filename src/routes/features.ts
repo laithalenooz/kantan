@@ -9,7 +9,7 @@
  * The rule they share, and the one place it differs:
  *
  * - **A run in flight refuses the three writers**, because the checkout is on
- *   that run's own `orch/<task>` branch and `returnToBase` would take the
+ *   that run's own `kantan/<task>` branch and `returnToBase` would take the
  *   change back out of the working tree when the run finished - after a
  *   surface had said it landed.
  * - **Proposing is allowed during a run**, because it writes nothing and
@@ -98,7 +98,7 @@ const MAX_TASK_CHARS = 2000
  *    what is at stake differs. A draft that cannot be committed still exists -
  *    the caller got the thing they asked for, untracked. A removal that cannot
  *    be committed has already changed a file the user can see, on a checkout
- *    that is on the run's own `orch/<task>` branch, and `returnToBase` at the
+ *    that is on the run's own `kantan/<task>` branch, and `returnToBase` at the
  *    end of that run would then restore the task as if nothing happened -
  *    after the UI had said it was gone. Worse, the run may be *working through
  *    that very file*: `tickCheckbox` commits a tick into it, and a removal
@@ -196,7 +196,7 @@ export async function removeFeatureTask(req: Request, ctx: RouteContext): Promis
  * The guards are `removeFeatureTask`'s, in the same order and for the same
  * reasons, with one difference worth naming: **this is also refused while a run
  * is in flight**, even though adding a task takes nothing away. The reason is
- * the commit, not the edit. A run holds the checkout on its own `orch/<task>`
+ * the commit, not the edit. A run holds the checkout on its own `kantan/<task>`
  * branch, so the commit would land there and `returnToBase` would take the new
  * tasks out of the working tree when the run finished - the user would watch
  * tasks they just added disappear. `POST /api/features` answers a warning
@@ -442,7 +442,7 @@ export async function draftFeatureFile(req: Request, ctx: RouteContext): Promise
 
   // **Not while a run is in flight in this repo**, and this guard exists
   // *because* of the commit above rather than beside it. A live run has the
-  // checkout on its own `orch/<task>` branch, so the commit would land there -
+  // checkout on its own `kantan/<task>` branch, so the commit would land there -
   // and `returnToBase` at the end of that run would then take the drafted file
   // out of the working tree entirely. The user would watch a file they just
   // created disappear, recoverable only from a branch nobody told them about.

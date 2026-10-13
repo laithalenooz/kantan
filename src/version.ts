@@ -1,4 +1,13 @@
-const CLAUDE_BIN = process.env.ORCH_CLAUDE_BIN ?? "claude"
+/**
+ * The `claude` binary, overridable for a nonstandard install - and how every
+ * test substitutes the fake one instead of spending money.
+ *
+ * `KANTAN_CLAUDE_BIN` is still accepted. The rename cost nothing to keep it, and
+ * refusing it would silently start spawning the **real** `claude` in anyone's
+ * harness that still sets the old name - a failure that bills money rather
+ * than raising an error, which is the worst direction this variable has.
+ */
+const CLAUDE_BIN = process.env.KANTAN_CLAUDE_BIN ?? process.env.ORCH_CLAUDE_BIN ?? "claude"
 
 /**
  * The CLI version string, recorded in every run log header because the
@@ -6,7 +15,7 @@ const CLAUDE_BIN = process.env.ORCH_CLAUDE_BIN ?? "claude"
  *
  * Reports the exit code and stderr on failure. Reading stdout alone turns a
  * missing or broken binary into "cannot parse version from:" with an empty
- * tail, which says nothing about what went wrong, and a wrong `ORCH_CLAUDE_BIN`
+ * tail, which says nothing about what went wrong, and a wrong `KANTAN_CLAUDE_BIN`
  * is one of the likelier ways to misconfigure this tool.
  */
 export async function claudeVersion(): Promise<string> {

@@ -30,7 +30,7 @@ import { CONFIRM_DARK, CONFIRM_GHOST, FOCUSABLE, focusablesIn } from "./chrome.t
  *
  * The copy diverges from the artboard on purpose. `docs/design/Project.dc.html`
  * says removal "deletes its run history"; `src/projects.ts`'s `removeProject`
- * documents the opposite at length - run logs live in `~/.orch/runs` keyed by
+ * documents the opposite at length - run logs live in `~/.kantan/runs` keyed by
  * run id, they are the record of work that cost real money, nothing can
  * rebuild one, and re-registering the same path brings every run of it back
  * into the tree. A confirmation that invents a deletion invites the reader to

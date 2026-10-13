@@ -70,7 +70,7 @@ export function isGrinding(testAttempts: number | undefined): boolean {
  *
  * - **A ticked box with no run is `checked-off`, not `passed`.** This used to
  *   read `passed`, on the reasoning that only a passing run ticks a box. That
- *   does not hold - a run log lives in `~/.orch/runs` and stays there, so a
+ *   does not hold - a run log lives in `~/.kantan/runs` and stays there, so a
  *   task kantan really did finish arrives here *with* its run. A ticked box
  *   with no run is one ticked by hand, ticked before kantan saw the repo, or
  *   one whose log was deleted. None is something kantan observed, and printing

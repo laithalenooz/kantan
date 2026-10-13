@@ -13,7 +13,7 @@ import type { RunState } from "./runstate"
  *
  * Design §3.6 requires the task tree to answer that from the **run logs**, not
  * only from the working tree: on `done` the checkout returns to base, so the
- * task's tick lives on `orch/<task-slug>` until it is merged and the
+ * task's tick lives on `kantan/<task-slug>` until it is merged and the
  * checked-out markdown reads the task as open. Task 12's "a task
  * done-but-unmerged cannot be started again" has nothing else to consult.
  *
@@ -131,12 +131,12 @@ export interface FoldOptions {
 }
 
 export interface IndexOptions extends FoldOptions {
-  /** Default `~/.orch/runs`. Absent or empty is the first-ever state, not an
+  /** Default `~/.kantan/runs`. Absent or empty is the first-ever state, not an
    * error. */
   runsDir?: string
   /**
    * The branch a task owns. Required, and deliberately not derived here:
-   * `src/git.ts`'s `taskBranchName` is `orch/<stem>-<ref>-<sha256:8>`, and a
+   * `src/git.ts`'s `taskBranchName` is `kantan/<stem>-<ref>-<sha256:8>`, and a
    * second implementation of that would produce a plausible name pointing at
    * no branch - which would make `merged` meaningless while looking right.
    */

@@ -9,7 +9,7 @@
  * implement, test, done - with the checkbox ticked, the branch created and the
  * cost recorded.
  *
- *     ORCH_LIVE=1 bun test test/live/smoke.test.ts
+ *     KANTAN_LIVE=1 bun test test/live/smoke.test.ts
  *
  * Skipped otherwise, so `bun run check` stays free.
  */
@@ -25,7 +25,7 @@ import { defaults } from "../../src/projects.ts"
 import { taskBranchName } from "../../src/git.ts"
 import { claudeVersion } from "../../src/version.ts"
 
-const LIVE = process.env.ORCH_LIVE === "1"
+const LIVE = process.env.KANTAN_LIVE === "1"
 
 /**
  * The ceiling, not the target.
@@ -109,7 +109,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (!LIVE) return
-  if (process.env.ORCH_KEEP === "1") {
+  if (process.env.KANTAN_KEEP === "1") {
     // A failed live run is expensive to reproduce, and the evidence is on disk
     // in a branch nobody can inspect once this has run.
     console.log(`kept ${repo} and ${home}`)
@@ -164,7 +164,7 @@ describe.skipIf(!LIVE)("live smoke", () => {
        *
        * The first version of this test read the working tree and failed, which
        * is the test being wrong rather than the code: `tickCheckbox` commits
-       * the tick on `orch/<slug>` and `goHome` then returns the checkout to the
+       * the tick on `kantan/<slug>` and `goHome` then returns the checkout to the
        * branch the run started from, because design §3.6 makes merging the
        * human's decision. So after a successful run the working tree correctly
        * shows the task *unticked* - the tick is waiting on the branch - and a

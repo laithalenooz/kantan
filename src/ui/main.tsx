@@ -50,7 +50,7 @@ async function bootstrapSession(): Promise<void> {
         "kantan: /api/session did not answer within 3s. API calls will be refused; reload once the server responds.",
       )
     } else {
-      console.warn("kantan: no server on /api. Start it with `bun run server` (ORCH_DEV=1 in dev), then reload.")
+      console.warn("kantan: no server on /api. Start it with `bun run server` (KANTAN_DEV=1 in dev), then reload.")
     }
   }
 }

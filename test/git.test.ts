@@ -10,7 +10,7 @@ process.env.GIT_AUTHOR_EMAIL = "test@example.invalid"
 process.env.GIT_COMMITTER_NAME = "kantan test"
 process.env.GIT_COMMITTER_EMAIL = "test@example.invalid"
 
-import { expect, test } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, sep } from "node:path"
@@ -29,6 +29,9 @@ import {
   returnToBase,
   runLockPath,
   taskBranchName,
+  isTaskBranch,
+  taskSlug,
+  BRANCH_PREFIX,
 } from "../src/git"
 import type { LockRecord, Repo } from "../src/git"
 
@@ -38,7 +41,7 @@ test("a stale lock whose owning process is gone is reclaimed, and names what it 
   const { repo } = await repoWithCommit()
   await forgeLock(repo, { pid: await deadPid(), nonce: "a-server-that-died" })
 
-  const lock = await acquireRunLock(repo, { runId: "run-2", branch: "orch/t2-aaaaaaaa" })
+  const lock = await acquireRunLock(repo, { runId: "run-2", branch: "kantan/t2-aaaaaaaa" })
 
   expect(lock.reclaimed?.nonce).toBe("a-server-that-died")
   expect(lock.record.runId).toBe("run-2")
@@ -46,9 +49,9 @@ test("a stale lock whose owning process is gone is reclaimed, and names what it 
 
 test("a live lock is refused, and the error names the pid, the run and the lock file", async () => {
   const { repo } = await repoWithCommit()
-  await acquireRunLock(repo, { runId: "run-1", branch: "orch/t1-aaaaaaaa" })
+  await acquireRunLock(repo, { runId: "run-1", branch: "kantan/t1-aaaaaaaa" })
 
-  const second = acquireRunLock(repo, { runId: "run-2", branch: "orch/t2-bbbbbbbb" })
+  const second = acquireRunLock(repo, { runId: "run-2", branch: "kantan/t2-bbbbbbbb" })
 
   const message = await messageOf(second)
   expect(message).toContain(String(process.pid))
@@ -61,7 +64,7 @@ test("a lock whose pid has since been reused by another process is reclaimed", a
   const { repo } = await repoWithCommit()
   await forgeLock(repo, { processStart: "1" })
 
-  const lock = await acquireRunLock(repo, { runId: "run-2", branch: "orch/t2-aaaaaaaa" })
+  const lock = await acquireRunLock(repo, { runId: "run-2", branch: "kantan/t2-aaaaaaaa" })
 
   expect(lock.reclaimed).not.toBeNull()
 })
@@ -75,7 +78,7 @@ test.skipIf(!HAS_BOOT_ID)("a lock written before the last reboot is reclaimed", 
   const { repo } = await repoWithCommit()
   await forgeLock(repo, { bootId: "00000000-0000-0000-0000-000000000000" })
 
-  const lock = await acquireRunLock(repo, { runId: "run-2", branch: "orch/t2-aaaaaaaa" })
+  const lock = await acquireRunLock(repo, { runId: "run-2", branch: "kantan/t2-aaaaaaaa" })
 
   expect(lock.reclaimed).not.toBeNull()
 })
@@ -86,7 +89,7 @@ test("a lock left by an earlier incarnation of this very process is reclaimed", 
   const { repo } = await repoWithCommit()
   await forgeLock(repo, { nonce: "before-the-watch-reload" })
 
-  const lock = await acquireRunLock(repo, { runId: "run-2", branch: "orch/t2-aaaaaaaa" })
+  const lock = await acquireRunLock(repo, { runId: "run-2", branch: "kantan/t2-aaaaaaaa" })
 
   expect(lock.reclaimed?.nonce).toBe("before-the-watch-reload")
 })
@@ -95,7 +98,7 @@ test("a lock from another host is refused, naming the file to remove by hand", a
   const { repo } = await repoWithCommit()
   await forgeLock(repo, { host: "someone-elses-laptop" })
 
-  const message = await messageOf(acquireRunLock(repo, { runId: "r", branch: "orch/t-aaaaaaaa" }))
+  const message = await messageOf(acquireRunLock(repo, { runId: "r", branch: "kantan/t-aaaaaaaa" }))
   expect(message).toContain("someone-elses-laptop")
   expect(message).toContain(runLockPath(repo))
   expect(message).toMatch(/rm /)
@@ -126,7 +129,7 @@ test.skipIf(UNSIGNALLABLE_PID === undefined)(
       nonce: "owned-by-another-user",
     })
 
-    const message = await messageOf(acquireRunLock(repo, { runId: "r", branch: "orch/t-aaaaaaaa" }))
+    const message = await messageOf(acquireRunLock(repo, { runId: "r", branch: "kantan/t-aaaaaaaa" }))
     expect(message).toContain(runLockPath(repo))
     expect(message).toContain(`by pid ${UNSIGNALLABLE_PID} on `)
   },
@@ -138,7 +141,7 @@ test("a live lock whose start time cannot be read is refused rather than reclaim
   const { repo } = await repoWithCommit()
   await forgeLock(repo, { processStart: null })
 
-  const message = await messageOf(acquireRunLock(repo, { runId: "r", branch: "orch/t-aaaaaaaa" }))
+  const message = await messageOf(acquireRunLock(repo, { runId: "r", branch: "kantan/t-aaaaaaaa" }))
   expect(message).toContain(runLockPath(repo))
 })
 
@@ -146,16 +149,16 @@ test("a corrupt lock file is refused by path rather than silently reclaimed", as
   const { repo } = await repoWithCommit()
   await writeFile(runLockPath(repo), "{ half a write")
 
-  const message = await messageOf(acquireRunLock(repo, { runId: "r", branch: "orch/t-aaaaaaaa" }))
+  const message = await messageOf(acquireRunLock(repo, { runId: "r", branch: "kantan/t-aaaaaaaa" }))
   expect(message).toContain(runLockPath(repo))
 })
 
 test("releasing removes the lock, so the next run can take it", async () => {
   const { repo } = await repoWithCommit()
-  const lock = await acquireRunLock(repo, { runId: "run-1", branch: "orch/t1-aaaaaaaa" })
+  const lock = await acquireRunLock(repo, { runId: "run-1", branch: "kantan/t1-aaaaaaaa" })
 
   expect(await releaseRunLock(lock)).toBe("released")
-  const next = await acquireRunLock(repo, { runId: "run-2", branch: "orch/t2-bbbbbbbb" })
+  const next = await acquireRunLock(repo, { runId: "run-2", branch: "kantan/t2-bbbbbbbb" })
   expect(next.reclaimed).toBeNull()
 })
 
@@ -163,7 +166,7 @@ test("releasing a lock another run has since taken leaves it alone", async () =>
   // The run was declared stale and reclaimed while its own process limped on. If
   // release unlinked by path, it would drop the live run's lock.
   const { repo } = await repoWithCommit()
-  const lock = await acquireRunLock(repo, { runId: "run-1", branch: "orch/t1-aaaaaaaa" })
+  const lock = await acquireRunLock(repo, { runId: "run-1", branch: "kantan/t1-aaaaaaaa" })
   await patchLock(repo, { runId: "run-2" })
 
   expect(await releaseRunLock(lock)).toBe("not ours")
@@ -174,7 +177,7 @@ test("releasing a lock retaken by a later incarnation of this run leaves it alon
   // Same runId, different nonce: a reload reclaimed the lock and took it again
   // under the same run. Only the nonce tells the two holders apart.
   const { repo } = await repoWithCommit()
-  const lock = await acquireRunLock(repo, { runId: "run-1", branch: "orch/t1-aaaaaaaa" })
+  const lock = await acquireRunLock(repo, { runId: "run-1", branch: "kantan/t1-aaaaaaaa" })
   await patchLock(repo, { nonce: "a-later-incarnation" })
 
   expect(await releaseRunLock(lock)).toBe("not ours")
@@ -183,7 +186,7 @@ test("releasing a lock retaken by a later incarnation of this run leaves it alon
 
 test("releasing an already-removed lock is not an error", async () => {
   const { repo } = await repoWithCommit()
-  const lock = await acquireRunLock(repo, { runId: "run-1", branch: "orch/t1-aaaaaaaa" })
+  const lock = await acquireRunLock(repo, { runId: "run-1", branch: "kantan/t1-aaaaaaaa" })
   await rm(runLockPath(repo))
 
   expect(await releaseRunLock(lock)).toBe("already gone")
@@ -191,7 +194,7 @@ test("releasing an already-removed lock is not an error", async () => {
 
 test("the lock lives in the git dir, so no status shows it and no agent can commit it", async () => {
   const { dir, repo } = await repoWithCommit()
-  await acquireRunLock(repo, { runId: "run-1", branch: "orch/t1-aaaaaaaa" })
+  await acquireRunLock(repo, { runId: "run-1", branch: "kantan/t1-aaaaaaaa" })
 
   expect(runLockPath(repo).startsWith(repo.gitDir + sep)).toBe(true)
   expect(await git(dir, "status", "--porcelain")).toBe("")
@@ -205,11 +208,11 @@ test("two symlinked spellings of one repo contend for the same lock", async () =
   const link = join(await mkdtemp(join(tmpdir(), "orch-git-")), "same-repo")
   await symlink(dir, link)
 
-  await acquireRunLock(repo, { runId: "run-1", branch: "orch/t1-aaaaaaaa" })
+  await acquireRunLock(repo, { runId: "run-1", branch: "kantan/t1-aaaaaaaa" })
   const viaLink = await requireUsableRepo(link)
 
   expect(runLockPath(viaLink)).toBe(runLockPath(repo))
-  await expect(acquireRunLock(viaLink, { runId: "r2", branch: "orch/t2-b" })).rejects.toThrow()
+  await expect(acquireRunLock(viaLink, { runId: "r2", branch: "kantan/t2-b" })).rejects.toThrow()
 })
 
 // --- Is this path a usable git repository at all? ---
@@ -295,9 +298,13 @@ test("a detached HEAD is refused as a base, naming the commit and the fix", asyn
   expect(message).toContain("git switch")
 })
 
-test("a checkout left on an orch/ branch is refused as a base, so tasks cannot stack", async () => {
-  // This is the crash case: a run that never returned to base. Recording orch/T1
-  // as the base is how run 2 silently branches off run 1.
+test("a checkout left on a legacy task branch is refused as a base, so tasks cannot stack", async () => {
+  /* This is the crash case: a run that never returned to base, and recording
+     its branch as the base is how run 2 silently branches off run 1.
+
+     The fixture uses the pre-rename `orch/` prefix deliberately: those runs
+     exist on disk right now, and this guard going quiet on exactly them is
+     the failure the two-prefix recognition exists to prevent. */
   const { dir, repo } = await repoWithCommit()
   await git(dir, "switch", "-c", "orch/t1-aaaaaaaa")
 
@@ -349,7 +356,7 @@ test("a rename blocks a new run, naming both paths and no phantom third entry", 
 })
 
 test("an untracked file blocks a new run, and the error says stash -u", async () => {
-  // The mechanism: the agent commits it on orch/<slug>, returning to base then
+  // The mechanism: the agent commits it on kantan/<slug>, returning to base then
   // takes it out of the working tree, and `git branch -D` as a rollback loses it.
   // A plain `git stash` leaves it, so the user would retry into the same refusal.
   const { dir, repo } = await repoWithCommit()
@@ -447,15 +454,18 @@ test("every branch name git could refuse is one git accepts", async () => {
     if ((await gitExit(dir, "check-ref-format", `refs/heads/${name}`)) !== 0) {
       refused.push(`${from} -> ${name}: check-ref-format refused it`)
     }
-    if (!name.startsWith("orch/")) refused.push(`${from} -> ${name}: not under orch/`)
-    // One component under orch/, or orch/t1 and orch/t1/sub become a D/F conflict.
-    if (name.slice("orch/".length).includes("/")) {
+    /* Read from `BRANCH_PREFIX` rather than written out, so the rename cannot
+       leave this matrix asserting a prefix nothing creates any more - which is
+       exactly what three tests in this file did until it happened. */
+    if (!name.startsWith(BRANCH_PREFIX)) refused.push(`${from} -> ${name}: not under ${BRANCH_PREFIX}`)
+    // One component, or <prefix>t1 and <prefix>t1/sub become a D/F conflict.
+    if (name.slice(BRANCH_PREFIX.length).includes("/")) {
       refused.push(`${from} -> ${name}: more than one component`)
     }
     // Lowercase only: a loose ref is a file, and macOS and /mnt/c fold case.
     if (name !== name.toLowerCase()) refused.push(`${from} -> ${name}: not lowercase`)
     // A branch name that is also usable as an argument and a filename.
-    if (!/^orch\/[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(name)) {
+    if (!new RegExp(`^${BRANCH_PREFIX}[a-z0-9]([a-z0-9-]*[a-z0-9])?$`).test(name)) {
       refused.push(`${from} -> ${name}: outside the allowlist`)
     }
   }
@@ -483,7 +493,7 @@ test("the same task always gets the same branch, and the task's prose is not in 
   const a = taskBranchName({ feature: "docs/importer.md", ref: "T2" })
   const b = taskBranchName({ feature: "./docs/./importer.md", ref: "T2" })
   expect(a).toBe(b)
-  expect(a).toMatch(/^orch\/importer-t2-[0-9a-f]{8}$/)
+  expect(a).toMatch(new RegExp(`^${BRANCH_PREFIX}importer-t2-[0-9a-f]{8}$`))
 })
 
 test("a task with no ref is refused rather than sharing a branch with its neighbours", async () => {
@@ -494,9 +504,9 @@ test("an absolute feature path is refused, or moving the repo would rename every
   expect(() => taskBranchName({ feature: "/home/me/repo/docs/f.md", ref: "T1" })).toThrow()
 })
 
-// --- Create or resume orch/<task-slug> from the recorded base ---
+// --- Create or resume <prefix><task-slug> from the recorded base ---
 
-test("a clean repo creates orch/<task-slug> and checks it out", async () => {
+test("a clean repo creates a task branch and checks it out", async () => {
   const { dir, repo } = await repoWithCommit()
   const base = await recordBaseBranch(repo)
   const branch = taskBranchName({ feature: "docs/f.md", ref: "T1" })
@@ -506,7 +516,7 @@ test("a clean repo creates orch/<task-slug> and checks it out", async () => {
   expect(await git(dir, "branch", "--show-current")).toBe(branch)
 })
 
-test("task 2 branches from base, not from orch/T1", async () => {
+test("task 2 branches from base, not from task 1's branch", async () => {
   const { dir, repo } = await repoWithCommit()
   const base = await recordBaseBranch(repo)
   const t1 = taskBranchName({ feature: "docs/f.md", ref: "T1" })
@@ -516,7 +526,8 @@ test("task 2 branches from base, not from orch/T1", async () => {
   await writeFile(join(dir, "t1.txt"), "t1 work")
   await git(dir, "add", "-A")
   await git(dir, "commit", "-m", "t1")
-  // The run crashed before returning to base, so the checkout is still on orch/T1.
+  // The run crashed before returning to base, so the checkout is still on its
+  // task branch - spelled with the legacy prefix, which still counts as one.
   await createTaskBranch(repo, t2, base)
 
   expect(await git(dir, "merge-base", t2, t1)).toBe(await git(dir, "rev-parse", base))
@@ -524,7 +535,7 @@ test("task 2 branches from base, not from orch/T1", async () => {
 })
 
 test("a new run refuses a task branch that already has commits ahead of base", async () => {
-  // This is "done, unmerged": the tick lives on orch/<slug>, so the working-tree
+  // This is "done, unmerged": the tick lives on kantan/<slug>, so the working-tree
   // markdown reads the task as open and the tree would offer to start it again.
   const { dir, repo } = await repoWithCommit()
   const base = await recordBaseBranch(repo)
@@ -581,8 +592,23 @@ test("a new run refuses an existing task branch even when it is merged into base
 
 test("a branch that is not a task branch is refused, so a base can never be the target", async () => {
   const { repo } = await repoWithCommit()
-  await expect(createTaskBranch(repo, "main", "main")).rejects.toThrow(/orch\//)
-  await expect(resumeTaskBranch(repo, "main")).rejects.toThrow(/orch\//)
+  // The message names the prefix a run would have created, so it tracks the
+  // constant rather than a word that was true when this was written.
+  const names = new RegExp(BRANCH_PREFIX)
+  await expect(createTaskBranch(repo, "main", "main")).rejects.toThrow(names)
+  await expect(resumeTaskBranch(repo, "main")).rejects.toThrow(names)
+
+  /* And a legacy branch is not refused *for being a base*, which is the
+     migration's point: these two guards reject anything that is not a task
+     branch, and `orch/*` still is one. It rejects for a different reason - the
+     branch does not exist in this fixture - so the message is read rather than
+     `rejects.not.toThrow`, which passes whether or not it checked anything. */
+  const why = await resumeTaskBranch(repo, "orch/importer-t1-ab12cd34").then(
+    () => "",
+    (cause: unknown) => (cause as Error).message,
+  )
+  expect(why).not.toBe("")
+  expect(why).not.toMatch(/is not a kantan task branch/)
 })
 
 test("resuming a run switches to its recorded branch", async () => {
@@ -652,7 +678,7 @@ test("an operation left in progress blocks a resume even on the run's own branch
 test("a tag sharing a branch's name does not defeat the branch comparisons", async () => {
   // Probed: `symbolic-ref --short HEAD` prints `heads/orch/...` when a tag of
   // the same name exists, which would silently unmatch every comparison here -
-  // including the one that refuses an orch/ branch as a base.
+  // including the one that refuses a task branch as a base.
   const { dir, repo } = await repoWithCommit()
   const base = await recordBaseBranch(repo)
   const branch = taskBranchName({ feature: "docs/f.md", ref: "T1" })
@@ -813,6 +839,88 @@ const NASTY: [string, string][] = [
 ]
 
 /** A repo with one commit on `main`, a .gitignore, and no global config in play. */
+/**
+ * The rename from `orch/` to `kantan/`, and the one thing it must not break.
+ *
+ * The product is kantan; the branch prefix said `orch`. That prefix is the
+ * only identifier kantan writes into **somebody else's git history**, so it
+ * was changed before publishing and could not be changed after.
+ *
+ * **Recognition and creation are now two different questions**, which is the
+ * whole of the migration. A skipping guard, so the dimension is enumerated:
+ * the leading segment of a branch name. Its values are `kantan/...` (what
+ * runs create now), `orch/...` (what every run created until today, and some
+ * of them are mid-flight on disk right now), a base branch like `main`, a
+ * branch that merely *contains* one of the words, and a branch named exactly
+ * the prefix with nothing after it.
+ *
+ * The costs are badly lopsided, which is why recognition accepts both:
+ *
+ * - **Failing to recognise a legacy `orch/` branch is the dangerous
+ *   direction.** `recordBaseBranch` refuses to record a task branch as a
+ *   base, precisely so a run cannot branch a task off another task. If
+ *   `orch/*` stopped counting, that guard would go quiet on exactly the
+ *   repositories that have one checked out - an interrupted run - and the
+ *   resume would branch off it. Those runs would also become unresumable.
+ * - Over-recognising costs a user who named a branch `orch/...` themselves
+ *   being told it is kantan's. They could already hit that yesterday, so it
+ *   is not a regression, and the message says which branch it means.
+ */
+describe("the branch prefix rename", () => {
+  test("a new branch is created under kantan/", () => {
+    expect(taskBranchName({ feature: "docs/features/importer.md", ref: "T2" })).toStartWith("kantan/")
+    expect(BRANCH_PREFIX).toBe("kantan/")
+  })
+
+  test("both prefixes are recognised as task branches, old and new", () => {
+    for (const branch of ["kantan/importer-t2-ab12cd34", "orch/importer-t2-ab12cd34"]) {
+      expect({ branch, task: isTaskBranch(branch) }).toEqual({ branch, task: true })
+    }
+  })
+
+  test("a base branch is not a task branch, however it is spelled", () => {
+    for (const branch of [
+      "main",
+      "master",
+      "develop",
+      // Contains the word, does not start with it. A prefix check, not a search.
+      "feature/orch-rewrite",
+      "my-orch/thing",
+      "release/kantan-1.0",
+      // Exactly the prefix and nothing else: there is no task in it, so it is
+      // not a branch any run of ours made.
+      "kantan/",
+      "orch/",
+    ]) {
+      expect({ branch, task: isTaskBranch(branch) }).toEqual({ branch, task: false })
+    }
+  })
+
+  test("a checkout left on a legacy task branch is still refused as a base", async () => {
+    /* The dangerous direction, asserted against a real repository: an
+     * interrupted run leaves the checkout on its own branch, and recording
+     * that as the base would branch the next task off it. */
+    const { dir, repo } = await repoWithCommit()
+    await git(dir, "switch", "-c", "orch/importer-t1-ab12cd34")
+    await expect(recordBaseBranch(repo)).rejects.toThrow(/task branch/)
+  })
+
+  test("a checkout on a new task branch is refused the same way", async () => {
+    const { dir, repo } = await repoWithCommit()
+    await git(dir, "switch", "-c", "kantan/importer-t1-ab12cd34")
+    await expect(recordBaseBranch(repo)).rejects.toThrow(/task branch/)
+  })
+
+  test("the task slug is recovered from either prefix, not from a fixed length", async () => {
+    // `src/run.ts` builds the plan path by stripping the prefix. Slicing by
+    // `BRANCH_PREFIX.length` would cut the wrong number of characters off a
+    // legacy branch - the two words are not the same length - and the plan for
+    // a resumed run would be written to a path with a mangled name.
+    expect(taskSlug("kantan/importer-t2-ab12cd34")).toBe("importer-t2-ab12cd34")
+    expect(taskSlug("orch/importer-t2-ab12cd34")).toBe("importer-t2-ab12cd34")
+  })
+})
+
 async function repoWithCommit(): Promise<{ dir: string; repo: Repo }> {
   const dir = await mkdtemp(join(tmpdir(), "orch-git-"))
   await git(dir, "init", "-b", "main", ".")
@@ -889,7 +997,7 @@ async function deadPid(): Promise<number> {
  * real lock and then overriding fields. Using the real writer keeps the forged
  * record in step with the record shape. */
 async function forgeLock(repo: Repo, patch: Partial<LockRecord>): Promise<void> {
-  const lock = await acquireRunLock(repo, { runId: "run-1", branch: "orch/t1-aaaaaaaa" })
+  const lock = await acquireRunLock(repo, { runId: "run-1", branch: "kantan/t1-aaaaaaaa" })
   void lock
   await patchLock(repo, patch)
 }
