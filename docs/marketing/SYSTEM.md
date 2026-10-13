@@ -135,12 +135,31 @@ not mockups**.
 | `accounts.png` | 1440×1000 | Per-account rate-limit windows with "window reset" and "was 3%", a found-on-disk profile offered with **Use this folder**, **Add an account**, and the footnote *"kantan only sees what its own runs report."* | Honesty as a product value. |
 | `overview.png` | 1440×1100 | Nothing selected: *"Start a task."*, the three steps, and a floating illustration of a repo card, a task file and a mini gate. | Explaining the model without a diagram. |
 
+### The flow recording
+
+`docs/media/flow.mp4` (37s, 1280×800, 0.48 MB) and `docs/media/flow.gif` (37s,
+960 wide, 2.2 MB) — one task through the whole pipeline: the plan waiting at the
+gate, a human approving it, an implement phase, a **failing** test run, a refine,
+a passing test run, and the finished task on an unmerged branch.
+
+Both are produced by `docs/probes/record.ts`, which presses the real **Approve
+plan** button over CDP against a real server reading a real run log. **No billed
+run was needed** — the `Runner` the probe supplies writes the records a `claude`
+child would have written, on a timer, so the clip is a re-enactment of a run that
+did happen rather than a mock of a UI. The record sequence was checked field by
+field against real logs.
+
+**`docs/media/README.md` says exactly what is real in it and what is not. Read it
+before answering a question about the clip.** The two things people will ask
+about are both the product rather than fixture artefacts: the clip ends on *"The
+branch is not merged"* because kantan returns the checkout to base and leaves the
+tick on the task branch for a human, and `Test` shows a dash because a phase
+record has no closing entry, so the last phase has nothing after it to measure
+against.
+
 ### What we do not have yet, and what it would take
 
-- **A 30–60s screen recording** of plan → gate → approve → green. `states.ts`
-  stages everything up to the gate for free; the approve-to-green half needs one
-  real billed run. This is the highest-value missing asset.
-- **`failed`, `stalled`, `grinding`, `done-unmerged`, `interrupted`** as
+- **`failed`, `stalled`, `grinding`, `interrupted`** as
   screenshots. All reachable — add a fixture log to `states.ts`; no money needed.
 - **The add-repository and project-settings panels.** Both reachable by a click
   in `states.ts`; say the word.
