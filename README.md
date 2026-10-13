@@ -7,7 +7,7 @@ plan, you approve, then implement and test until the tests pass.
 
 > **Status: it works, and it is rough in places.** The pipeline runs end to end — plan,
 > gate, implement, test, commit — against the real `claude` binary, from one process on one
-> port. 72 modules, 2562 tests, one of them skipped. [Rough edges](#rough-edges) lists what is still unfinished,
+> port. 73 modules, 2562 tests, one of them skipped. [Rough edges](#rough-edges) lists what is still unfinished,
 > by name, including the parts that are merely hidden rather than done.
 >
 > The hard-won facts about `claude -p` are in [`docs/probes/`](docs/probes/), and every
