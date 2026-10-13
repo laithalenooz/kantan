@@ -1135,8 +1135,8 @@ describe("absent data is omitted, never invented", () => {
     await render(panel(startProps({ account: { kind: "unknown" } })))
     expect(prose()).toContain("account unknown")
 
-    await render(panel(startProps({ account: { kind: "personal", label: "laith@home" } })))
-    expect(prose()).toContain("laith@home")
+    await render(panel(startProps({ account: { kind: "personal", label: "personal@laptop" } })))
+    expect(prose()).toContain("personal@laptop")
   })
 })
 
